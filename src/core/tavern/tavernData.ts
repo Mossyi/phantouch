@@ -1015,7 +1015,7 @@ export class TavernStore {
       throw new Error('生图 API 地址无效，必须使用 HTTPS（仅本机 localhost 可使用 HTTP）');
     }
     if (provider === 'local_sd' && !parseLocalNetworkApiBaseUrl(merged.baseUrl)) {
-      throw new Error('本地 SD 地址无效，请填写 localhost 或局域网地址，例如 http://192.168.1.10:7860');
+      throw new Error('本地 SD 地址无效，请填写 localhost 或局域网地址，例如 http://192.168.1.100:7860');
     }
     const scopeChanged = getTavernImageCredentialScope(current)
       !== getTavernImageCredentialScope({ ...merged, provider });
