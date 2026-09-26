@@ -1,0 +1,726 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --sat: max(env(safe-area-inset-top, 0px), 18px);
+    --sab: max(env(safe-area-inset-bottom, 0px), 16px);
+    --surface: rgba(255, 255, 255, 0.96);
+    --surface-strong: #ffffff;
+    --surface-soft: #f7f7f8;
+    --line: #e5e7eb;
+    --ink: #1f2937;
+    --ink-secondary: #4b5563;
+    --muted: #6b7280;
+    --pink: #e96892;
+    --action: #b82d60;
+    --action-hover: #92224b;
+    --success: #047857;
+    --danger: #be123c;
+    --info: #1f6678;
+  }
+
+  body {
+    background-color: #fbfcfe;
+    background-image: 
+      radial-gradient(ellipse 65% 50% at 5% 10%, rgba(254, 215, 235, 0.45) 0%, transparent 60%),
+      radial-gradient(ellipse 55% 45% at 95% 15%, rgba(253, 232, 242, 0.42) 0%, transparent 55%),
+      radial-gradient(ellipse 60% 50% at 50% 88%, rgba(243, 232, 255, 0.35) 0%, transparent 65%),
+      radial-gradient(circle at 80% 55%, rgba(254, 226, 236, 0.3) 0%, transparent 45%),
+      linear-gradient(180deg, #ffffff 0%, #fbfcfe 50%, #f7f8fa 100%);
+    background-attachment: fixed;
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    padding-top: 0;
+  }
+
+  ::selection {
+    background-color: #ec4899;
+    color: #ffffff;
+  }
+}
+
+/* 浅色淡粉质感卡片与容器全局美化 (苹果流体毛边毛玻璃) */
+.modern-card,
+.liquid-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(255, 245, 250, 0.58) 100%);
+  backdrop-filter: blur(32px) saturate(200%) contrast(102%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%) contrast(102%);
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  border-radius: 1.75rem;
+  box-shadow: 
+    0 0 0 1px rgba(255, 255, 255, 0.75),
+    0 0 20px 2px rgba(255, 255, 255, 0.7),
+    inset 0 1.5px 2px 0 rgba(255, 255, 255, 0.98),
+    inset 0 -1px 2px 0 rgba(233, 104, 146, 0.05),
+    0 12px 36px -4px rgba(233, 104, 146, 0.08),
+    0 3px 10px -2px rgba(15, 23, 42, 0.02);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modern-card:hover,
+.liquid-card:hover {
+  border-color: rgba(255, 255, 255, 1);
+  box-shadow: 
+    0 0 0 1px rgba(255, 255, 255, 0.9),
+    0 0 28px 6px rgba(255, 255, 255, 0.85),
+    inset 0 1.5px 2px 0 #ffffff,
+    0 16px 44px -4px rgba(233, 104, 146, 0.14);
+}
+
+.barbie-shine {
+  position: relative;
+  overflow: hidden;
+}
+
+.barbie-shine::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, rgba(255, 255, 255, 0.38), transparent 42%, transparent 72%, rgba(233, 104, 146, 0.025));
+}
+
+/* 全局文本表单与输入框清晰度提升（严格排除 range 滑块与 radio/checkbox） */
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="email"],
+input[type="search"],
+input[type="url"],
+input[type="tel"],
+input:not([type]),
+textarea,
+select {
+  border-radius: 0.85rem !important;
+  color: #1f2937 !important;
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid #dfe3e8 !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.02);
+  font-weight: 500;
+  color-scheme: light !important;
+}
+
+select,
+option,
+optgroup {
+  color-scheme: light !important;
+}
+
+select option,
+select optgroup {
+  background-color: #ffffff !important;
+  color: #1f2937 !important;
+}
+
+select optgroup {
+  background-color: #f8fafc !important;
+  color: #475569 !important;
+  font-weight: 700 !important;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+input[type="email"]:focus,
+input[type="search"]:focus,
+input:not([type]):focus,
+textarea:focus,
+select:focus {
+  border-color: #e96892 !important;
+  outline: 2px solid rgba(233, 104, 146, 0.18) !important;
+  outline-offset: 1px;
+}
+
+input[type="text"]::placeholder,
+input[type="password"]::placeholder,
+input[type="number"]::placeholder,
+input:not([type])::placeholder,
+textarea::placeholder {
+  color: #9ca3af !important;
+}
+
+/* Mobile readability baseline: the app contains dense status panels, so no label is allowed to become hairline text. */
+#root {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+[class*="text-[8px]"],
+[class*="text-[8.5px]"],
+[class*="text-[9px]"],
+[class*="text-[9.5px]"] {
+  font-size: 0.72rem !important;
+  line-height: 1.45 !important;
+}
+
+[class*="text-[10px]"] {
+  font-size: 0.76rem !important;
+  line-height: 1.5 !important;
+}
+
+.text-slate-400 {
+  color: var(--ink-secondary);
+}
+
+.text-slate-100, .text-slate-700, .text-slate-800, .text-slate-900, .text-slate-950 { color: var(--ink); }
+.text-slate-200, .text-slate-300 { color: var(--ink-secondary); }
+.text-emerald-300, .text-emerald-400, .text-green-300, .text-green-400 { color: var(--success); }
+.text-amber-300, .text-amber-400, .text-yellow-300, .text-yellow-400 { color: #946200; }
+.text-indigo-200, .text-indigo-300 { color: var(--info); }
+
+/* Explicit inverse surfaces opt in; a nested card restores reading colors. */
+.text-white, .bg-pink-950, .bg-pink-900, .bg-rose-950, .bg-rose-900, .bg-indigo-900 {
+  --ink: #ffffff;
+  --ink-secondary: #f1e5eb;
+  --muted: #e0d5dc;
+  --success: #a7f3d0;
+  --info: #d5f2ff;
+}
+
+.text-slate-500 {
+  color: var(--muted);
+}
+
+.text-slate-600 {
+  color: var(--ink-secondary);
+}
+
+.text-pink-200,
+.text-pink-300 {
+  color: var(--action);
+}
+
+.text-purple-200,
+.text-purple-300 {
+  color: var(--action);
+}
+
+.text-cyan-200,
+.text-cyan-300 {
+  color: var(--info);
+}
+
+/* Shared surfaces and actions: keep text and its background in one rule. */
+.ui-card { --ink: #1f2937; --ink-secondary: #4b5563; --muted: #6b7280; --success: #047857; --info: #1f6678; background: var(--surface-strong); color: var(--ink); border: 1px solid var(--line); border-radius: 1.25rem; padding: 1rem; min-width: 0; }
+.ui-muted { color: var(--ink-secondary); }
+.ui-button, .ui-button-secondary { padding: .6rem .8rem; border-radius: .8rem; font-size: .8rem; font-weight: 700; line-height: 1.4; }
+.ui-button { background: var(--action); color: white; border: 1px solid var(--action); }
+.ui-button:hover { background: var(--action-hover); }
+.ui-button-secondary { background: var(--surface-soft); color: var(--ink); border: 1px solid var(--line); }
+.ui-button:disabled, .ui-button-secondary:disabled { opacity: .5; cursor: not-allowed; }
+.ui-button:focus-visible, .ui-button-secondary:focus-visible { outline: 2px solid var(--info); outline-offset: 3px; }
+.ui-status-success { color: var(--success); background: #ecfdf5; }
+.ui-status-error { color: var(--danger); background: #fff1f2; }
+
+[class*="font-mono"] {
+  letter-spacing: 0.01em;
+}
+
+/* Character Studio is information-dense, so it uses a deliberately high-contrast reading surface. */
+.tavern-card-studio {
+  background: linear-gradient(145deg, #fffafe 0%, #fff0f7 52%, #fdf2ff 100%);
+  color: #3e0b27;
+}
+
+.tavern-card-studio label,
+.tavern-card-studio .text-slate-400 {
+  color: #6c1d48 !important;
+  font-size: 0.75rem !important;
+  line-height: 1.45 !important;
+}
+
+.tavern-card-studio input:not([type="checkbox"]),
+.tavern-card-studio textarea {
+  background: #ffffff !important;
+  border: 1.5px solid #f9a8d4 !important;
+  color: #3e0b27 !important;
+  font-size: 0.875rem !important;
+  font-weight: 600 !important;
+  line-height: 1.6 !important;
+  caret-color: #db2777;
+}
+
+.tavern-card-studio input:not([type="checkbox"])::placeholder,
+.tavern-card-studio textarea::placeholder {
+  color: #9d4b76 !important;
+  opacity: 1;
+}
+
+/* 🎯 专为移动端触控优化的精致粉色滑块 (Range Slider) */
+input[type="range"] {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  background: #fbcfe8 !important;
+  height: 8px !important;
+  border-radius: 9999px !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+  cursor: pointer !important;
+  touch-action: pan-y;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 50% !important;
+  background: linear-gradient(135deg, #f43f8e, #db2777) !important;
+  border: 2.5px solid #ffffff !important;
+  box-shadow: 0 4px 10px rgba(219, 39, 119, 0.35), 0 1px 3px rgba(0,0,0,0.15) !important;
+  cursor: pointer !important;
+  transition: transform 0.1s ease !important;
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.18) !important;
+  box-shadow: 0 6px 16px rgba(219, 39, 119, 0.5) !important;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 50% !important;
+  background: linear-gradient(135deg, #f43f8e, #db2777) !important;
+  border: 2.5px solid #ffffff !important;
+  box-shadow: 0 4px 10px rgba(219, 39, 119, 0.35) !important;
+  cursor: pointer !important;
+}
+
+/* 按钮文字白色强制清晰保障 */
+.text-white,
+button[class*="from-pink"],
+button[class*="from-rose"],
+button[class*="bg-pink-600"],
+button[class*="bg-pink-500"],
+button[class*="bg-rose-600"],
+button[class*="bg-rose-500"] {
+  color: #ffffff !important;
+}
+
+/* 安全区域辅助类 */
+.pt-safe-header {
+  /* Respect notches/status bars while avoiding unnecessary desktop/WebView whitespace. */
+  padding-top: max(env(safe-area-inset-top, 0px), 18px);
+}
+
+
+
+.tavern-chat-composer {
+  padding-bottom: calc(3.8rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* 酒馆弹层必须遮住后方剧情文字，避免无效透明度工具类造成穿透。 */
+.tavern-floating-panel {
+  background-color: #ffffff !important;
+  background-image: linear-gradient(145deg, #ffffff 0%, #fcfcfd 100%);
+  box-shadow:
+    0 22px 55px rgba(15, 23, 42, 0.14),
+    0 7px 18px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 #ffffff;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  isolation: isolate;
+}
+
+/* 快捷指令菜单固定使用高对比文字，避免白底上被继承的浅灰色覆盖。 *//* 浅色淡粉质感卡片与容器全局美化 (苹果流体毛边毛玻璃) */
+.modern-card,
+.liquid-card,
+.bg-cyber-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 246, 251, 0.75) 100%) !important;
+  backdrop-filter: blur(16px) saturate(180%) contrast(101%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(101%) !important;
+  border: 1.5px solid rgba(255, 255, 255, 0.95) !important;
+  border-radius: 1.75rem !important;
+  box-shadow: 
+    0 0 0 1px rgba(255, 255, 255, 0.85),
+    0 16px 40px -6px rgba(244, 114, 182, 0.10),
+    inset 0 2px 3px 0 #ffffff,
+    inset 0 -1px 2px 0 rgba(244, 63, 94, 0.04),
+    0 2px 8px -1px rgba(15, 23, 42, 0.02) !important;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modern-card:hover,
+.liquid-card:hover,
+.bg-cyber-card:hover {
+  border-color: rgba(255, 255, 255, 1) !important;
+  box-shadow: 
+    0 0 0 1px rgba(255, 255, 255, 0.95),
+    0 0 32px 6px rgba(255, 255, 255, 0.9),
+    inset 0 2px 2.5px 0 #ffffff,
+    0 20px 48px -4px rgba(244, 63, 142, 0.18) !important;
+}
+
+.barbie-shine {
+  position: relative;
+  overflow: hidden;
+}
+
+.barbie-shine::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, rgba(255, 255, 255, 0.38), transparent 42%, transparent 72%, rgba(233, 104, 146, 0.025));
+}
+
+/* 全局文本表单与输入框清晰度提升（严格排除 range 滑块与 radio/checkbox） */
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="email"],
+input[type="search"],
+input[type="url"],
+input[type="tel"],
+input:not([type]),
+textarea,
+select {
+  border-radius: 0.85rem !important;
+  color: #1f2937 !important;
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid #dfe3e8 !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.02);
+  font-weight: 500;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+input[type="email"]:focus,
+input[type="search"]:focus,
+input:not([type]):focus,
+textarea:focus,
+select:focus {
+  border-color: #e96892 !important;
+  outline: 2px solid rgba(233, 104, 146, 0.18) !important;
+  outline-offset: 1px;
+}
+
+input[type="text"]::placeholder,
+input[type="password"]::placeholder,
+input[type="number"]::placeholder,
+input[type="email"]::placeholder,
+input[type="search"]::placeholder,
+input[type="url"]::placeholder,
+input[type="tel"]::placeholder,
+input:not([type])::placeholder,
+textarea::placeholder {
+  color: #6b7280 !important;
+  opacity: 1 !important;
+  font-weight: 450;
+}
+
+select {
+  color: #1f2937 !important;
+}
+
+/* 酒馆台词与动作高对比度阅读强化 */
+.tavern-narrative-action {
+  color: #0284c7 !important;
+  font-style: italic;
+  font-weight: 600;
+  letter-spacing: 0.015em;
+}
+
+.tavern-narrative-dialogue {
+  color: #b45309 !important;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.tavern-narrative-thought {
+  color: #7e22ce !important;
+  font-style: italic;
+  font-weight: 600;
+  letter-spacing: 0.015em;
+}
+
+.tavern-narrative-bracket {
+  color: #047857 !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 600;
+}
+
+.tavern-quick-menu-title,
+.tavern-quick-menu-label {
+  color: #0f172a !important;
+  font-weight: 800 !important;
+}
+
+.tavern-quick-menu-hint {
+  color: #475569 !important;
+  opacity: 1 !important;
+}
+
+/* 隐藏滚动条 */
+.no-scrollbar::-webkit-scrollbar,
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar,
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* 樱花淡粉发光阴影类 */
+.pink-glow {
+  box-shadow: 0 10px 25px rgba(233, 104, 146, 0.12);
+}
+.pink-glow-sm {
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+.pink-glow-lg {
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.12);
+}
+.pink-border-glow {
+  border-color: rgba(233, 104, 146, 0.32);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 8px 20px rgba(15, 23, 42, 0.06);
+}
+
+@keyframes shrink {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
+/* =========================================================
+   🍎 Apple Liquid Glass & Fluid Glassmorphism Design System
+   ========================================================= */
+
+/* 1. 核心流体毛玻璃容器 (主卡片 / 悬浮视窗 / 顶栏底栏) */
+.liquid-glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 246, 251, 0.75) 100%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 
+    inset 0 2px 2.5px 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 1.5px 0 rgba(244, 63, 142, 0.05),
+    0 14px 36px -5px rgba(244, 63, 142, 0.10),
+    0 4px 12px -2px rgba(15, 23, 42, 0.03);
+}
+
+/* 2. 微光轻量流体玻璃 (用于子卡片、次级按钮、候选项) */
+.liquid-glass-subtle {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 245, 250, 0.68) 100%);
+  backdrop-filter: blur(12px) saturate(170%);
+  -webkit-backdrop-filter: blur(12px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 
+    inset 0 1.5px 2px 0 rgba(255, 255, 255, 1),
+    0 4px 16px 0 rgba(15, 23, 42, 0.03);
+}
+
+/* 3. 苹果风格悬浮底部 Dock (液态导览坞) */
+.liquid-dock {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.90) 0%, rgba(255, 246, 251, 0.80) 100%);
+  backdrop-filter: blur(20px) saturate(190%);
+  -webkit-backdrop-filter: blur(20px) saturate(190%);
+  border-top: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 
+    inset 0 2px 2px 0 rgba(255, 255, 255, 1),
+    0 -12px 40px -4px rgba(244, 63, 142, 0.10),
+    0 -2px 6px 0 rgba(15, 23, 42, 0.02);
+}
+
+/* 3.1 苹果原生吸底晶莹液态导览栏 (Bottom-anchored Liquid Bar) */
+.liquid-bottom-bar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 248, 252, 0.94) 100%);
+  backdrop-filter: blur(28px) saturate(210%);
+  -webkit-backdrop-filter: blur(28px) saturate(210%);
+  border-top: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 
+    0 -4px 20px -2px rgba(244, 63, 142, 0.08),
+    0 -1px 2px 0 rgba(15, 23, 42, 0.03),
+    inset 0 1px 1px 0 rgba(255, 255, 255, 1);
+}
+
+
+/* 4. 苹果风格悬浮顶栏 Header */
+.liquid-header {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 246, 251, 0.75) 100%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border-bottom: 1.5px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 
+    inset 0 -1px 1.5px 0 rgba(255, 255, 255, 0.98),
+    0 10px 32px -4px rgba(244, 63, 142, 0.06);
+}
+
+/* 5. 分段控制器液态轨道 (Segmented Control Track) */
+.liquid-pill-track {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 
+    inset 0 1.5px 2.5px 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 1.5px 0 rgba(244, 63, 142, 0.05),
+    0 6px 22px -2px rgba(244, 63, 142, 0.08);
+  border-radius: 9999px;
+}
+
+/* 6. 液态胶囊激活按钮 (Liquid Pill Active) */
+.liquid-pill-active {
+  background: linear-gradient(135deg, #f43f8e 0%, #e11d48 100%) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.65) !important;
+  box-shadow: 
+    inset 0 1.5px 2px 0 rgba(255, 255, 255, 0.75),
+    0 6px 18px -1px rgba(225, 29, 72, 0.32) !important;
+}
+
+/* 7. 液态白晶激活胶囊 (用于浅色背景高对比选中态) */
+.liquid-pill-glass-active {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 245, 250, 0.92) 100%) !important;
+  color: #be185d !important;
+  font-weight: 800 !important;
+  border: 1.5px solid rgba(255, 255, 255, 0.98) !important;
+  box-shadow: 
+    inset 0 2px 2px 0 #ffffff,
+    0 4px 16px -1px rgba(244, 63, 142, 0.20) !important;
+}
+
+/* 8. AI 角色剧情与对谈液态气泡 (兼具剔透玻璃质感与 100% 墨黑字体清晰度，零 GPU 卡顿渲染) */
+.liquid-bubble-ai {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 248, 252, 0.90) 100%);
+  border: 1.5px solid rgba(255, 255, 255, 0.98);
+  border-radius: 1.6rem;
+  box-shadow: 
+    0 0 0 1px rgba(255, 255, 255, 0.85),
+    inset 0 2px 2px 0 #ffffff,
+    inset 0 -1px 1.5px 0 rgba(244, 63, 142, 0.04),
+    0 8px 24px -3px rgba(244, 63, 142, 0.08),
+    0 2px 6px 0 rgba(15, 23, 42, 0.02);
+}
+
+/* 9. 狂暴瑟瑟态液态气泡 */
+.liquid-bubble-sese {
+  background: linear-gradient(135deg, rgba(255, 240, 248, 0.96) 0%, rgba(255, 245, 251, 0.90) 100%);
+  border: 1.5px solid rgba(244, 114, 182, 0.65);
+  border-radius: 1.6rem;
+  box-shadow: 
+    inset 0 2px 2px 0 #ffffff,
+    inset 0 -1px 2px 0 rgba(225, 29, 72, 0.10),
+    0 10px 28px -2px rgba(244, 63, 94, 0.16);
+}
+
+/* 10. 用户输入发送气泡 (液态晶莹渐变) */
+.liquid-bubble-user {
+  background: linear-gradient(135deg, #f43f8e 0%, #ec4899 50%, #f43f5e 100%);
+  color: #ffffff !important;
+  border: 1.5px solid rgba(255, 255, 255, 0.65);
+  border-radius: 1.6rem;
+  box-shadow: 
+    inset 0 2px 2px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -1px 2px 0 rgba(0, 0, 0, 0.12),
+    0 10px 28px -4px rgba(244, 63, 94, 0.32);
+}
+
+/* 11. 物理流体高光顶沿 (Apple Curved Glass Specular Highlight) */
+.liquid-specular {
+  position: relative;
+  overflow: hidden;
+}
+
+.liquid-specular::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 45%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.08) 65%, transparent 100%);
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 1;
+}
+
+/* 12. 微动感液态交互按钮 */
+.liquid-btn {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.liquid-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px -2px rgba(233, 104, 146, 0.18);
+}
+.liquid-btn:active {
+  transform: scale(0.96);
+}
+
+/* 13. 选中态流体毛边高光卡片 (Feathered Rim Highlight Card) */
+.liquid-card-selected {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 240, 248, 0.78) 100%) !important;
+  backdrop-filter: blur(16px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(190%) !important;
+  border: 1.5px solid rgba(244, 114, 182, 0.65) !important;
+  border-radius: 1.75rem !important;
+  box-shadow: 
+    0 0 0 1.5px rgba(255, 255, 255, 0.95),
+    0 0 28px 6px rgba(233, 104, 146, 0.18),
+    inset 0 2px 2px 0 #ffffff,
+    0 16px 44px -4px rgba(233, 104, 146, 0.14) !important;
+}
+
+/* 14. 超感毛边玻璃容器 (Feathered Edge Frosted Glass) */
+.frosted-feather-glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.76) 0%, rgba(255, 246, 251, 0.62) 100%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  border-radius: 1.5rem;
+  box-shadow: 
+    0 0 0 1px rgba(255, 255, 255, 0.75),
+    0 0 20px 2px rgba(255, 255, 255, 0.7),
+    inset 0 1.5px 2px 0 rgba(255, 255, 255, 0.98),
+    0 12px 32px -4px rgba(233, 104, 146, 0.08);
+}
+
+/* 15. 流体微晶胶囊标签 (Liquid Feather Chip - 零开销高光胶囊) */
+.liquid-chip {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 245, 250, 0.82) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.95) !important;
+  box-shadow: 
+    0 0 0 1px rgba(255, 255, 255, 0.75),
+    inset 0 1px 1.5px rgba(255, 255, 255, 1),
+    0 2px 8px rgba(233, 104, 146, 0.06);
+  border-radius: 9999px;
+  font-weight: 700;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.liquid-chip:hover {
+  background: rgba(255, 255, 255, 0.98) !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.95), 0 0 14px rgba(233, 104, 146, 0.18);
+  transform: translateY(-0.5px);
+}
+.liquid-chip:active {
+  transform: scale(0.96);
+}
+
+/* 16. 流体拟物输入控件 (Liquid Input - 高响应无卡顿输入框) */
+.liquid-input {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border: 1px solid rgba(255, 255, 255, 0.95) !important;
+  box-shadow: 
+    inset 0 1.5px 3px 0 rgba(15, 23, 42, 0.03),
+    inset 0 -0.5px 1px 0 rgba(255, 255, 255, 0.95),
+    0 3px 10px rgba(233, 104, 146, 0.05) !important;
+  border-radius: 1.25rem !important;
+  color: #1f2937 !important;
+  font-weight: 500;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+.liquid-input:focus {
+  background: rgba(255, 255, 255, 0.98) !important;
+  border-color: rgba(244, 63, 142, 0.55) !important;
+  box-shadow: 
+    0 0 0 3px rgba(233, 104, 146, 0.16),
+    inset 0 1px 2px 0 rgba(15, 23, 42, 0.02) !important;
+}
+

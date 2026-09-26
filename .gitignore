@@ -1,0 +1,73 @@
+# Dependencies and frontend output
+node_modules/
+dist/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+android/local.properties
+google-services.json
+
+# Android and IDE output
+android/.gradle/
+android/.idea/
+android/.kotlin/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/src/main/res/xml/config.xml
+.idea/
+.vscode/
+
+# iOS synced output (cap sync 生成，不入库)
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/App/Pods/
+ios/App/build/
+
+# Cloudflare Wrangler local state
+.wrangler/
+
+# Runtime data, exports, logs and release artifacts
+*.log
+*.apk
+*.aab
+*.zip
+ota_manifest.json
+com.yiciyuan.aicontroller_*.zip
+*.local.json
+*.backup.json
+*.public.json
+effects_check.txt
+tsc_errors.txt
+yolo.txt
+
+# Python caches and downloaded model weights
+__pycache__/
+*.py[cod]
+*.pt
+*.onnx
+
+# Historical one-off migration scripts
+/patch*.cjs
+/fix*.cjs
+/create.py
+/clean.py
+/removeOldChoreo.cjs
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# 临时参考材料（摄像头说明书等）
+tmp/

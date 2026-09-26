@@ -1,0 +1,13 @@
+name = "phantouch-updates"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+# R2 存储桶：存放 manifest.json 和热更新 zip 包
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "phantouch-update"
+
+[vars]
+# 只允许本应用的 appId 拉取更新；留空表示不限制
+ALLOWED_APP_IDS = "com.yiciyuan.aicontroller"

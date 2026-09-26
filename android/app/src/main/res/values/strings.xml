@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">幻触 Phantouch</string>
+    <string name="title_activity_main">幻触 Phantouch</string>
+    <string name="package_name">com.yiciyuan.aicontroller</string>
+    <string name="custom_url_scheme">com.yiciyuan.aicontroller</string>
+</resources>

@@ -1,0 +1,34 @@
+{
+  "name": "幻触 Phantouch - AI 伴侣与感官智控中枢",
+  "short_name": "幻触",
+  "description": "让大模型控制你的电击器、飞机杯与智能灌肠机",
+  "start_url": "/",
+  "id": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fff5fa",
+  "theme_color": "#fff5fa",
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "AI 伴侣对话",
+      "short_name": "AI 伴侣",
+      "description": "打开 AI 沉浸调教伴侣",
+      "url": "/#chat",
+      "icons": [{ "src": "/icon-192.svg", "sizes": "192x192" }]
+    }
+  ]
+}

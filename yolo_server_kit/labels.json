@@ -1,0 +1,31 @@
+{
+  "names": {
+    "0": "bound_kowtow",
+    "1": "dog",
+    "2": "fetal",
+    "3": "hands_up",
+    "4": "kneel",
+    "5": "kneel_ears",
+    "6": "kowtow",
+    "7": "m_kneel",
+    "8": "seiza",
+    "9": "spread_eagle",
+    "10": "surrender",
+    "11": "unknown"
+  },
+  "class_map": {
+    "unknown": "01_unknown_日常站立与日常动作",
+    "dog": "02_dog_四足趴跪爬行",
+    "kneel": "03_kneel_双膝跪地直立",
+    "kowtow": "04_kowtow_叩拜五体投地",
+    "hands_up": "05_hands_up_双手抱脑后",
+    "surrender": "06_surrender_双手高举投降",
+    "fetal": "07_fetal_侧卧抱膝蜷缩",
+    "spread_eagle": "08_spread_eagle_大字型张开",
+    "seiza": "09_seiza_下士坐与正座",
+    "bound_kowtow": "11_bound_kowtow_反剪束手伏首",
+    "kneel_ears": "13_kneel_ears_双手揪耳跪立",
+    "m_kneel": "15_m_kneel_M字开腿跪姿"
+  },
+  "input_size": 224
+}

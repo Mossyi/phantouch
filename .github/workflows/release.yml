@@ -1,0 +1,163 @@
+name: Release
+
+# 打 tag（v1.1.0）或手动触发时：构建 Web 热更新包 + APK，并统一发布到 Cloudflare R2。
+# 代码仓库保持私有，发布物通过自托管 Worker 对外分发。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      skip_ota:
+        description: '跳过热更新包发布'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  OTA_BUCKET: phantouch-update
+
+jobs:
+  build-web:
+    name: 构建 Web 与热更新包
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查与测试
+        run: npx tsc --noEmit && npm test
+
+      - name: 生产构建
+        run: npx vite build
+
+      - name: 生成热更新包与差分清单
+        if: ${{ !inputs.skip_ota }}
+        run: node scripts/build-ota-bundle.mjs
+
+      - name: 上传 Web 构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: dist
+          retention-days: 7
+
+      - name: 上传热更新产物
+        if: ${{ !inputs.skip_ota }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ota-bundle
+          path: |
+            ota_manifest.json
+            com.yiciyuan.aicontroller_*.zip
+          retention-days: 7
+
+  build-apk:
+    name: 构建 Android APK
+    runs-on: ubuntu-latest
+    needs: build-web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 下载 Web 构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: dist
+
+      - name: 同步到 Android 工程
+        run: npx cap sync android
+
+      - name: 编译 APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: 重命名 APK
+        run: |
+          mkdir -p release
+          cp android/app/build/outputs/apk/debug/app-debug.apk release/Phantouch.apk
+
+      - name: 上传 APK 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: release/Phantouch.apk
+          retention-days: 7
+
+  publish:
+    name: 发布到 Cloudflare R2
+    runs-on: ubuntu-latest
+    needs: [build-web, build-apk]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 下载热更新产物
+        if: ${{ !inputs.skip_ota }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ota-bundle
+          path: .
+
+      - name: 下载 APK
+        uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: release
+
+      - name: 生成 APK 更新清单
+        env:
+          UPDATE_ORIGIN: ${{ secrets.UPDATE_ORIGIN }}
+        run: |
+          ORIGIN="${UPDATE_ORIGIN:-https://phantouch-updates.workers.dev}"
+          node scripts/publish-update.mjs --apk release/Phantouch.apk --origin "$ORIGIN"
+
+      - name: 安装 wrangler
+        run: npm install --no-save wrangler@^3.99.0
+
+      - name: 上传发布物到 R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          UPDATE_ORIGIN: ${{ secrets.UPDATE_ORIGIN }}
+        run: |
+          ORIGIN="${UPDATE_ORIGIN:-https://phantouch-updates.workers.dev}"
+          node scripts/upload-release.mjs \
+            --bucket "$OTA_BUCKET" \
+            --apk release/Phantouch.apk \
+            --worker-url "$ORIGIN"
