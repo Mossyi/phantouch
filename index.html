@@ -17,6 +17,34 @@
     
     <title>幻触 Phantouch - AI 伴侣与感官智控中枢</title>
 
+    <script>
+      // 拦截老旧系统/Capacitor 在软键盘弹起时误将键盘高度注入 --safe-area-inset-bottom 的缺陷 (Capacitor Issue #8329)
+      (function() {
+        try {
+          var originalSetProperty = CSSStyleDeclaration.prototype.setProperty;
+          CSSStyleDeclaration.prototype.setProperty = function(property, value, priority) {
+            if (property === '--safe-area-inset-bottom') {
+              var px = parseFloat(value);
+              if (!isNaN(px) && px > 36) {
+                value = '0px';
+              }
+            }
+            return originalSetProperty.call(this, property, value, priority);
+          };
+
+          var originalSetAttribute = Element.prototype.setAttribute;
+          Element.prototype.setAttribute = function(name, value) {
+            if (name === 'style' && typeof value === 'string' && value.indexOf('--safe-area-inset-bottom') !== -1) {
+              value = value.replace(/--safe-area-inset-bottom\s*:\s*([0-9.]+)px/g, function(match, p1) {
+                return parseFloat(p1) > 36 ? '--safe-area-inset-bottom: 0px' : match;
+              });
+            }
+            return originalSetAttribute.call(this, name, value);
+          };
+        } catch (e) {}
+      })();
+    </script>
+
   </head>
   <body class="text-slate-800 antialiased select-none overflow-hidden h-full">
     <div id="root" class="h-full"></div>

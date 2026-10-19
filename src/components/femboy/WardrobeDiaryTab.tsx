@@ -476,7 +476,7 @@ export const WardrobeDiaryTab: React.FC = () => {
 
       {showEditor && (
         <div className="fixed inset-0 z-[80] flex items-end justify-center bg-[#1f2937]/45 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-          <div className="max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-[#f7f7f8] shadow-2xl sm:rounded-[30px]">
+          <div className="max-h-[92vh] max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-[30px] bg-[#f7f7f8] shadow-2xl sm:rounded-[30px]">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#eadde2] bg-white/95 px-4 py-3 backdrop-blur"><div><p className="text-[9px] font-black tracking-[0.16em] text-[#d94d7f]">WARDROBE ENTRY</p><h3 className="text-sm font-black text-[#263247]">{selectedOutfit.category === 'toy' ? (editingId ? '编辑用品体验记录' : '记录用品体验') : (editingId ? '编辑穿搭记录' : '记录今天的穿搭')}</h3></div><button type="button" onClick={closeEditor} aria-label="关闭" className="grid h-9 w-9 place-items-center rounded-full bg-[#f5f6f8] text-[#536273]"><X className="h-4 w-4" /></button></div>
 
             <div className="space-y-4 p-4">

@@ -4,6 +4,7 @@ import { DeviceStatusBar } from './components/DeviceStatusBar';
 import { FloatingEmergencyStop } from './components/EmergencyStopBtn';
 import { PWAInstallBanner } from './components/PWAInstallBanner';
 import { ContractSurgeModal } from './components/ContractSurgeModal';
+import { OutputRefusalToast } from './components/OutputRefusalToast';
 import { FloatingPipWindow } from './components/FloatingPipWindow';
 import { GlobalUpdateChecker } from './components/GlobalUpdateChecker';
 import { ChatView } from './views/ChatView';
@@ -74,6 +75,123 @@ export const App: React.FC = () => {
     }
   }, [activeTab, setActiveTab]);
 
+  const [isKeyboardOpen, setIsKeyboardOpen] = React.useState(false);
+
+  // 视口与软键盘协同管理（全平台兼顾：Android 10/小米 8 原生收缩、现代手机 Android 14/iOS、Web 端）
+  React.useEffect(() => {
+    let removePluginListeners: (() => void) | undefined;
+
+    // 1. 优先使用 Capacitor Keyboard 插件官方事件（针对 Android 11+ 及 iOS）
+    import('@capacitor/keyboard')
+      .then(({ Keyboard }) => {
+        const showHandle = Keyboard.addListener('keyboardWillShow', () => setIsKeyboardOpen(true));
+        const hideHandle = Keyboard.addListener('keyboardWillHide', () => setIsKeyboardOpen(false));
+        removePluginListeners = () => {
+          showHandle.then((h) => h.remove()).catch(() => {});
+          hideHandle.then((h) => h.remove()).catch(() => {});
+        };
+      })
+      .catch(() => {});
+
+    // 2. 双重保底机制：基于视口高度收缩判定软键盘状态（针对 Android 10、老旧机型及 Web 端）
+    let initialHeight = typeof window !== 'undefined'
+      ? Math.max(window.innerHeight, window.screen?.height ? Math.round(window.screen.height / (window.devicePixelRatio || 1)) : 0, 750)
+      : 800;
+
+    const checkViewportHeight = () => {
+      const h = window.innerHeight;
+      const vh = window.visualViewport?.height ?? h;
+      const minH = Math.min(h, vh);
+
+      if (minH >= initialHeight - 50) {
+        initialHeight = Math.max(initialHeight, minH);
+      }
+
+      const diff = initialHeight - minH;
+      if (diff > 140) {
+        setIsKeyboardOpen(true);
+      } else if (diff < 70) {
+        setIsKeyboardOpen(false);
+      }
+    };
+
+    const handleFocusCheck = () => {
+      requestAnimationFrame(checkViewportHeight);
+      setTimeout(checkViewportHeight, 150);
+      setTimeout(checkViewportHeight, 350);
+      setTimeout(checkViewportHeight, 600);
+    };
+
+    window.addEventListener('resize', checkViewportHeight);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', checkViewportHeight);
+    }
+    window.addEventListener('focusin', handleFocusCheck);
+    window.addEventListener('focusout', handleFocusCheck);
+    const handleOrientationChange = () => {
+      setTimeout(() => {
+        initialHeight = window.innerHeight;
+        checkViewportHeight();
+      }, 300);
+    };
+    window.addEventListener('orientationchange', handleOrientationChange);
+
+    // 捕获阶段拦截：若非允许滚动的内部容器产生任何滚动，强制归零，防止父容器被上推产生空白
+    const handleOuterScroll = (e?: Event) => {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+      const target = e?.target;
+      if (target && target instanceof HTMLElement) {
+        if (
+          target.classList.contains('overflow-y-auto') ||
+          target.classList.contains('overflow-x-auto') ||
+          target.dataset.allowScroll === 'true'
+        ) {
+          return;
+        }
+        if (target.scrollTop !== 0) target.scrollTop = 0;
+        if (target.scrollLeft !== 0) target.scrollLeft = 0;
+      }
+    };
+
+    // 获得焦点时重置非滚动容器的偏移
+    const resetNonScrollContainers = () => {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+      const frames = document.querySelectorAll<HTMLElement>('.app-viewport, main, #root');
+      frames.forEach((el) => {
+        if (el.scrollTop !== 0) el.scrollTop = 0;
+        if (el.scrollLeft !== 0) el.scrollLeft = 0;
+      });
+    };
+
+    window.addEventListener('scroll', handleOuterScroll, { capture: true, passive: true });
+    window.addEventListener('focusin', resetNonScrollContainers, { capture: true });
+
+    return () => {
+      removePluginListeners?.();
+      window.removeEventListener('resize', checkViewportHeight);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', checkViewportHeight);
+      }
+      window.removeEventListener('orientationchange', handleOrientationChange);
+      window.removeEventListener('focusin', handleFocusCheck);
+      window.removeEventListener('focusout', handleFocusCheck);
+      window.removeEventListener('focusin', resetNonScrollContainers, { capture: true });
+    };
+  }, []);
+
+  // 动态同步 body.keyboard-open 类，驱动底部输入框紧贴软键盘
+  React.useEffect(() => {
+    if (isKeyboardOpen) {
+      document.body.classList.add('keyboard-open');
+    } else {
+      document.body.classList.remove('keyboard-open');
+    }
+  }, [isKeyboardOpen]);
+
   // 判定当前主 Tab 激活状态
   const isDisciplineActive = ['control', 'patterns', 'heartrate', 'edging', 'contract'].includes(activeTab);
   const isSpaceActive = ['achievements', 'device', 'settings'].includes(activeTab);
@@ -132,7 +250,7 @@ export const App: React.FC = () => {
   ];
 
   return (
-    <div className="h-[100dvh] flex flex-col bg-transparent text-slate-800 select-none overflow-hidden relative">
+    <div className="app-viewport fixed inset-0 flex flex-col bg-transparent text-slate-800 select-none overflow-hidden w-full">
       {/* 🌸 visionOS High-Performance Luxury Liquid Ambient Mesh (Zero-GPU-Lag Gradient Mesh) */}
       <div
         className="pointer-events-none fixed inset-0 z-0"
@@ -157,23 +275,27 @@ export const App: React.FC = () => {
       {/* 突击查岗悬浮响应弹窗 */}
       <ContractSurgeModal />
 
+      {/* 电击被拒绝（急停锁 / 通道上限为 0 / 强度为 0）时的可见提示，
+          避免"点了没反应"的静默失败 */}
+      <OutputRefusalToast />
+
       {/* 主视图区域 (自适应填满剩余空间，杜绝双滚动条) */}
       <main className="flex-1 min-h-0 flex flex-col relative overflow-hidden">
         <Suspense fallback={<div className="flex-1 grid place-items-center text-sm font-bold text-pink-500">正在打开…</div>}>
           {activeTab === 'chat' && <ChatView />}
           {activeTab === 'tavern' && <TavernView />}
           {(activeTab === 'femboy_training' || activeTab === ('dungeon' as any)) && (
-            <div className="flex-1 min-h-0 overflow-y-auto pb-16">
+            <div className="flex-1 min-h-0 overflow-y-auto pb-16 overscroll-contain">
               <FemboyTrainingView />
             </div>
           )}
           {isDisciplineActive && (
-            <div className="flex-1 min-h-0 overflow-y-auto pb-16">
+            <div className="flex-1 min-h-0 overflow-y-auto pb-16 overscroll-contain">
               <DisciplineHubView />
             </div>
           )}
           {isSpaceActive && (
-            <div className="flex-1 min-h-0 overflow-y-auto pb-16">
+            <div className="flex-1 min-h-0 overflow-y-auto pb-16 overscroll-contain">
               <SpaceHubView />
             </div>
           )}
@@ -190,8 +312,12 @@ export const App: React.FC = () => {
       <GlobalUpdateChecker />
 
       {/* 🍎 苹果原生晶莹吸底导览栏 (Bottom-anchored Liquid Bar) */}
-      <nav className="fixed bottom-0 left-0 right-0 z-30 w-full liquid-bottom-bar select-none">
-        <div className="w-full grid grid-cols-5 items-center px-2 pt-1.5 pb-[max(0.35rem,env(safe-area-inset-bottom,0px))]">
+      <nav
+        className={`absolute bottom-0 left-0 right-0 z-30 w-full liquid-bottom-bar select-none transition-all duration-200 ${
+          isKeyboardOpen ? 'translate-y-full opacity-0 pointer-events-none' : 'translate-y-0 opacity-100 pointer-events-auto'
+        }`}
+      >
+        <div className="w-full grid grid-cols-5 items-center px-2 pt-1.5 pb-[clamp(0.35rem,env(safe-area-inset-bottom,0px),1.75rem)]">
           {mainTabs.map((tab) => {
             const Icon = tab.icon;
             const active = tab.isActive;

@@ -216,7 +216,13 @@ export const SceneDirectorTab: React.FC<SceneDirectorTabProps> = ({
     if (strength <= 0) return;
     lastEmsAtRef.current = now;
     try {
-      const waveResult = await manager.sendEmsWave('AB', step.kind === 'finale' ? 'pulse_train' : 'breathe');
+      // autoStartStrength:false —— 下一行马上给出本幕真实强度，无需波形先起振。
+      const waveResult = await manager.sendEmsWave(
+        'AB',
+        step.kind === 'finale' ? 'pulse_train' : 'breathe',
+        undefined,
+        { autoStartStrength: false },
+      );
       if (resultRejected(waveResult)) throw new Error(String(waveResult));
       const strengthResult = await manager.setEmsStrength('AB', strength);
       if (resultRejected(strengthResult)) throw new Error(String(strengthResult));

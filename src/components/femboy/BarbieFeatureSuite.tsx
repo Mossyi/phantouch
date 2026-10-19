@@ -4,6 +4,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { LLMClient } from '../../core/ai/llmClient';
 import { parseBoundedStringArray } from '../../core/ai/structuredOutput';
 import { DeviceManager } from '../../core/deviceManager';
+import { resolveEnabledEmsCeiling } from '../../core/safetyLimits';
 import { PitchData, PitchTracker } from '../../core/voice/pitchTracker';
 import { TTSManager } from '../../core/voice/ttsManager';
 import { HeartRateState } from '../../types';
@@ -376,7 +377,8 @@ const PostureCorrector: React.FC<{ state: SuiteState; update: (patch: Partial<Su
   stateRef.current = state;
   hardwareOptInRef.current = hardwareOptIn;
 
-  const emsMaximum = Math.min(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB);
+  // 可用上限取"已启用的最强通道"：只贴一路电极片（另一路上限为 0）时不应整体禁用。
+  const emsMaximum = resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200);
   const hardwareAllowed = !safetyConfig.emergencyLock
     && emsMaximum > 0;
   const isActive = phase !== 'idle';
@@ -985,7 +987,7 @@ const DailyRituals: React.FC<{
   const voicePromptsEnabledRef = useRef(false);
   const completedTaskIds = getCompletedBarbieRitualTaskIds(state.rituals);
   const completedCount = completedTaskIds.length;
-  const emsMaximum = Math.min(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB);
+  const emsMaximum = resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200);
   const canOfferHardware = !safetyConfig.emergencyLock && emsMaximum > 0;
   hardwareOptInRef.current = hardwareOptIn;
   voicePromptsEnabledRef.current = voicePromptsEnabled;

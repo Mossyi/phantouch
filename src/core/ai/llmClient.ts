@@ -542,9 +542,11 @@ export class LLMClient {
           // 执行工具动作
           const execResult = !argsValid
             ? { success: false, summary: '工具参数不是有效的 JSON 对象，未执行' }
-            : aiSafetyStopTriggered && fnName !== 'get_device_status'
-              ? { success: false, summary: '本轮已执行 AI 安全停止，后续硬件指令已忽略' }
-              : await this.executeTool(fnName, fnArgs);
+            : !this.hardwareToolsEnabled && fnName !== 'get_device_status'
+              ? { success: false, summary: '硬件调控已被用户关闭（纯文字安全模式），指令已忽略' }
+              : aiSafetyStopTriggered && fnName !== 'get_device_status'
+                ? { success: false, summary: '本轮已执行 AI 安全停止，后续硬件指令已忽略' }
+                : await this.executeTool(fnName, fnArgs);
           if (fnName === 'emergency_stop' && execResult.success) {
             aiSafetyStopTriggered = true;
           }
@@ -606,13 +608,21 @@ export class LLMClient {
         case 'set_ems_strength': {
           const channel = channelArg();
           const strength = numberArg('strength', 0, 0, 200);
-          const res = await this.deviceManager.setEmsStrength(channel, strength);
+          // 模型不应拥有"无限期电击"的能力：每次下发都必须带时长，缺省 5 秒后自动归零。
+          const holdSec = numberArg('duration_sec', 5, 1, 60);
+          const res = await this.deviceManager.setEmsStrength(
+            channel,
+            strength,
+            strength > 0 ? holdSec : undefined,
+          );
           return commandResult(res);
         }
         case 'send_ems_wave': {
           const channel = channelArg();
           const waveName = String(args.wave_name || 'breathe').slice(0, 100);
-          const res = await this.deviceManager.sendEmsWave(channel, waveName);
+          // 兼容旧字段名 duration；对外统一按 duration_sec 暴露给模型。
+          const durationSec = numberArg('duration_sec', numberArg('duration', 5, 1, 60), 1, 60);
+          const res = await this.deviceManager.sendEmsWave(channel, waveName, durationSec);
           return commandResult(res);
         }
         case 'set_toy_motor': {

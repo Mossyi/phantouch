@@ -15,7 +15,11 @@ export class TavernCardParser {
   }
 
   private static decodeBase64Utf8(value: string): string {
-    const binary = atob(value.replace(/\s+/g, ''));
+    let clean = value.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+    while (clean.length % 4 !== 0) {
+      clean += '=';
+    }
+    const binary = atob(clean);
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
     return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
   }
@@ -51,17 +55,27 @@ export class TavernCardParser {
     const entries = value.slice(0, 200).map((rawEntry, index) => {
       if (!rawEntry || typeof rawEntry !== 'object') return null;
       const entry = rawEntry as Record<string, unknown>;
-      const keywords = this.cleanStringList(
-        Array.isArray(entry.keys) ? entry.keys : entry.keywords,
-        30,
-        100,
-      );
+      const rawKeys = Array.isArray(entry.keys)
+        ? entry.keys
+        : typeof entry.keys === 'string'
+          ? (entry.keys as string).split(',').map((k) => k.trim()).filter(Boolean)
+          : Array.isArray(entry.keywords)
+            ? entry.keywords
+            : typeof entry.keywords === 'string'
+              ? (entry.keywords as string).split(',').map((k) => k.trim()).filter(Boolean)
+              : [];
+      const keywords = this.cleanStringList(rawKeys, 30, 100);
       if (keywords.length === 0 || typeof entry.content !== 'string' || !entry.content.trim()) return null;
-      const secondaryKeywords = this.cleanStringList(
-        Array.isArray(entry.secondary_keys) ? entry.secondary_keys : entry.secondaryKeywords,
-        30,
-        100,
-      );
+      const rawSecKeys = Array.isArray(entry.secondary_keys)
+        ? entry.secondary_keys
+        : typeof entry.secondary_keys === 'string'
+          ? (entry.secondary_keys as string).split(',').map((k) => k.trim()).filter(Boolean)
+          : Array.isArray(entry.secondaryKeywords)
+            ? entry.secondaryKeywords
+            : typeof entry.secondaryKeywords === 'string'
+              ? (entry.secondaryKeywords as string).split(',').map((k) => k.trim()).filter(Boolean)
+              : [];
+      const secondaryKeywords = this.cleanStringList(rawSecKeys, 30, 100);
       return {
         id: `cardbook_${index}_${String(entry.id ?? entry.uid ?? index).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 60)}`,
         keywords: [...new Set(keywords)],
@@ -116,10 +130,12 @@ export class TavernCardParser {
       return {
         id: this.createId(),
         name: this.cleanText(charData.name, '未命名酒馆角色', 100),
-        avatar: this.cleanText(charData.avatar || charData.avatar_url || charData.cover, '🎴', 200000),
+        avatar: this.cleanText(charData.avatar || charData.avatar_url || charData.cover, '🎴', 300000),
         tag: Array.isArray(charData.tags)
           ? charData.tags.filter((tag: unknown): tag is string => typeof tag === 'string').slice(0, 30).join('/').slice(0, 120) || 'SillyTavern角色'
-          : this.cleanText(charData.character_book?.name, 'SillyTavern角色', 120),
+          : typeof charData.tag === 'string' && charData.tag.trim()
+            ? this.cleanText(charData.tag, 'SillyTavern角色', 120)
+            : this.cleanText(charData.character_book?.name, 'SillyTavern角色', 120),
         description: this.cleanText(charData.description || charData.introduction || charData.intro, '', 12000),
         personality: this.cleanText(charData.personality, '', 8000),
         scenario: this.cleanText(charData.scenario, '', 8000),
@@ -273,15 +289,21 @@ export class TavernCardParser {
           let offset = 8;
           while (offset + 12 <= bytes.length) {
             const length = view.getUint32(offset, false);
-            if (length > 2_000_000 || offset + 12 + length > bytes.length) break;
+            if (offset + 12 + length > bytes.length) break;
             const type = String.fromCharCode(...bytes.slice(offset + 4, offset + 8));
-            const chunk = bytes.slice(offset + 8, offset + 8 + length);
-            if (type === 'tEXt') {
+            if (type === 'tEXt' && length <= 5_000_000) {
+              const chunk = bytes.slice(offset + 8, offset + 8 + length);
               const separator = chunk.indexOf(0);
               if (separator > 0) {
                 const keyword = new TextDecoder('latin1').decode(chunk.slice(0, separator));
                 if (keyword === 'chara' || keyword === 'ccv3') {
-                  encodedCard = new TextDecoder('latin1').decode(chunk.slice(separator + 1)).trim();
+                  const contentSlice = chunk.slice(separator + 1);
+                  // 优先检查是否为原始 JSON（以 { 开头），避免使用 latin1 损坏多字节 UTF-8 中文字符
+                  if (contentSlice.length > 0 && contentSlice[0] === 123 /* '{' */) {
+                    encodedCard = new TextDecoder('utf-8', { fatal: false }).decode(contentSlice).trim();
+                  } else {
+                    encodedCard = new TextDecoder('latin1').decode(contentSlice).trim();
+                  }
                   break;
                 }
               }
@@ -290,7 +312,15 @@ export class TavernCardParser {
           }
 
           if (encodedCard) {
-            const card = TavernCardParser.parseJsonCard(this.decodeBase64Utf8(encodedCard));
+            let jsonPayload = encodedCard;
+            if (!encodedCard.trim().startsWith('{')) {
+              try {
+                jsonPayload = this.decodeBase64Utf8(encodedCard);
+              } catch {
+                jsonPayload = encodedCard;
+              }
+            }
+            const card = TavernCardParser.parseJsonCard(jsonPayload);
             if (card) {
               card.source = 'imported_png';
               card.avatar = await this.createAvatarDataUrl(file);

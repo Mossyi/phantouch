@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 
 import { DeviceManager } from '../../core/deviceManager';
+import { resolveEnabledEmsCeiling } from '../../core/safetyLimits';
 import { TTSManager } from '../../core/voice/ttsManager';
 import { LLMClient } from '../../core/ai/llmClient';
 import { useAppStore } from '../../store/useAppStore';
@@ -207,7 +208,12 @@ export const PavlovLabTab: React.FC = () => {
     if (msg) void TTSManager.getInstance().speak(msg);
 
     const currentSafety = useAppStore.getState().safetyConfig;
-    const maxStrength = Math.min(currentSafety.maxEmsStrengthA, currentSafety.maxEmsStrengthB);
+    // 取"已启用的最强通道"：单通道用户（另一路上限为 0）不应因此永远取不到惩罚强度。
+    const maxStrength = resolveEnabledEmsCeiling(
+      currentSafety.maxEmsStrengthA,
+      currentSafety.maxEmsStrengthB,
+      200,
+    );
     const safeStrength = DeviceManager.getInstance().getRandomEmsStrength(Math.min(maxStrength, Math.round(strength)));
     if (currentSafety.emergencyLock || safeStrength === 0) return;
 

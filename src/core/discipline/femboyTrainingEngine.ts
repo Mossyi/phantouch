@@ -120,6 +120,16 @@ export class FemboyTrainingEngine {
     return FEMBOY_TRAINING_TASKS.find((t) => t.id === id);
   }
 
+  /**
+   * 可选外设（马达 / 灌肠）在 BLE 直连模式下必须真实在线才下发。
+   * 非 BLE 模式（仿真 / DG-LAB / Bridge）由对应协议自行处理，不在此过滤。
+   */
+  private isOptionalPeripheralAvailable(category: 'toy' | 'enema'): boolean {
+    const state = DeviceManager.getInstance().getState();
+    if (state.connectionMode !== 'ble') return true;
+    return state.devices[category].isConnected;
+  }
+
   private async applyHardwareConfig(task: TrainingTask, durationSeconds: number, generation: number) {
     const dev = DeviceManager.getInstance();
     const cfg = task.hardwareConfig;
@@ -128,26 +138,52 @@ export class FemboyTrainingEngine {
       this.state.activeSession?.taskId === task.id &&
       !this.state.activeSession.isPaused
     );
+
+    // 电击（EMS）是本次任务的核心输出：它失败才允许暂停任务并归零。
+    // 波形先选定，再发送包含当前模式的强度包，避免 BLE 写入队列读取到旧波形。
     try {
-      // 波形先选定，再发送包含当前模式的强度包，避免 BLE 写入队列读取到旧波形。
       if (!isCurrentSession()) return;
-      if (cfg.emsWave) await dev.sendEmsWave('AB', cfg.emsWave);
+      // autoStartStrength:false —— 紧随其后的 setEmsStrength 会给出任务真实档位
+      // （18/24/28/32 都低于默认随机下限 35），不能让波形先按安全下限起振。
+      if (cfg.emsWave) await dev.sendEmsWave('AB', cfg.emsWave, undefined, { autoStartStrength: false });
       if (!isCurrentSession()) return;
       if (cfg.emsStrengthA) await dev.setEmsStrength('A', cfg.emsStrengthA);
       if (!isCurrentSession()) return;
       if (cfg.emsStrengthB) await dev.setEmsStrength('B', cfg.emsStrengthB);
-      if (!isCurrentSession()) return;
-      if (cfg.toyPattern) await dev.playToyPattern(cfg.toyPattern, durationSeconds);
-      else if (cfg.toyMotorRate) await dev.setToyMotor(cfg.toyMotorRate, 0, 0);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const activeSession = this.state.activeSession;
       if (isCurrentSession() && activeSession) {
         activeSession.isPaused = true;
-        activeSession.currentTip = `硬件启动失败：${message}。任务已暂停，请检查设备类型或连接模式。`;
+        activeSession.currentTip = `电击设备启动失败：${message}。任务已暂停，请检查郊狼连接或连接模式。`;
         await this.stopHardwareOutputs();
         this.notify();
       }
+      return;
+    }
+
+    // 马达 / 灌肠属于可选外设：缺失或写入失败只跳过并留下提示，
+    // 绝不能反过来中止或归零已经开始输出的电击。
+    const skipped: string[] = [];
+    if (cfg.toyPattern || cfg.toyMotorRate) {
+      if (!this.isOptionalPeripheralAvailable('toy')) {
+        skipped.push('榨精机（未连接）');
+      } else {
+        try {
+          if (!isCurrentSession()) return;
+          if (cfg.toyPattern) await dev.playToyPattern(cfg.toyPattern, durationSeconds);
+          else if (cfg.toyMotorRate) await dev.setToyMotor(cfg.toyMotorRate, 0, 0);
+        } catch (error) {
+          skipped.push(`榨精机（${error instanceof Error ? error.message : String(error)}）`);
+        }
+      }
+    }
+
+    if (!isCurrentSession()) return;
+    const activeSession = this.state.activeSession;
+    if (activeSession && skipped.length > 0) {
+      activeSession.currentTip = `已跳过可选外设：${skipped.join('、')}。本次电击仍按上下限正常输出。`;
+      this.notify();
     }
   }
 
@@ -215,6 +251,10 @@ export class FemboyTrainingEngine {
   pauseTask() {
     if (this.state.activeSession) {
       this.sessionGeneration++;
+      if (this.timer) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
       this.state.activeSession.isPaused = true;
       void this.stopHardwareOutputs();
       this.notify();
@@ -226,6 +266,9 @@ export class FemboyTrainingEngine {
       const generation = ++this.sessionGeneration;
       this.state.activeSession.isPaused = false;
       this.state.activeSession.startedAt = Date.now() - (this.state.activeSession.totalSeconds - this.state.activeSession.remainingSeconds) * 1000;
+      if (!this.timer) {
+        this.timer = setInterval(() => this.tick(), 1000);
+      }
       const task = this.getTaskById(this.state.activeSession.taskId);
       if (task && this.state.activeSession.hardwareEnabled) {
         void this.applyHardwareConfig(task, this.state.activeSession.remainingSeconds, generation);
@@ -303,6 +346,7 @@ export class FemboyTrainingEngine {
     const stage1Count = FEMBOY_TRAINING_TASKS.filter((t) => t.stage === 1 && this.state.completedTaskIds.includes(t.id)).length;
     const stage2Count = FEMBOY_TRAINING_TASKS.filter((t) => t.stage === 2 && this.state.completedTaskIds.includes(t.id)).length;
     const stage3Count = FEMBOY_TRAINING_TASKS.filter((t) => t.stage === 3 && this.state.completedTaskIds.includes(t.id)).length;
+    const stage4Count = FEMBOY_TRAINING_TASKS.filter((t) => t.stage === 4 && this.state.completedTaskIds.includes(t.id)).length;
 
     if (stage3Count >= FEMBOY_STAGE_GUIDES[3].required) {
       this.state.currentStage = 4;

@@ -88,7 +88,7 @@ export const FemboyTrainingView: React.FC = () => {
   const allStageTasks = tasks.filter((task) => task.stage === selectedStage);
   const currentStageTasks = allStageTasks.filter((task) => taskCategory === 'all' || task.category === taskCategory);
   const totalCompleted = state.completedTaskIds.length;
-  const progressPercent = Math.round((totalCompleted / tasks.length) * 100);
+  const progressPercent = tasks.length > 0 ? Math.round((totalCompleted / tasks.length) * 100) : 0;
   const categoryOptions: Array<{ id: typeof taskCategory; label: string }> = [
     { id: 'all', label: '全部' }, { id: 'voice', label: '声线' }, { id: 'posture', label: '仪态' },
     { id: 'style', label: '造型' }, { id: 'story', label: '剧情' }, { id: 'mindfulness', label: '感知' }, { id: 'review', label: '复盘' },
@@ -99,19 +99,20 @@ export const FemboyTrainingView: React.FC = () => {
       setCampMessage('全局急停锁已开启，不能启动硬件训练。可以关闭本次硬件授权后使用纯剧情模式。');
       return;
     }
+    let skippedNote = '';
     if (campHardwareEnabled && deviceState.connectionMode === 'ble') {
       const needsEms = Boolean(task.hardwareConfig.emsStrengthA || task.hardwareConfig.emsStrengthB || task.hardwareConfig.emsWave);
       const needsToy = Boolean(task.hardwareConfig.toyMotorRate || task.hardwareConfig.toyPattern);
+      // 只有 EMS 是任务的核心输出；马达只是可选外设，缺失时跳过而不是拦下整个任务。
       if (needsEms && !deviceState.devices.ems.isConnected) {
-        setCampMessage('该任务包含可选 EMS 提示，但 EMS 尚未连接。');
+        setCampMessage('该任务需要郊狼 EMS 设备，但尚未连接。请先连接设备，或关闭硬件授权改用纯剧情模式。');
         return;
       }
       if (needsToy && !deviceState.devices.toy.isConnected) {
-        setCampMessage('该任务包含可选马达提示，但榨精机尚未连接。');
-        return;
+        skippedNote = '榨精机尚未连接，本次任务的马达提示会被自动跳过，电击部分照常执行。';
       }
     }
-    setCampMessage(campHardwareEnabled ? '已按本次授权启动；输出仍受硬件调控上下限约束。' : '纯剧情指导已启动，不会控制硬件。');
+    setCampMessage(skippedNote || (campHardwareEnabled ? '已按本次授权启动；输出仍受硬件调控上下限约束。' : '纯剧情指导已启动，不会控制硬件。'));
     engine.startTask(task.id, campHardwareEnabled);
   };
 

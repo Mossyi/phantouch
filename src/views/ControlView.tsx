@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { DeviceManager } from '../core/deviceManager';
+import { resolveEnabledEmsCeiling } from '../core/safetyLimits';
 import { EMSWaveEngine } from '../core/protocol/waveEngine';
 import { WaveVisualizer } from '../components/WaveVisualizer';
 import { MotorGauge } from '../components/MotorGauge';
@@ -21,12 +22,22 @@ export const ControlView: React.FC = () => {
   const [localStrengthA, setLocalStrengthA] = useState<number>(deviceState.ems.strengthA);
   const [localStrengthB, setLocalStrengthB] = useState<number>(deviceState.ems.strengthB);
 
+  // 拖拽防抖：拖拽期间不让设备回报覆盖本地滑块值
+  const isDraggingARef = useRef(false);
+  const isDraggingBRef = useRef(false);
+  const dragReleaseTimerA = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragReleaseTimerB = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   React.useEffect(() => {
-    setLocalStrengthA(deviceState.ems.strengthA);
+    if (!isDraggingARef.current) {
+      setLocalStrengthA(deviceState.ems.strengthA);
+    }
   }, [deviceState.ems.strengthA]);
 
   React.useEffect(() => {
-    setLocalStrengthB(deviceState.ems.strengthB);
+    if (!isDraggingBRef.current) {
+      setLocalStrengthB(deviceState.ems.strengthB);
+    }
   }, [deviceState.ems.strengthB]);
 
   const [activeCategory, setActiveCategory] = useState<'ems' | 'toy' | 'enema'>(() => {
@@ -69,6 +80,34 @@ export const ControlView: React.FC = () => {
       });
   };
 
+  // EMS 强度 debounce：确保最终值一定到达硬件（trailing-edge）
+  const pendingStrengthA = useRef<number | null>(null);
+  const pendingStrengthB = useRef<number | null>(null);
+  const strengthDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushPendingStrength = useCallback(() => {
+    const a = pendingStrengthA.current;
+    const b = pendingStrengthB.current;
+    pendingStrengthA.current = null;
+    pendingStrengthB.current = null;
+    if (a !== null) {
+      void deviceManager.setEmsStrength('A', a).catch(() => {});
+    }
+    if (b !== null) {
+      void deviceManager.setEmsStrength('B', b).catch(() => {});
+    }
+  }, [deviceManager]);
+
+  useEffect(() => {
+    return () => {
+      // 组件卸载时 flush 待发强度并清理定时器
+      if (strengthDebounceTimer.current) clearTimeout(strengthDebounceTimer.current);
+      flushPendingStrength();
+      if (dragReleaseTimerA.current) clearTimeout(dragReleaseTimerA.current);
+      if (dragReleaseTimerB.current) clearTimeout(dragReleaseTimerB.current);
+    };
+  }, [flushPendingStrength]);
+
   // EMS 手动控制
   const handleStrengthChange = (channel: 'A' | 'B', val: number) => {
     if (contractState?.isActive) {
@@ -81,12 +120,21 @@ export const ControlView: React.FC = () => {
     }
     const channelLimit = channel === 'A' ? safetyConfig.maxEmsStrengthA : safetyConfig.maxEmsStrengthB;
     const clamped = Math.max(0, Math.min(channelLimit, Math.round(val)));
+
+    // 标记拖拽状态，防止设备回报覆盖滑块位置
     if (channel === 'A') {
+      isDraggingARef.current = true;
       setLocalStrengthA(clamped);
+      if (dragReleaseTimerA.current) clearTimeout(dragReleaseTimerA.current);
+      dragReleaseTimerA.current = setTimeout(() => { isDraggingARef.current = false; }, 500);
     } else {
+      isDraggingBRef.current = true;
       setLocalStrengthB(clamped);
+      if (dragReleaseTimerB.current) clearTimeout(dragReleaseTimerB.current);
+      dragReleaseTimerB.current = setTimeout(() => { isDraggingBRef.current = false; }, 500);
     }
-    // 乐观立即刷新 UI
+
+    // 乐观立即刷新 UI（读取最新状态避免竞态）
     const current = useAppStore.getState().deviceState;
     if (channel === 'A') {
       useAppStore.setState({
@@ -97,7 +145,15 @@ export const ControlView: React.FC = () => {
         deviceState: { ...current, ems: { ...current.ems, strengthB: clamped, isShocking: clamped > 0 || current.ems.strengthA > 0 } }
       });
     }
-    runManualAction(() => deviceManager.setEmsStrength(channel, clamped));
+
+    // Debounce trailing-edge: 记录待发值，100ms 内无新事件则 flush 到硬件
+    if (channel === 'A') {
+      pendingStrengthA.current = clamped;
+    } else {
+      pendingStrengthB.current = clamped;
+    }
+    if (strengthDebounceTimer.current) clearTimeout(strengthDebounceTimer.current);
+    strengthDebounceTimer.current = setTimeout(flushPendingStrength, 100);
   };
 
   const handleQuickFire = (channel: 'A' | 'B' | 'AB', delta: number) => {
@@ -177,7 +233,7 @@ export const ControlView: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-3 border-t border-white/80 bg-white/40 backdrop-blur-md text-center">
-          <div className="px-2 py-2.5"><p className="text-[9px] font-bold text-slate-400">EMS 随机</p><p className="mt-0.5 font-mono text-[11px] font-black text-pink-700">{safetyConfig.minEmsStrength}–{Math.min(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB)}</p></div>
+          <div className="px-2 py-2.5"><p className="text-[9px] font-bold text-slate-400">EMS 随机</p><p className="mt-0.5 font-mono text-[11px] font-black text-pink-700">{safetyConfig.minEmsStrength}–{resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200)}</p></div>
           <div className="border-x border-white/80 px-2 py-2.5"><p className="text-[9px] font-bold text-slate-400">马达随机</p><p className="mt-0.5 font-mono text-[11px] font-black text-pink-700">{safetyConfig.minToyMotorRate}–{Math.max(safetyConfig.maxToyMotorARate, safetyConfig.maxToyMotorBRate, safetyConfig.maxToyMotorCRate)}</p></div>
           <div className="px-2 py-2.5"><p className="text-[9px] font-bold text-slate-400">水泵时长</p><p className="mt-0.5 font-mono text-[11px] font-black text-pink-700">{safetyConfig.minEnemaDurationSec}–{safetyConfig.maxEnemaDurationSec}s</p></div>
         </div>

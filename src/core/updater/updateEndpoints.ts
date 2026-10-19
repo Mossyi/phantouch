@@ -8,14 +8,14 @@
  * 对应服务端实现见 cloudflare/updater-worker/
  */
 
-const FALLBACK_ORIGIN = 'https://phantouch-updates.example.workers.dev';
+const FALLBACK_ORIGIN = 'https://phantouch-updates.mossyi.workers.dev';
 
 const normalizeOrigin = (value: unknown): string => {
   if (typeof value !== 'string') return '';
   return value.trim().replace(/\/+$/, '');
 };
 
-/** 更新服务根地址，例如 https://your-worker.your-subdomain.workers.dev */
+/** 更新服务根地址，例如 https://phantouch-updates.xxx.workers.dev */
 export const UPDATE_SERVICE_ORIGIN =
   normalizeOrigin(import.meta.env?.VITE_UPDATE_ORIGIN) || FALLBACK_ORIGIN;
 

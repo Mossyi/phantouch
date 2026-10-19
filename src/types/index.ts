@@ -79,8 +79,8 @@ export interface TtsVoiceProfile {
 }
 
 export interface SafetyConfig {
-  maxEmsStrengthA: number;  // 默认 100/200
-  maxEmsStrengthB: number;  // 默认 100/200
+  maxEmsStrengthA: number;  // 默认 200（= 硬件本体上限，需用户主动下调）
+  maxEmsStrengthB: number;  // 默认 200（= 硬件本体上限，需用户主动下调）
   minEmsStrength: number;   // 自动玩法随机电击下限，停止与手动控制不受影响
   maxToyMotorARate: number; // 默认 20 (A通道上限:主抽插/震动)
   maxToyMotorBRate: number; // 默认 20 (B通道上限:吮吸/夹紧)

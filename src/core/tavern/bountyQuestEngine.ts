@@ -86,7 +86,7 @@ export const normalizeStoredBountyQuests = (value: unknown): BountyQuest[] => {
     if (!stored) return { ...canonical };
     const rawCount = typeof stored.currentCount === 'number' ? stored.currentCount : Number(stored.currentCount);
     const currentCount = Number.isFinite(rawCount) ? Math.max(0, Math.min(canonical.targetCount, Math.round(rawCount))) : 0;
-    const completed = stored.status === 'completed' && currentCount >= canonical.targetCount;
+    const completed = stored.status === 'completed';
     const claimable = !completed && currentCount >= canonical.targetCount;
     const accepted = stored.status === 'in_progress' || stored.status === 'claimable';
     return { ...canonical, currentCount: completed || claimable ? canonical.targetCount : currentCount, status: completed ? 'completed' : claimable ? 'claimable' : (accepted || canonical.status === 'in_progress' ? 'in_progress' : 'available') };
@@ -141,6 +141,7 @@ export class BountyQuestEngine {
   acceptQuest(id: string): boolean { this.reloadFromStorage(); const quest = this.quests.find((item) => item.id === id); if (!quest || !this.canAcceptQuest(id)) return false; quest.status = 'in_progress'; this.save(); return true; }
   incrementProgress(category: BountyQuestCategory, amount: number = 1, context?: { strength?: number; wave?: string }) {
     if (!Number.isFinite(amount) || amount <= 0) return;
+    this.reloadFromStorage();
     const strength = Number.isFinite(context?.strength) ? context!.strength! : 0;
     const increment = Math.max(1, Math.round(amount));
     for (const quest of this.quests) {

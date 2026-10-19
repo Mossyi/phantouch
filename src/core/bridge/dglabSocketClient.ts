@@ -95,29 +95,45 @@ export class DGLabSocketClient {
 
         const currentWs = this.ws;
 
-        this.ws.onmessage = (event) => {
+        this.ws.onmessage = async (event) => {
           if (this.ws !== currentWs) return;
-          this.handleIncomingMessage(String(event.data || ''));
+          let text = '';
+          if (typeof event.data === 'string') {
+            text = event.data;
+          } else if (event.data instanceof Blob) {
+            text = await event.data.text();
+          } else if (event.data instanceof ArrayBuffer) {
+            text = new TextDecoder().decode(event.data);
+          } else {
+            text = String(event.data || '');
+          }
+          this.handleIncomingMessage(text);
         };
 
         this.ws.onerror = (err) => {
           console.warn('DG-LAB WebSocket 连接异常:', err);
-          if (this.ws !== currentWs) return;
           if (!isSettled) {
             isSettled = true;
             this.updateStatus('error', 'WebSocket 连接失败，请检查服务器地址与运行状态');
             reject(new Error('WebSocket 连接失败'));
-          } else {
+          } else if (this.ws === currentWs) {
             this.updateStatus('error', 'DG-LAB WebSocket 连接异常中断');
           }
         };
 
         this.ws.onclose = () => {
-          if (this.ws !== currentWs) return;
-          this.stopHeartbeat();
-          // 避免覆盖 onerror 已设置的 error 状态（WebSocket 规范保证 onerror 先于 onclose 触发）
-          if (this.status !== 'error') {
-            this.updateStatus('disconnected', 'WebSocket 连接已断开');
+          if (!isSettled) {
+            isSettled = true;
+            this.updateStatus('error', 'WebSocket 在完成连接前被关闭');
+            reject(new Error('WebSocket 在完成连接前被关闭'));
+          }
+          if (this.ws === currentWs) {
+            this.stopHeartbeat();
+            this.targetId = '';
+            // 避免覆盖 onerror 已设置的 error 状态（WebSocket 规范保证 onerror 先于 onclose 触发）
+            if (this.status !== 'error') {
+              this.updateStatus('disconnected', 'WebSocket 连接已断开');
+            }
           }
         };
       } catch (err: any) {

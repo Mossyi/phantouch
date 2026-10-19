@@ -53,62 +53,51 @@ export const HeartRateView: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let animId: number;
-    let offset = 0;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const render = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // 背景微弱网格
+    ctx.strokeStyle = 'rgba(244, 114, 182, 0.2)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < canvas.width; x += 20) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, canvas.height);
+      ctx.stroke();
+    }
+    for (let y = 0; y < canvas.height; y += 20) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(canvas.width, y);
+      ctx.stroke();
+    }
 
-      // 背景微弱网格
-      ctx.strokeStyle = 'rgba(244, 114, 182, 0.2)';
-      ctx.lineWidth = 1;
-      for (let x = 0; x < canvas.width; x += 20) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
-        ctx.stroke();
-      }
-      for (let y = 0; y < canvas.height; y += 20) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(canvas.width, y);
-        ctx.stroke();
-      }
+    // 心电折线
+    const pts = heartRateState.historyBpm;
+    if (pts.length > 1) {
+      ctx.beginPath();
+      const minB = 50;
+      const maxB = 180;
 
-      // 心电折线
-      const pts = heartRateState.historyBpm;
-      if (pts.length > 1) {
-        ctx.beginPath();
-        const minB = 50;
-        const maxB = 180;
+      ctx.strokeStyle =
+        heartRateState.currentZone === 'edge_climax'
+          ? '#f43f5e'
+          : heartRateState.currentZone === 'excited'
+          ? '#fbbf24'
+          : '#06b6d4';
+      ctx.lineWidth = 2.5;
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = ctx.strokeStyle;
 
-        ctx.strokeStyle =
-          heartRateState.currentZone === 'edge_climax'
-            ? '#f43f5e'
-            : heartRateState.currentZone === 'excited'
-            ? '#fbbf24'
-            : '#06b6d4';
-        ctx.lineWidth = 2.5;
-        ctx.shadowBlur = 8;
-        ctx.shadowColor = ctx.strokeStyle;
-
-        pts.forEach((p, idx) => {
-          const x = (idx / (pts.length - 1)) * canvas.width;
-          const normalized = Math.max(0, Math.min(1, (p.bpm - minB) / (maxB - minB)));
-          const y = canvas.height - normalized * (canvas.height - 20) - 10;
-          if (idx === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-      }
-
-      offset += 1;
-      animId = requestAnimationFrame(render);
-    };
-
-    render();
-    return () => cancelAnimationFrame(animId);
+      pts.forEach((p, idx) => {
+        const x = (idx / (pts.length - 1)) * canvas.width;
+        const normalized = Math.max(0, Math.min(1, (p.bpm - minB) / (maxB - minB)));
+        const y = canvas.height - normalized * (canvas.height - 20) - 10;
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
   }, [heartRateState.historyBpm, heartRateState.currentZone]);
 
   const getZoneInfo = () => {

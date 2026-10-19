@@ -63,10 +63,9 @@ export const DeviceView: React.FC = () => {
     try {
       if (category === 'ems') deviceManager.setEmsProtocolVersion(emsVersion);
       await deviceManager.connectBle(category);
-      if (category === 'ems') {
-        const detected = deviceManager.getEmsProtocolVersion();
-        if (detected) setEmsVersion(detected);
-      }
+      // 刻意不再把自动识别结果写回下拉框：那会让"用户的选择"变成"上次连接的记录"，
+      // 下次连接另一台设备时它又会作为识别提示，造成误判（详见 bleManager 中
+      // DEFAULT_EMS_PROTOCOL_VERSION 的说明）。真实协议以服务/名称识别为准。
     } catch (e: any) {
       const msg = e?.message || String(e);
       if (!msg.includes('cancelled') && !msg.includes('User cancelled') && !msg.includes('User canceled')) {
@@ -203,7 +202,7 @@ export const DeviceView: React.FC = () => {
             {([
               { id: 'ems', name: '连接电击设备 (EMS)', subtitle: '支持: 郊狼 Coyote 3.0 / 2.0 / 役次元全系列 (自动识别)' },
               { id: 'toy', name: '连接飞机杯 / 跳蛋', subtitle: '支持常见智能跳蛋 / 伸缩杯 BLE 直连' },
-              { id: 'enema', name: '连接智能灌肠机', subtitle: '支持智能注水机 / 肠道训练泵' }
+              { id: 'enema', name: '连接智能灌肠机', subtitle: '支持役次元 1.0 / 2.0 智能灌肠机 / 肠道训练注水泵 (自动识别)' }
             ] as const).map(cat => {
               const isConnectedBle = deviceState.connectionMode === 'ble' && deviceState.devices[cat.id].isConnected;
               return (

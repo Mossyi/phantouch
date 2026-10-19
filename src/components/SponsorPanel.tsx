@@ -5,8 +5,7 @@ interface SponsorPanelProps {
   onGoToAi?: () => void;
 }
 
-// 请替换为你自己的赞助页地址；留作占位以免开源仓库关联到原作者账号
-export const AFDIAN_PLAN_URL = 'https://afdian.com/a/your-account/plan';
+export const AFDIAN_PLAN_URL = 'https://afdian.com/a/CyberK/plan';
 
 export const SponsorPanel: React.FC<SponsorPanelProps> = ({ onGoToAi }) => {
   const [copiedLink, setCopiedLink] = useState(false);
@@ -100,7 +99,7 @@ export const SponsorPanel: React.FC<SponsorPanelProps> = ({ onGoToAi }) => {
             </div>
           </div>
           <span className="text-[9px] font-mono text-purple-700 bg-purple-100/80 px-2 py-0.5 rounded-full border border-purple-200 font-bold">
-            Creator
+            CyberK
           </span>
         </div>
 

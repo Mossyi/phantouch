@@ -14,6 +14,14 @@ export interface BLEDeviceInfo {
 export type EMSProtocolVersion = 'v1' | 'v2' | 'coyote_v2' | 'coyote_v3';
 
 /**
+ * EMS 协议版本的中性默认值（役次元固定模式）。
+ * 断开连接时必须复位到它：否则"上次连过郊狼"的版本会变成下一次设备识别的
+ * **提示条件**（见下面的 `this.emsProtocolVersion === 'coyote_v3'` 判断），
+ * 把役次元设备误判成郊狼，选错 GATT 特征 —— 表现为"已连接但完全无输出"。
+ */
+const DEFAULT_EMS_PROTOCOL_VERSION: EMSProtocolVersion = 'v2';
+
+/**
  * 役次元 BLE 蓝牙统一管理器 (超强容灾双轨架构：Capacitor 原生 App + Web Bluetooth)
  */
 export class BLEManager {
@@ -31,7 +39,7 @@ export class BLEManager {
   private activeServiceUuid: string = '';
   private activeWriteUuid: string = '';
   private activeNotifyUuid: string = '';
-  private emsProtocolVersion: EMSProtocolVersion = 'v2';
+  private emsProtocolVersion: EMSProtocolVersion = DEFAULT_EMS_PROTOCOL_VERSION;
   private cachedCharacteristics: Map<string, any> = new Map();
 
   private onNotifyCallback: ((data: Uint8Array) => void) | null = null;
@@ -129,7 +137,13 @@ export class BLEManager {
       } else if (targetCategory === 'toy') {
         optionalServices = [YCYToyProtocol.BLE_SERVICE_UUID];
       } else if (targetCategory === 'enema') {
-        optionalServices = [YCYEnemaProtocol.BLE_SERVICE_UUID, '0000ffe0-0000-1000-8000-00805f9b34fb'];
+        optionalServices = [
+          YCYEnemaProtocol.BLE_SERVICE_UUID,
+          YCYEnemaProtocol.BLE_SERVICE_V2_UUID,
+          '0000ff50-0000-1000-8000-00805f9b34fb',
+          '0000ffb0-0000-1000-8000-00805f9b34fb',
+          '0000ffe0-0000-1000-8000-00805f9b34fb',
+        ];
       }
 
       // 允许扫描所有包含常见役次元与郊狼特征的周边 BLE 广播设备
@@ -193,6 +207,8 @@ export class BLEManager {
           break;
         } else if (u.includes('ff30')) {
           category = 'ems';
+          // 役次元自有 EMS：显式复位版本，避免沿用上一次郊狼的协议。
+          this.emsProtocolVersion = DEFAULT_EMS_PROTOCOL_VERSION;
           this.activeServiceUuid = s.uuid;
           const w = s.characteristics?.find((c: any) => c.uuid.toLowerCase().includes('ff31'));
           const n = s.characteristics?.find((c: any) => c.uuid.toLowerCase().includes('ff32'));
@@ -210,18 +226,37 @@ export class BLEManager {
         } else if (u.includes('ffb0') || u.includes('ff50')) {
           category = 'enema';
           this.activeServiceUuid = s.uuid;
-          const w = s.characteristics?.find((c: any) => /ff(b1|51)/.test(c.uuid.toLowerCase()));
-          const n = s.characteristics?.find((c: any) => /ff(b2|52)/.test(c.uuid.toLowerCase()));
-          this.activeWriteUuid = w ? w.uuid : YCYEnemaProtocol.BLE_WRITE_UUID;
-          this.activeNotifyUuid = n ? n.uuid : YCYEnemaProtocol.BLE_NOTIFY_UUID;
+          const isV2 = u.includes('ff50');
+          const defaultWriteUuid = isV2 ? YCYEnemaProtocol.BLE_WRITE_V2_UUID : YCYEnemaProtocol.BLE_WRITE_UUID;
+          const defaultNotifyUuid = isV2 ? YCYEnemaProtocol.BLE_NOTIFY_V2_UUID : YCYEnemaProtocol.BLE_NOTIFY_UUID;
+          const w = s.characteristics?.find((c: any) => {
+            const cu = (c.uuid || '').toLowerCase();
+            return isV2 ? (cu.includes('ff51') || cu.includes('150a')) : (cu.includes('ffb1') || cu.includes('ff51'));
+          });
+          const n = s.characteristics?.find((c: any) => {
+            const cu = (c.uuid || '').toLowerCase();
+            return isV2 ? (cu.includes('ff52') || cu.includes('150b')) : (cu.includes('ffb2') || cu.includes('ff52'));
+          });
+          this.activeWriteUuid = w ? w.uuid : defaultWriteUuid;
+          this.activeNotifyUuid = n ? n.uuid : defaultNotifyUuid;
           break;
         } else if (u.includes('ffe0')) {
-          category = 'ems';
-          this.activeServiceUuid = s.uuid;
-          const w = s.characteristics?.find((c: any) => c.uuid.toLowerCase().includes('ffe1'));
-          this.activeWriteUuid = w ? w.uuid : '0000ffe1-0000-1000-8000-00805f9b34fb';
-          this.activeNotifyUuid = this.activeWriteUuid;
-          break;
+          if (targetCategory === 'enema') {
+            category = 'enema';
+            this.activeServiceUuid = s.uuid;
+            const w = s.characteristics?.find((c: any) => (c.uuid || '').toLowerCase().includes('ffe1'));
+            this.activeWriteUuid = w ? w.uuid : '0000ffe1-0000-1000-8000-00805f9b34fb';
+            this.activeNotifyUuid = this.activeWriteUuid;
+            break;
+          } else {
+            category = 'ems';
+            this.emsProtocolVersion = DEFAULT_EMS_PROTOCOL_VERSION;
+            this.activeServiceUuid = s.uuid;
+            const w = s.characteristics?.find((c: any) => (c.uuid || '').toLowerCase().includes('ffe1'));
+            this.activeWriteUuid = w ? w.uuid : '0000ffe1-0000-1000-8000-00805f9b34fb';
+            this.activeNotifyUuid = this.activeWriteUuid;
+            break;
+          }
         }
       }
 
@@ -235,9 +270,10 @@ export class BLEManager {
           this.activeNotifyUuid = YCYToyProtocol.BLE_NOTIFY_UUID;
         } else if (targetCategory === 'enema' || devName.includes('enema') || devName.includes('pump') || devName.includes('gcq')) {
           category = 'enema';
-          this.activeServiceUuid = YCYEnemaProtocol.BLE_SERVICE_UUID;
-          this.activeWriteUuid = YCYEnemaProtocol.BLE_WRITE_UUID;
-          this.activeNotifyUuid = YCYEnemaProtocol.BLE_NOTIFY_UUID;
+          const isV2 = devName.includes('2') || devName.includes('v2') || devName.includes('gcq2');
+          this.activeServiceUuid = isV2 ? YCYEnemaProtocol.BLE_SERVICE_V2_UUID : YCYEnemaProtocol.BLE_SERVICE_UUID;
+          this.activeWriteUuid = isV2 ? YCYEnemaProtocol.BLE_WRITE_V2_UUID : YCYEnemaProtocol.BLE_WRITE_UUID;
+          this.activeNotifyUuid = isV2 ? YCYEnemaProtocol.BLE_NOTIFY_V2_UUID : YCYEnemaProtocol.BLE_NOTIFY_UUID;
         } else if (
           devName.startsWith('47l') ||
           devName.includes('coyote 3') ||
@@ -264,6 +300,8 @@ export class BLEManager {
           this.activeNotifyUuid = COYOTE_V2_UUIDS.POWER_CHAR;
         } else {
           category = 'ems';
+          // 未识别出具体型号的 EMS 兜底：同样复位，避免沿用旧版本。
+          this.emsProtocolVersion = DEFAULT_EMS_PROTOCOL_VERSION;
           this.activeServiceUuid = YCYEMSProtocol.BLE_SERVICE_UUID;
           this.activeWriteUuid = YCYEMSProtocol.BLE_WRITE_UUID;
           this.activeNotifyUuid = YCYEMSProtocol.BLE_NOTIFY_UUID;
@@ -373,6 +411,8 @@ export class BLEManager {
         console.log('⚠️ acceptAllDevices 受限，回退至超宽泛前缀过滤器扫描...');
         const filters: any[] = [
           { services: [YCYEMSProtocol.BLE_SERVICE_UUID] },
+          { services: [YCYEnemaProtocol.BLE_SERVICE_V2_UUID] },
+          { services: [YCYEnemaProtocol.BLE_SERVICE_UUID] },
           { services: [COYOTE_V2_UUIDS.SERVICE] },
           { services: [COYOTE_V3_UUIDS.SERVICE] },
           { services: ['0000180c-0000-1000-8000-00805f9b34fb'] },
@@ -393,6 +433,11 @@ export class BLEManager {
           { namePrefix: 'YCY' },
           { namePrefix: 'Toy' },
           { namePrefix: 'GCQ' },
+          { namePrefix: 'gcq' },
+          { namePrefix: 'GCQ2' },
+          { namePrefix: 'gcq2' },
+          { namePrefix: 'Enema' },
+          { namePrefix: 'enema' },
         ];
 
         device = await (navigator as any).bluetooth.requestDevice({
@@ -414,6 +459,34 @@ export class BLEManager {
       this.gattServer = server;
 
       let category: 'ems' | 'toy' | 'enema' | 'unknown' = 'unknown';
+
+      const detectEnemaService = async () => {
+        let enemaService = await server.getPrimaryService(YCYEnemaProtocol.BLE_SERVICE_V2_UUID).catch(() => null);
+        let isV2 = true;
+        if (!enemaService) {
+          enemaService = await server.getPrimaryService(YCYEnemaProtocol.BLE_SERVICE_UUID).catch(() => null);
+          isV2 = false;
+        }
+        if (enemaService) {
+          const writeUuid = isV2 ? YCYEnemaProtocol.BLE_WRITE_V2_UUID : YCYEnemaProtocol.BLE_WRITE_UUID;
+          const notifyUuid = isV2 ? YCYEnemaProtocol.BLE_NOTIFY_V2_UUID : YCYEnemaProtocol.BLE_NOTIFY_UUID;
+          this.writeCharacteristic = await enemaService.getCharacteristic(writeUuid).catch(() => null);
+          try {
+            this.notifyCharacteristic = await enemaService.getCharacteristic(notifyUuid).catch(() => null);
+            await this.startWebNotification(generation);
+          } catch {}
+          category = 'enema';
+          this.activeServiceUuid = isV2 ? YCYEnemaProtocol.BLE_SERVICE_V2_UUID : YCYEnemaProtocol.BLE_SERVICE_UUID;
+          this.activeWriteUuid = writeUuid;
+          this.activeNotifyUuid = notifyUuid;
+        }
+      };
+
+      if (targetCategory === 'enema') {
+        try {
+          await detectEnemaService();
+        } catch {}
+      }
 
       // 1. 优先尝试探测 Coyote V3 (服务 0x180C)
       try {
@@ -501,15 +574,7 @@ export class BLEManager {
 
       if (category === 'unknown') {
         try {
-          const enemaService = await server.getPrimaryService(YCYEnemaProtocol.BLE_SERVICE_UUID);
-          if (enemaService) {
-            this.writeCharacteristic = await enemaService.getCharacteristic(YCYEnemaProtocol.BLE_WRITE_UUID);
-            try {
-              this.notifyCharacteristic = await enemaService.getCharacteristic(YCYEnemaProtocol.BLE_NOTIFY_UUID);
-              await this.startWebNotification(generation);
-            } catch {}
-            category = 'enema';
-          }
+          await detectEnemaService();
         } catch {}
       }
 
@@ -634,9 +699,19 @@ export class BLEManager {
     return this.emsProtocolVersion;
   }
 
+  getActiveServiceUuid(): string {
+    return this.activeServiceUuid;
+  }
+
+  getActiveWriteUuid(): string {
+    return this.activeWriteUuid;
+  }
+
   private handleDisconnect() {
     console.log('BLE 设备连接已断开');
     this.connectionGeneration++;
+    // 复位协议版本，避免影响下一次连接（见 DEFAULT_EMS_PROTOCOL_VERSION 的说明）。
+    this.emsProtocolVersion = DEFAULT_EMS_PROTOCOL_VERSION;
     if (this.webDevice) {
       try {
         this.webDevice.removeEventListener('gattserverdisconnected', this.boundWebDisconnectHandler);
@@ -663,6 +738,8 @@ export class BLEManager {
 
   async disconnect(): Promise<void> {
     this.connectionGeneration++;
+    // 复位协议版本：下次连接必须重新识别，不能沿用上一台设备的协议。
+    this.emsProtocolVersion = DEFAULT_EMS_PROTOCOL_VERSION;
     if (this.isNative && this.nativeDeviceId) {
       try {
         await BleClient.disconnect(this.nativeDeviceId);

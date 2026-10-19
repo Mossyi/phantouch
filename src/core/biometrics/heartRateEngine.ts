@@ -181,8 +181,14 @@ export class HeartRateEngine {
       if (generation !== this.connectionGeneration) return false;
 
       const device = await BleClient.requestDevice({
-        services: [HEART_RATE_SERVICE_UUID],
-        optionalServices: ['0000180f-0000-1000-8000-00805f9b34fb'],
+        optionalServices: [
+          HEART_RATE_SERVICE_UUID,
+          '0000180d-0000-1000-8000-00805f9b34fb',
+          '0000180f-0000-1000-8000-00805f9b34fb',
+          '0000180a-0000-1000-8000-00805f9b34fb',
+        ],
+        allowExtendedAdvertising: true,
+        scanMode: 2, // SCAN_MODE_LOW_LATENCY: 最大频率扫描，防止漏检心率手环广播
       });
       if (generation !== this.connectionGeneration) return false;
 
@@ -192,7 +198,7 @@ export class HeartRateEngine {
       await BleClient.connect(device.deviceId, () => {
         if (generation !== this.connectionGeneration) return;
         this.addLog('⚠️ 蓝牙手环连接已断开');
-        this.disconnect();
+        void this.disconnect().catch(() => undefined);
       });
       if (generation !== this.connectionGeneration) {
         await BleClient.disconnect(device.deviceId).catch(() => undefined);
@@ -241,10 +247,35 @@ export class HeartRateEngine {
     try {
       this.addLog('🔍 正在搜索支持标准心率广播 (0x180D) 的蓝牙手环/手表/心率带...');
 
-      const device = await (navigator as any).bluetooth.requestDevice({
-        filters: [{ services: ['heart_rate'] }],
-        optionalServices: ['battery_service'],
-      });
+      const optionalServices: any[] = [
+        'heart_rate',
+        HEART_RATE_SERVICE_UUID,
+        'battery_service',
+        '0000180f-0000-1000-8000-00805f9b34fb',
+      ];
+
+      let device: any = null;
+      try {
+        device = await (navigator as any).bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices,
+        });
+      } catch (acceptErr: any) {
+        const isNotAllowed = acceptErr?.name === 'TypeError' || acceptErr?.message?.includes('acceptAllDevices');
+        if (!isNotAllowed) throw acceptErr;
+
+        device = await (navigator as any).bluetooth.requestDevice({
+          filters: [
+            { services: ['heart_rate'] },
+            { services: [HEART_RATE_SERVICE_UUID] },
+            { namePrefix: 'Heart' },
+            { namePrefix: 'Band' },
+            { namePrefix: 'Watch' },
+            { namePrefix: 'HR' },
+          ],
+          optionalServices,
+        });
+      }
       if (generation !== this.connectionGeneration) return false;
 
       this.bluetoothDevice = device;
@@ -291,7 +322,7 @@ export class HeartRateEngine {
       this.webDisconnectListener = (() => {
         if (generation !== this.connectionGeneration) return;
         this.addLog('⚠️ 蓝牙手环连接已断开');
-        this.disconnect();
+        void this.disconnect().catch(() => undefined);
       }) as EventListener;
       device.addEventListener('gattserverdisconnected', this.webDisconnectListener);
 
@@ -353,6 +384,8 @@ export class HeartRateEngine {
 
   async disconnect(): Promise<void> {
     this.connectionGeneration++;
+    const wasLoopActive = this.state.isAutoAdaptiveLoopActive;
+
     if (this.simulatorTimer) {
       clearInterval(this.simulatorTimer);
       this.simulatorTimer = null;
@@ -362,15 +395,23 @@ export class HeartRateEngine {
     this.nativeDeviceId = null;
     if (this.isNative && nativeId) {
       try {
+        await BleClient.stopNotifications(nativeId, HEART_RATE_SERVICE_UUID, HEART_RATE_MEASUREMENT_UUID).catch(() => undefined);
         await BleClient.disconnect(nativeId);
       } catch {}
     }
 
-    if (this.heartRateCharacteristic && this.webHeartRateListener) {
-      this.heartRateCharacteristic.removeEventListener('characteristicvaluechanged', this.webHeartRateListener);
+    if (this.heartRateCharacteristic) {
+      try {
+        if (this.webHeartRateListener) {
+          this.heartRateCharacteristic.removeEventListener('characteristicvaluechanged', this.webHeartRateListener);
+        }
+        await this.heartRateCharacteristic.stopNotifications().catch(() => undefined);
+      } catch {}
     }
     if (this.bluetoothDevice && this.webDisconnectListener) {
-      this.bluetoothDevice.removeEventListener('gattserverdisconnected', this.webDisconnectListener);
+      try {
+        this.bluetoothDevice.removeEventListener('gattserverdisconnected', this.webDisconnectListener);
+      } catch {}
     }
     this.webHeartRateListener = null;
     this.webDisconnectListener = null;
@@ -389,6 +430,11 @@ export class HeartRateEngine {
     this.state.deviceName = '';
     this.lastAdaptiveCheckTime = 0;
     this.lastAdaptiveMetricTime = 0;
+
+    if (wasLoopActive) {
+      this.addLog('🛑 心率生理监护中断，已安全切断硬件输出');
+      void DeviceManager.getInstance().emergencyStop();
+    }
     this.notify();
   }
 }

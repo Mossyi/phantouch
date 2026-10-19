@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { DeviceManager } from '../../core/deviceManager';
+import { resolveEnabledEmsCeiling } from '../../core/safetyLimits';
 import { TTSManager } from '../../core/voice/ttsManager';
 import {
   createYoloVideoSubscriptionMessage,
@@ -34,9 +35,11 @@ const Panel: React.FC<{title: string, caption?: string, children: React.ReactNod
 
 export const YoloVisionTab: React.FC = () => {
   const { safetyConfig } = useAppStore();
-  const configuredMaxIntensity = Math.min(
-    Number(safetyConfig.maxEmsStrengthA),
-    Number(safetyConfig.maxEmsStrengthB),
+  // 可用上限取"已启用的最强通道"：只贴一路电极片（另一路上限为 0）时不应整体禁用惩罚。
+  const configuredMaxIntensity = resolveEnabledEmsCeiling(
+    safetyConfig.maxEmsStrengthA,
+    safetyConfig.maxEmsStrengthB,
+    200,
   );
   const maxIntensity = Number.isFinite(configuredMaxIntensity)
     ? Math.min(200, Math.max(0, configuredMaxIntensity))

@@ -67,28 +67,33 @@ export class ClenchDetector {
     // 保留最近 3 秒的样本
     this.historyPressures = this.historyPressures.filter((p) => now - p.time <= 3000);
 
-    const ratio = this.baselinePressure > 0 ? pressure / this.baselinePressure : 1.0;
-    const sensitivityDelta = Math.max(0.01, this.sensitivity - 1.0);
+    const baseline = Number.isFinite(this.baselinePressure) && this.baselinePressure > 0 ? this.baselinePressure : 100;
+    const ratio = baseline > 0 ? pressure / baseline : 1.0;
+    const safeSensitivity = Number.isFinite(this.sensitivity) ? this.sensitivity : 1.35;
+    const sensitivityDelta = Math.max(0.01, safeSensitivity - 1.0);
 
     // 欲望蓄力槽百分比 (0% ~ 100%)
-    const arousalPercent = Math.min(
-      100,
-      Math.max(0, Math.floor(((ratio - 1.0) / sensitivityDelta) * 100))
-    );
+    const rawArousal = Math.floor(((ratio - 1.0) / sensitivityDelta) * 100);
+    const arousalPercent = Number.isFinite(rawArousal) ? Math.min(100, Math.max(0, rawArousal)) : 0;
 
     // 3. 括约肌收紧尖峰判定
     // 判定条件：
     // - 压力比率超过灵敏度阈值 (例如超过基线的 135%)
     // - 距离上次触发至少间隔 5 秒 (防抖冷却)
     let isClenchDetected = false;
-    if (ratio >= this.sensitivity && now - this.lastTriggerTime > 5000) {
+    if (ratio >= safeSensitivity && now - this.lastTriggerTime > 5000) {
       // 检查上升斜率 (在最近 800ms 内是否呈现剧烈阶跃)
       const recent = this.historyPressures.filter((p) => now - p.time <= 800);
       if (recent.length >= 2) {
-        const minVal = Math.min(...recent.map((r) => r.val));
-        const maxVal = Math.max(...recent.map((r) => r.val));
+        let minVal = Infinity;
+        let maxVal = -Infinity;
+        for (let i = 0; i < recent.length; i++) {
+          const v = recent[i].val;
+          if (v < minVal) minVal = v;
+          if (v > maxVal) maxVal = v;
+        }
         // 瞬间跳变大于基线的 20%
-        if (maxVal - minVal >= this.baselinePressure * 0.2) {
+        if (Number.isFinite(minVal) && Number.isFinite(maxVal) && maxVal - minVal >= baseline * 0.2) {
           isClenchDetected = true;
           this.lastTriggerTime = now;
         }
@@ -97,7 +102,8 @@ export class ClenchDetector {
 
     // 慢速动态更新基线 (缓慢跟踪体位变化)
     if (ratio < 1.15 && ratio > 0.85) {
-      this.baselinePressure = Math.max(50, Math.floor(this.baselinePressure * 0.98 + pressure * 0.02));
+      const updatedBaseline = Math.floor(baseline * 0.98 + pressure * 0.02);
+      this.baselinePressure = Number.isFinite(updatedBaseline) ? Math.max(50, updatedBaseline) : 100;
     }
 
     return {

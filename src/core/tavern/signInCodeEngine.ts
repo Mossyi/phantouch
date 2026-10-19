@@ -102,7 +102,13 @@ export class SignInCodeEngine {
     for (const [field, item] of Object.entries(value as Record<string, unknown>)) {
       if (['__proto__', 'prototype', 'constructor'].includes(field)) continue;
       const normalizedField = field.replace(/[-_\s]/g, '').toLowerCase();
-      clean[field] = this.SECRET_FIELD_NAMES.has(normalizedField)
+      const isSecretField = this.SECRET_FIELD_NAMES.has(normalizedField)
+        || normalizedField.includes('apikey')
+        || normalizedField.includes('token')
+        || normalizedField.includes('secret')
+        || normalizedField.includes('password')
+        || normalizedField.includes('accesskey');
+      clean[field] = isSecretField
         ? ''
         : this.redactSecrets(item, depth + 1);
     }
@@ -116,6 +122,14 @@ export class SignInCodeEngine {
       && sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized)
     ) {
       return { ...(sanitized as Record<string, unknown>), apiKey: '', rememberApiKey: false };
+    }
+    if (key === 'ycy_safety_config' && sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized)) {
+      const obj = { ...(sanitized as Record<string, unknown>) };
+      if ('siliconflowSttApiKey' in obj) obj.siliconflowSttApiKey = '';
+      if ('volcengineSttApiKey' in obj) obj.volcengineSttApiKey = '';
+      if ('volcengineSttAccessKey' in obj) obj.volcengineSttAccessKey = '';
+      if ('siliconflowTtsApiKey' in obj) obj.siliconflowTtsApiKey = '';
+      return obj;
     }
     return sanitized;
   }
@@ -175,7 +189,17 @@ export class SignInCodeEngine {
     try {
       base64Code = btoa(unescape(encodeURIComponent(jsonStr)));
     } catch {
-      base64Code = btoa(jsonStr);
+      try {
+        const u8 = new TextEncoder().encode(jsonStr);
+        let binary = '';
+        const len = u8.byteLength;
+        for (let i = 0; i < len; i += 8192) {
+          binary += String.fromCharCode(...u8.subarray(i, Math.min(i + 8192, len)));
+        }
+        base64Code = btoa(binary);
+      } catch {
+        base64Code = '';
+      }
     }
 
     return { jsonStr, base64Code, timestamp: payload.timestamp };

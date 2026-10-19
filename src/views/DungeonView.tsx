@@ -88,8 +88,7 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
     aiRequestRef.current?.abort();
     aiRequestRef.current = null;
     TTSManager.getInstance().stop();
-    void DeviceManager.getInstance().setEmsStrength('AB', 0).catch(() => undefined);
-    void DeviceManager.getInstance().setToyMotor(0, 0, 0).catch(() => undefined);
+    void DeviceManager.getInstance().emergencyStop().catch(() => undefined);
   }, []);
 
   // 本地多存档管理器与结局
@@ -215,9 +214,6 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
   const handleMakeChoice = (choice: DungeonChoice) => {
     if (!currentScript || isAiExpanding) return;
     TTSManager.getInstance().stop();
-    if (hardwareMode === 'real') {
-      void DeviceManager.getInstance().emergencyStop();
-    }
     HapticEngine.medium();
     const nextRunState = applyDungeonChoice(runState, choice);
     setRunState(nextRunState);
@@ -237,6 +233,10 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
 
       void (async () => {
         try {
+          // 先确保之前的输出彻底停止，避免命令在底层协议乱序
+          await dev.emergencyStop();
+          if (generation !== viewGenerationRef.current) return;
+
           if (type === 'ems_wave') {
             HapticEngine.heavyShock();
             const seconds = durationSec ?? 10;
@@ -246,9 +246,11 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
           } else if (type === 'ems_strength') {
             HapticEngine.heavyShock();
             const strength = value ?? 30;
+            const seconds = durationSec ?? 10;
             await dev.setEmsStrength('AB', strength);
+            dev.scheduleOutputStop('ems', seconds);
             if (generation !== viewGenerationRef.current) return;
-            setLastActionText(`⚡ 电击强度调至: ${strength}`);
+            setLastActionText(`⚡ 电击强度调至: ${strength} (${seconds}s)`);
           } else if (type === 'toy_pattern') {
             const seconds = durationSec ?? 20;
             await dev.playToyPattern(target, seconds);
@@ -521,6 +523,10 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
 
   const loadManualSlot = (slot: 1 | 2 | 3) => {
     if (!currentScript) return;
+    viewGenerationRef.current += 1;
+    aiRequestRef.current?.abort();
+    aiRequestRef.current = null;
+    setIsAiExpanding(false);
     const record = DungeonSaveManager.getInstance().loadManualSlot(currentScript.id, slot);
     if (!record) return;
     setAllSaves(DungeonSaveManager.getInstance().getAllSaves());
@@ -533,6 +539,10 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
 
   const rewindToHistory = (historyIndex: number) => {
     if (!currentScript || !confirm(`回到第 ${historyIndex + 1} 幕并从这里建立新分支吗？之后的自动进度会被替换，手动存档不受影响。`)) return;
+    viewGenerationRef.current += 1;
+    aiRequestRef.current?.abort();
+    aiRequestRef.current = null;
+    setIsAiExpanding(false);
     const record = DungeonSaveManager.getInstance().rewindToHistory(currentScript.id, historyIndex);
     if (!record) return;
     setAllSaves(DungeonSaveManager.getInstance().getAllSaves());
@@ -643,8 +653,8 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
                 <h3 className="text-xs font-bold text-slate-800 truncate">{currentScript.title}</h3>
                 <div className="flex items-center gap-2 mt-0.5 text-[9px] text-pink-600 font-mono font-medium">
                   <span>📍 {currentStepId}</span>
-                  <span>📚 已读: {currentSaveRecord?.totalWordsRead || 3200} 字</span>
-                  <span>🏆 进度: {currentSaveRecord?.progressPct || 20}%</span>
+                  <span>📚 已读: {currentSaveRecord?.totalWordsRead ?? 0} 字</span>
+                  <span>🏆 进度: {currentSaveRecord?.progressPct ?? 0}%</span>
                 </div>
               </div>
             </div>

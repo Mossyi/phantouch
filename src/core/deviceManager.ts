@@ -18,11 +18,50 @@ import { BLEManager, EMSProtocolVersion } from './bluetooth/bleManager';
 import { DeviceSimulator } from './bluetooth/simulator';
 import { YCYIMBridgeClient } from './bridge/ycyImClient';
 import { DGLabSocketClient } from './bridge/dglabSocketClient';
-import { clampOutputToLimit, normalizeFiniteRange, normalizeSafetyLimit, randomIntegerWithinLimits } from './safetyLimits';
+import { clampOutputToLimit, normalizeFiniteRange, normalizeSafetyLimit, randomIntegerWithinLimits, resolveEnabledEmsCeiling } from './safetyLimits';
 import { normalizeSiliconflowTtsModel, normalizeSiliconflowTtsVoice } from './voice/siliconflowTts';
 
 export type DeviceStateCallback = (state: DeviceSystemState) => void;
 export type EmergencyStopCallback = () => void;
+
+/**
+ * 电击指令被拒绝的原因。用于把"用户以为在电、其实没有任何输出"这类静默失败变成可见提示。
+ * - emergency_lock     全局急停锁处于锁存状态，一切输出被拒
+ * - emergency_lock_restored  启动时发现上次会话残留的急停锁仍在生效
+ * - no_usable_channel  目标通道的安全上限都是 0（没有任何可用通道）
+ * - zero_strength      波形请求时强度为 0 且无法自动起振（最小强度下限也是 0）
+ * - write_timeout      硬件写入超时（链路假死），本次输出已放弃
+ */
+export type EmsOutputRefusalReason =
+  | 'emergency_lock'
+  | 'emergency_lock_restored'
+  | 'no_usable_channel'
+  | 'zero_strength'
+  | 'write_timeout';
+
+/**
+ * 单次硬件写入超时。
+ *
+ * BLE / 中继链路假死时 `write()` 可能**永不 settle**，而硬件写入是一条 promise 链：
+ * 一个不返回的写会让它后面所有指令（包括归零）永久排队，且用户侧没有任何报错 ——
+ * 表现为"界面显示 40 档、设备毫无动静、连用滑块归零都没反应"。
+ * 超时后放弃本次写入并让队列继续，是这里唯一能自愈的做法。
+ */
+export class HardwareWriteTimeoutError extends Error {
+  public readonly channel: string;
+  public readonly timeoutMs: number;
+  constructor(channel: string, timeoutMs: number) {
+    super(`硬件写入超时（${channel} 通道 ${timeoutMs}ms 未完成），已放弃本次写入以恢复队列`);
+    this.name = 'HardwareWriteTimeoutError';
+    this.channel = channel;
+    this.timeoutMs = timeoutMs;
+  }
+}
+export interface EmsOutputRefusal {
+  reason: EmsOutputRefusalReason;
+  message: string;
+}
+export type EmsOutputRefusalCallback = (refusal: EmsOutputRefusal) => void;
 type HardwareWriteChannel = 'ems' | 'toy' | 'enema' | 'bridge';
 
 const TOY_PATTERN_ALIASES: Record<string, string> = {
@@ -43,8 +82,24 @@ const ENEMA_PATTERN_ALIASES: Record<string, string> = {
 };
 
 /**
+ * 灌肠流程（含 loop 循环）的默认总时长上限。
+ * `maxEnemaDurationSec` 只约束"单步"，loop 流程此前可以无限循环注水 ——
+ * 无人看守时这是真实风险，所以这里再加一道总量闸门。
+ */
+const DEFAULT_ENEMA_PATTERN_MAX_TOTAL_SEC = 600;
+
+/**
  * 全局设备与硬件通讯调度中枢
  */
+export interface EmsWaveOptions {
+  /**
+   * 传 false 表示「调用方紧接着会自己设置强度」，请不要自动起振。
+   * 用于"先选波形、再发强度包"的调用方（特训营 / 催眠 ASMR / 场景导演），
+   * 否则会在真正强度生效前先按最小下限打出一帧多余脉冲。
+   */
+  autoStartStrength?: boolean;
+}
+
 export class DeviceManager {
   private static instance: DeviceManager | null = null;
   private stateCallbacks: DeviceStateCallback[] = [];
@@ -98,6 +153,7 @@ export class DeviceManager {
   private currentState: DeviceSystemState;
   private stateListeners: Set<DeviceStateCallback> = new Set();
   private emergencyStopListeners: Set<EmergencyStopCallback> = new Set();
+  private outputRefusalListeners: Set<EmsOutputRefusalCallback> = new Set();
 
   private activeToyPatternTimer: any = null;
   private activeEnemaPatternTimer: any = null;
@@ -134,6 +190,8 @@ export class DeviceManager {
     enema: 0,
     bridge: 0,
   };
+  /** 单次硬件写入的超时；超时即放弃该次写入并恢复队列（见 HardwareWriteTimeoutError）。 */
+  private hardwareWriteTimeoutMs = 6000;
 
   private constructor() {
     this.simulator = new DeviceSimulator();
@@ -160,11 +218,38 @@ export class DeviceManager {
       },
       onStrengthUpdate: (strengthA, strengthB, limitA, limitB) => {
         if (this.currentMode !== 'dglab') return;
-        this.currentState.ems.strengthA = strengthA;
-        this.currentState.ems.strengthB = strengthB;
+        // 安全限制：DG-Lab 回报也必须经过上限校验与急停锁逻辑
+        if (typeof strengthA === 'number' && Number.isFinite(strengthA)) {
+          if (strengthA > 0) {
+            const overLimitA = strengthA > this.safetyConfig.maxEmsStrengthA;
+            if (!(overLimitA && this.isEmsStaleReport('A', strengthA))) {
+              this.currentState.ems.strengthA = Math.min(200, Math.round(strengthA));
+              if (overLimitA && !this.safetyConfig.emergencyLock) {
+                this.currentState.connectionStatus = 'error';
+                void this.latchEmergencyStop();
+              }
+            }
+          } else {
+            this.currentState.ems.strengthA = 0;
+          }
+        }
+        if (typeof strengthB === 'number' && Number.isFinite(strengthB)) {
+          if (strengthB > 0) {
+            const overLimitB = strengthB > this.safetyConfig.maxEmsStrengthB;
+            if (!(overLimitB && this.isEmsStaleReport('B', strengthB))) {
+              this.currentState.ems.strengthB = Math.min(200, Math.round(strengthB));
+              if (overLimitB && !this.safetyConfig.emergencyLock) {
+                this.currentState.connectionStatus = 'error';
+                void this.latchEmergencyStop();
+              }
+            }
+          } else {
+            this.currentState.ems.strengthB = 0;
+          }
+        }
         this.currentState.ems.limitA = limitA;
         this.currentState.ems.limitB = limitB;
-        this.currentState.ems.isShocking = strengthA > 0 || strengthB > 0;
+        this.currentState.ems.isShocking = this.currentState.ems.strengthA > 0 || this.currentState.ems.strengthB > 0;
         this.currentState.lastHeartbeat = Date.now();
         this.notifyState();
       },
@@ -222,6 +307,30 @@ export class DeviceManager {
     return () => this.emergencyStopListeners.delete(cb);
   }
 
+  /**
+   * 订阅"电击指令被拒绝"事件。UI 用它把静默失败变成可见提示：
+   * 拒绝路径返回的是字符串而不是抛异常，`void x.setEmsStrength(...).catch(...)` 这类
+   * 调用方式永远收不到任何反馈，用户只会觉得"点了没反应"。
+   */
+  subscribeOutputRefusal(cb: EmsOutputRefusalCallback): () => void {
+    this.outputRefusalListeners.add(cb);
+    return () => {
+      this.outputRefusalListeners.delete(cb);
+    };
+  }
+
+  private reportOutputRefusal(reason: EmsOutputRefusalReason, message: string) {
+    if (this.outputRefusalListeners.size === 0) return;
+    const refusal: EmsOutputRefusal = { reason, message };
+    this.outputRefusalListeners.forEach((cb) => {
+      try {
+        cb(refusal);
+      } catch (error) {
+        console.error('电击拒绝订阅回调执行失败:', error);
+      }
+    });
+  }
+
   private notifyEmergencyStop() {
     this.emergencyStopListeners.forEach((cb) => {
       try {
@@ -260,8 +369,10 @@ export class DeviceManager {
     next.maxToyMotorARate = normalizeSafetyLimit(next.maxToyMotorARate, this.safetyConfig.maxToyMotorARate, 20);
     next.maxToyMotorBRate = normalizeSafetyLimit(next.maxToyMotorBRate, this.safetyConfig.maxToyMotorBRate, 20);
     next.maxToyMotorCRate = normalizeSafetyLimit(next.maxToyMotorCRate, this.safetyConfig.maxToyMotorCRate, 20);
-    const jointEmsMaximum = Math.min(next.maxEmsStrengthA, next.maxEmsStrengthB);
-    next.minEmsStrength = normalizeSafetyLimit(next.minEmsStrength, this.safetyConfig.minEmsStrength, jointEmsMaximum);
+    // 随机下限以"已启用的最强通道"为准。只贴一路电极片的用户会把另一路设为 0，
+    // 若按两路最小值钳制，随机下限会被一并清零，所有随机电击玩法静默失效。
+    const enabledEmsCeiling = resolveEnabledEmsCeiling(next.maxEmsStrengthA, next.maxEmsStrengthB, 200);
+    next.minEmsStrength = normalizeSafetyLimit(next.minEmsStrength, this.safetyConfig.minEmsStrength, enabledEmsCeiling);
     const availableToyMaximum = Math.max(next.maxToyMotorARate, next.maxToyMotorBRate, next.maxToyMotorCRate);
     next.minToyMotorRate = normalizeSafetyLimit(next.minToyMotorRate, this.safetyConfig.minToyMotorRate, availableToyMaximum);
     next.maxEnemaDurationSec = normalizeSafetyLimit(next.maxEnemaDurationSec, this.safetyConfig.maxEnemaDurationSec, 60);
@@ -330,18 +441,20 @@ export class DeviceManager {
   }
 
   getRandomEmsStrength(maxAllowed: number = 200): number {
+    // 取已启用的最强通道：单通道用户（另一路上限为 0）不应因此完全取不到强度。
+    // 上限为 0 的通道由 setEmsStrength 的按通道夹取保证不会被输出。
     const maximum = Math.min(
       normalizeSafetyLimit(maxAllowed, 0, 200),
-      this.safetyConfig.maxEmsStrengthA,
-      this.safetyConfig.maxEmsStrengthB,
+      resolveEnabledEmsCeiling(this.safetyConfig.maxEmsStrengthA, this.safetyConfig.maxEmsStrengthB, 200),
     );
     return randomIntegerWithinLimits(this.safetyConfig.minEmsStrength, maximum, 200);
   }
 
   getRandomEmsStrengthInConfiguredRange(): number {
-    const maximum = Math.min(
+    const maximum = resolveEnabledEmsCeiling(
       this.safetyConfig.maxEmsStrengthA,
       this.safetyConfig.maxEmsStrengthB,
+      200,
     );
     return randomIntegerWithinLimits(this.safetyConfig.minEmsStrength, maximum, 200);
   }
@@ -376,8 +489,78 @@ export class DeviceManager {
       await write();
     };
     const pending = this.hardwareWriteQueues[channel].then(guardedWrite, guardedWrite);
-    this.hardwareWriteQueues[channel] = pending.catch(() => undefined);
-    return pending;
+    // 队列必须无条件能继续。这里给每次写入套超时：一旦某次 write() 永不 settle，
+    // 后面排队的指令（含归零）会全部永久卡死，且调用方永远 await 不到结果。
+    const guarded = this.withWriteTimeout(channel, pending, generation);
+    this.hardwareWriteQueues[channel] = guarded.catch(() => undefined);
+    return guarded;
+  }
+
+  /** 调整单次硬件写入的超时（毫秒）。主要供测试与现场排障使用。 */
+  setHardwareWriteTimeoutMs(ms: number) {
+    this.hardwareWriteTimeoutMs = normalizeFiniteRange(ms, this.hardwareWriteTimeoutMs, 200, 60_000);
+  }
+
+  getHardwareWriteTimeoutMs(): number {
+    return this.hardwareWriteTimeoutMs;
+  }
+
+  private withWriteTimeout(
+    channel: HardwareWriteChannel,
+    pending: Promise<void>,
+    generation: number,
+  ): Promise<void> {
+    const timeoutMs = this.hardwareWriteTimeoutMs;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        // 作废本通道后续排队中的旧写入，避免它们在同一时间窗里补发过时指令。
+        if (generation === this.hardwareWriteGenerations[channel]) {
+          this.hardwareWriteGenerations[channel]++;
+        }
+        reject(new HardwareWriteTimeoutError(channel, timeoutMs));
+      }, timeoutMs);
+    });
+    return Promise.race([pending, timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  }
+
+  /**
+   * 绕过写队列直发 EMS 停止包。写队列被卡住时，急停必须仍然有效，
+   * 所以这里直接调用 BLEManager，不经 enqueueHardwareWrite。
+   */
+  private async sendDirectEmsStop(): Promise<void> {
+    if (this.currentMode !== 'ble' || !this.bleManagers.ems.isConnected()) return;
+    const ver = this.bleManagers.ems.getEmsProtocolVersion();
+    const packet = ver === 'coyote_v2'
+      ? CoyoteV2Protocol.buildStopPacket()
+      : ver === 'coyote_v3'
+        ? CoyoteV3Protocol.buildStopPacket(0)
+        : ver === 'v1'
+          ? YCYEMSProtocol.buildV1StopPacket()
+          : YCYEMSProtocol.buildStopPacket();
+    await this.bleManagers.ems.sendPacket(packet);
+  }
+
+  /**
+   * EMS 写入超时后的统一处置：本地归零 → 绕过队列直发停止包 →
+   * 只有连停止包都发不出去时才升级为全局急停锁（避免一次慢写永久锁死整个 App）。
+   */
+  private async handleEmsWriteTimeout(error: HardwareWriteTimeoutError): Promise<never> {
+    this.currentState.ems.strengthA = 0;
+    this.currentState.ems.strengthB = 0;
+    this.currentState.ems.isShocking = false;
+    this.stopCoyoteStreamLoop();
+    this.notifyState();
+    this.reportOutputRefusal('write_timeout', error.message);
+    try {
+      await this.sendDirectEmsStop();
+    } catch {
+      await this.latchEmergencyStop();
+      throw new Error(`${error.message}；且停止包无法送达，已锁定全局急停`);
+    }
+    throw error;
   }
 
   private invalidateQueuedHardwareWrites(): Promise<void> {
@@ -582,6 +765,10 @@ export class DeviceManager {
   }
 
   private async tickCoyoteStreamFrame() {
+    if (this.safetyConfig.emergencyLock) {
+      this.stopCoyoteStreamLoop();
+      return;
+    }
     if (this.currentMode !== 'ble' || !this.bleManagers.ems.isConnected()) {
       this.stopCoyoteStreamLoop();
       return;
@@ -761,6 +948,23 @@ export class DeviceManager {
             info.name = `郊狼 Coyote 2.0 (${info.name || 'D-LAB'})`;
           }
         }
+      } else if (category === 'enema') {
+        const lowerName = (info.name || '').toLowerCase();
+        const activeSvc = (this.bleManagers.enema.getActiveServiceUuid() || '').toLowerCase();
+        const isV2 = activeSvc.includes('ff50') || lowerName.includes('2') || lowerName.includes('gcq2');
+        if (!info.name || info.name.includes('智能硬件') || lowerName.includes('gcq') || lowerName.includes('enema')) {
+          info.name = isV2 ? `役次元智能灌肠机 2.0 (${info.name || 'GCQ2'})` : `役次元智能灌肠机 1.0 (${info.name || 'GCQ'})`;
+        }
+        // 主动发送电量与工作状态查询包，确保连接后界面电量和压力立即同步刷新
+        try {
+          await this.enqueueHardwareWrite('enema', async () => {
+            await this.bleManagers.enema.sendPacket(YCYEnemaProtocol.buildQueryBatteryPacket());
+            await new Promise((r) => setTimeout(r, 60));
+            await this.bleManagers.enema.sendPacket(YCYEnemaProtocol.buildQueryStatusPacket());
+          });
+        } catch (queryErr) {
+          console.warn('灌肠机初始状态查询受限:', queryErr);
+        }
       }
       this.currentMode = 'ble';
       this.currentState.connectionMode = 'ble';
@@ -803,9 +1007,32 @@ export class DeviceManager {
       if (emsVer === 'coyote_v2') {
         if (bytes.length === 3) {
           const parsed = CoyoteV2Protocol.parseStrengthPacket(bytes);
-          this.currentState.ems.strengthA = parsed.strengthA;
-          this.currentState.ems.strengthB = parsed.strengthB;
-          this.currentState.ems.isShocking = parsed.strengthA > 0 || parsed.strengthB > 0;
+          // 安全限制：V2 回报也必须经过上限校验与急停锁逻辑 (与 YCY 分支一致)
+          if (parsed.strengthA > 0) {
+            const overLimitA = parsed.strengthA > this.safetyConfig.maxEmsStrengthA;
+            if (!(overLimitA && this.isEmsStaleReport('A', parsed.strengthA))) {
+              this.currentState.ems.strengthA = Math.min(200, Math.round(parsed.strengthA));
+              if (overLimitA && !this.safetyConfig.emergencyLock) {
+                this.currentState.connectionStatus = 'error';
+                void this.latchEmergencyStop();
+              }
+            }
+          } else {
+            this.currentState.ems.strengthA = 0;
+          }
+          if (parsed.strengthB > 0) {
+            const overLimitB = parsed.strengthB > this.safetyConfig.maxEmsStrengthB;
+            if (!(overLimitB && this.isEmsStaleReport('B', parsed.strengthB))) {
+              this.currentState.ems.strengthB = Math.min(200, Math.round(parsed.strengthB));
+              if (overLimitB && !this.safetyConfig.emergencyLock) {
+                this.currentState.connectionStatus = 'error';
+                void this.latchEmergencyStop();
+              }
+            }
+          } else {
+            this.currentState.ems.strengthB = 0;
+          }
+          this.currentState.ems.isShocking = this.currentState.ems.strengthA > 0 || this.currentState.ems.strengthB > 0;
           this.notifyState();
           return;
         } else if (bytes.length === 1 && bytes[0] <= 100) {
@@ -816,8 +1043,35 @@ export class DeviceManager {
       } else if (emsVer === 'coyote_v3') {
         const parsed = CoyoteV3Protocol.parseNotifyPacket(bytes);
         if (parsed.type === 'strength') {
-          if (parsed.strengthA !== undefined) this.currentState.ems.strengthA = parsed.strengthA;
-          if (parsed.strengthB !== undefined) this.currentState.ems.strengthB = parsed.strengthB;
+          // 安全限制：V3 回报也必须经过上限校验与急停锁逻辑 (与 YCY/V2 分支一致)
+          if (parsed.strengthA !== undefined) {
+            if (parsed.strengthA > 0) {
+              const overLimitA = parsed.strengthA > this.safetyConfig.maxEmsStrengthA;
+              if (!(overLimitA && this.isEmsStaleReport('A', parsed.strengthA))) {
+                this.currentState.ems.strengthA = Math.min(200, Math.round(parsed.strengthA));
+                if (overLimitA && !this.safetyConfig.emergencyLock) {
+                  this.currentState.connectionStatus = 'error';
+                  void this.latchEmergencyStop();
+                }
+              }
+            } else {
+              this.currentState.ems.strengthA = 0;
+            }
+          }
+          if (parsed.strengthB !== undefined) {
+            if (parsed.strengthB > 0) {
+              const overLimitB = parsed.strengthB > this.safetyConfig.maxEmsStrengthB;
+              if (!(overLimitB && this.isEmsStaleReport('B', parsed.strengthB))) {
+                this.currentState.ems.strengthB = Math.min(200, Math.round(parsed.strengthB));
+                if (overLimitB && !this.safetyConfig.emergencyLock) {
+                  this.currentState.connectionStatus = 'error';
+                  void this.latchEmergencyStop();
+                }
+              }
+            } else {
+              this.currentState.ems.strengthB = 0;
+            }
+          }
           this.currentState.ems.isShocking = this.currentState.ems.strengthA > 0 || this.currentState.ems.strengthB > 0;
           this.notifyState();
           return;
@@ -882,9 +1136,28 @@ export class DeviceManager {
 
   // ================= EMS 电击控制 =================
 
-  async setEmsStrength(channel: 'A' | 'B' | 'AB', strength: number): Promise<string> {
+  /**
+   * @param durationSec 可选。大于 0 时会在该秒数后自动归零。
+   *   AI 工具调用必须传它（模型不应拥有"无限期电击"的能力）；需要长期保持输出的
+   *   功能（特训营 / 催眠 ASMR）传 0 表示"由调用方自己负责停止"。
+   */
+  async setEmsStrength(
+    channel: 'A' | 'B' | 'AB',
+    strength: number,
+    durationSec?: number,
+  ): Promise<string> {
     this.assertFiniteNumber(strength, '电击强度');
-    if (this.safetyConfig.emergencyLock && strength > 0) return '急停锁已激活，拒绝执行';
+    /** null = 未指定时长（不自动停）；0 = 调用方显式声明自行管理；>0 = 到点自动归零 */
+    let holdSeconds: number | null = null;
+    if (durationSec !== undefined) {
+      this.assertFiniteNumber(durationSec, '电击时长');
+      holdSeconds = durationSec <= 0 ? 0 : Math.min(3600, Math.max(1, durationSec));
+    }
+    if (this.safetyConfig.emergencyLock && strength > 0) {
+      const message = '急停锁已激活，拒绝执行';
+      this.reportOutputRefusal('emergency_lock', message);
+      return message;
+    }
     if (this.currentMode === 'bridge' && strength > 0) {
       throw new Error('API Bridge 不支持直接设置 EMS 强度，请使用已配置的事件 ID');
     }
@@ -903,6 +1176,17 @@ export class DeviceManager {
     }
     if (channel === 'B' || channel === 'AB') {
       valB = clampOutputToLimit(strength, this.safetyConfig.maxEmsStrengthB, 200);
+    }
+
+    // 用户要了非零强度，但目标通道的安全上限全是 0 ⇒ 实际输出必然是 0。
+    // 此前这里会照常回一句"强度设置为 A:0 B:0"（看起来成功），用户永远查不到原因。
+    if (strength > 0) {
+      const targeted = channel === 'A' ? valA : channel === 'B' ? valB : Math.max(valA, valB);
+      if (targeted <= 0) {
+        const message = `通道 ${channel} 的安全上限为 0，已拒绝放电（请先在硬件安全里把该通道上限调高）`;
+        this.reportOutputRefusal('no_usable_channel', message);
+        return message;
+      }
     }
 
     // 1. 同步即时更新本地状态与仿真引擎 (0ms 极致响应)
@@ -942,6 +1226,10 @@ export class DeviceManager {
           await this.enqueueHardwareWrite('ems', () => this.bleManagers.ems.sendPacket(packet), true);
           if (strengthA > 0 || strengthB > 0) {
             this.startCoyoteStreamLoop();
+            // V3 的强度包本身只携带"强度书签"，波形强度切片默认全 0；
+            // 必须立刻补一帧真实波形，否则在流式循环下一次 tick 之前设备完全无输出，
+            // 任何中途异常都会让用户彻底感觉不到电击。
+            void this.tickCoyoteStreamFrame();
           } else {
             this.stopCoyoteStreamLoop();
             await this.enqueueHardwareWrite('ems', () => this.bleManagers.ems.sendPacket(CoyoteV3Protocol.buildStopPacket(this.nextCoyoteSeq())), true);
@@ -965,6 +1253,7 @@ export class DeviceManager {
           await this.enqueueHardwareWrite('ems', () => this.bleManagers.ems.sendPacket(packet), true);
         }
       } catch (e) {
+        if (e instanceof HardwareWriteTimeoutError) await this.handleEmsWriteTimeout(e);
         await this.latchEmergencyStop();
         throw new Error(`BLE EMS 数据下发失败: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -994,11 +1283,27 @@ export class DeviceManager {
     }
 
     this.triggerHapticFeedback(valA > 50 || valB > 50 ? [80, 40, 80] : 60);
-    return `电击通道 ${channel} 强度设置为 ${channel === 'AB' ? `A:${valA} B:${valB}` : (channel === 'A' ? valA : valB)}`;
+    // 带时长的指令：到点自动归零，避免"下了强度就再也没人管"。
+    if (holdSeconds !== null && holdSeconds > 0 && (valA > 0 || valB > 0)) {
+      this.scheduleOutputStop('ems', holdSeconds);
+    }
+    const holdNote = holdSeconds !== null && holdSeconds > 0
+      ? `，${holdSeconds} 秒后自动归零`
+      : '';
+    return `电击通道 ${channel} 强度设置为 ${channel === 'AB' ? `A:${valA} B:${valB}` : (channel === 'A' ? valA : valB)}${holdNote}`;
   }
 
-  async sendEmsWave(channel: 'A' | 'B' | 'AB', waveName: string, durationSec?: number): Promise<string> {
-    if (this.safetyConfig.emergencyLock) return '急停锁已激活，拒绝执行';
+  async sendEmsWave(
+    channel: 'A' | 'B' | 'AB',
+    waveName: string,
+    durationSec?: number,
+    options: EmsWaveOptions = {},
+  ): Promise<string> {
+    if (this.safetyConfig.emergencyLock) {
+      const message = '急停锁已激活，拒绝执行';
+      this.reportOutputRefusal('emergency_lock', message);
+      return message;
+    }
     if (this.currentMode === 'ble' && !this.bleManagers.ems.isConnected()) {
       throw new Error('EMS 蓝牙设备尚未连接');
     }
@@ -1022,6 +1327,36 @@ export class DeviceManager {
     this.currentState.ems.isShocking = this.currentState.ems.strengthA > 0 || this.currentState.ems.strengthB > 0;
     this.simulator.sendEmsWave(channel, wave.name);
     this.notifyState();
+
+    // 1.5 波形只决定"形状"，幅度来自强度寄存器：强度为 0 时郊狼一个包都不会写
+    //     （V2/V3 分支都有 `if (strength > 0)` 守卫）。而模式工坊的波形按钮、
+    //     悬浮窗锯齿波、AI 的 send_ems_wave、契约查岗与控射推进都只调波形不设强度，
+    //     于是"注入了波形却毫无感觉"。这里按用户配置的随机下限自动起振兜底。
+    let autoStartedStrength: number | null = null;
+    if (this.currentMode !== 'bridge' && options.autoStartStrength !== false) {
+      const targeted: Array<'A' | 'B'> = channel === 'A' ? ['A'] : channel === 'B' ? ['B'] : ['A', 'B'];
+      const readStrength = (target: 'A' | 'B') => (
+        target === 'A' ? this.currentState.ems.strengthA : this.currentState.ems.strengthB
+      );
+      const readLimit = (target: 'A' | 'B') => (
+        target === 'A' ? this.safetyConfig.maxEmsStrengthA : this.safetyConfig.maxEmsStrengthB
+      );
+      const silentChannels = targeted.filter((target) => readStrength(target) <= 0 && readLimit(target) > 0);
+      if (silentChannels.length > 0) {
+        const configuredFloor = Math.round(normalizeSafetyLimit(this.safetyConfig.minEmsStrength, 0, 200));
+        if (configuredFloor > 0) {
+          for (const target of silentChannels) {
+            await this.setEmsStrength(target, configuredFloor);
+          }
+          autoStartedStrength = Math.max(...silentChannels.map(readStrength));
+        }
+      }
+      if (!targeted.some((target) => readStrength(target) > 0)) {
+        const message = `通道 ${channel} 当前强度为 0 且无法自动起振，波形不会产生任何输出（请先设置强度，或把最小强度下限调高）`;
+        this.reportOutputRefusal('zero_strength', message);
+        return message;
+      }
+    }
 
     // 2. 硬件下发
     if (this.currentMode === 'ble') {
@@ -1057,15 +1392,41 @@ export class DeviceManager {
           await this.enqueueHardwareWrite('ems', () => this.bleManagers.ems.sendPacket(packet), true);
         }
       } catch (e) {
+        if (e instanceof HardwareWriteTimeoutError) await this.handleEmsWriteTimeout(e);
         await this.latchEmergencyStop();
         throw new Error(`BLE 波形下发失败: ${e instanceof Error ? e.message : String(e)}`);
       }
     } else if (this.currentMode === 'dglab') {
       try {
+        // 校验通道安全上限：若目标通道上限为 0，拒绝输出
+        const limitA = this.safetyConfig.maxEmsStrengthA;
+        const limitB = this.safetyConfig.maxEmsStrengthB;
+        if (channel === 'A' && limitA <= 0) {
+          const message = '通道 A 安全上限为 0，已拒绝放电';
+          this.reportOutputRefusal('no_usable_channel', message);
+          return message;
+        }
+        if (channel === 'B' && limitB <= 0) {
+          const message = '通道 B 安全上限为 0，已拒绝放电';
+          this.reportOutputRefusal('no_usable_channel', message);
+          return message;
+        }
+        if (channel === 'AB' && limitA <= 0 && limitB <= 0) {
+          const message = '双通道安全上限均为 0，已拒绝放电';
+          this.reportOutputRefusal('no_usable_channel', message);
+          return message;
+        }
+
+        const effectiveChannel = (channel === 'AB' && limitA <= 0)
+          ? 'B'
+          : (channel === 'AB' && limitB <= 0)
+            ? 'A'
+            : channel;
+
         const effectiveDuration = Math.max(1, Math.min(30, durationSec || 5));
         const pulses = CoyoteWaveformConverter.convertToDGLabPulses(canonicalWaveId, effectiveDuration);
         if (pulses.length > 0) {
-          await this.dglabClient.sendPulse(channel, pulses, effectiveDuration);
+          await this.dglabClient.sendPulse(effectiveChannel, pulses, effectiveDuration);
         }
       } catch (err) {
         console.warn('DG-LAB 波形下发失败:', err);
@@ -1094,7 +1455,10 @@ export class DeviceManager {
         }
       }, durationSec * 1000);
     }
-    return `通道 ${channel} 正在输出电击波形: ${wave.name}${durationSec ? `（${durationSec} 秒）` : ''}`;
+    const autoNote = autoStartedStrength !== null
+      ? `；原本强度为 0，已自动按安全下限 ${autoStartedStrength} 起振`
+      : '';
+    return `通道 ${channel} 正在输出电击波形: ${wave.name}${durationSec ? `（${durationSec} 秒）` : ''}${autoNote}`;
   }
 
   // ================= 飞机杯 / 跳蛋 马达控制 =================
@@ -1134,8 +1498,22 @@ export class DeviceManager {
         const packet = YCYToyProtocol.buildRatePacket(a, b, c);
         await this.enqueueHardwareWrite('toy', () => this.bleManagers.toy.sendPacket(packet), true);
       } catch (e) {
-        await this.latchEmergencyStop();
-        throw new Error(`BLE 玩具马达下发失败: ${e instanceof Error ? e.message : String(e)}`);
+        const detail = e instanceof Error ? e.message : String(e);
+        // 马达不是生命保障通道：先把本通道归零并确认停机指令真的送达。
+        // 只有连停止指令都发不出去时才升级为全局急停锁，
+        // 否则一次玩具写入抖动就会永久锁死整个 App 的全部输出。
+        this.currentState.toy.motorA = 0;
+        this.currentState.toy.motorB = 0;
+        this.currentState.toy.motorC = 0;
+        this.simulator.setToyMotor(0, 0, 0);
+        this.notifyState();
+        try {
+          await this.bleManagers.toy.sendPacket(YCYToyProtocol.buildRatePacket(0, 0, 0));
+        } catch {
+          await this.latchEmergencyStop();
+          throw new Error(`BLE 玩具马达下发失败且无法确认停机，已锁定全局急停: ${detail}`);
+        }
+        throw new Error(`BLE 玩具马达下发失败（已确认停机）: ${detail}`);
       }
     } else if (this.currentMode === 'bridge' && isStopping) {
       await this.triggerBridgeEvent('_stop_all');
@@ -1393,7 +1771,10 @@ export class DeviceManager {
     return `灌肠机启动反转抽水与排空泵（持续 ${dur} 秒）`;
   }
 
-  async playEnemaPattern(patternId: string): Promise<string> {
+  async playEnemaPattern(
+    patternId: string,
+    maxTotalSec: number = DEFAULT_ENEMA_PATTERN_MAX_TOTAL_SEC,
+  ): Promise<string> {
     if (this.safetyConfig.emergencyLock) return '急停锁已激活，拒绝执行';
     if (this.safetyConfig.maxEnemaDurationSec <= 0) return '灌肠机自动输出上限为 0，拒绝执行';
 
@@ -1407,10 +1788,21 @@ export class DeviceManager {
     this.clearEnemaOperations();
     const generation = this.enemaOperationGeneration;
 
+    this.assertFiniteNumber(maxTotalSec, '灌肠流程总时长');
+    const totalLimitSec = Math.min(3600, Math.max(1, Math.round(maxTotalSec)));
+    const startedAt = Date.now();
+
     this.currentState.enema.activePattern = pattern.name;
-    this.currentState.enema.patternRemainingSec = Math.round(pattern.sequence.reduce((sum, step) => sum + step[2], 0));
+    this.currentState.enema.patternRemainingSec = totalLimitSec;
     this.simulator.setEnemaPattern(pattern.name);
     this.notifyState();
+
+    // 绝对兜底：即使某一步卡住不再推进，也必须在上限到点时停机。
+    this.scheduleEnemaOperation(() => {
+      if (generation === this.enemaOperationGeneration) {
+        void this.stopEnema().catch(() => undefined);
+      }
+    }, totalLimitSec * 1000);
 
     if (this.currentMode === 'bridge') {
       try {
@@ -1425,6 +1817,13 @@ export class DeviceManager {
     let stepIndex = 0;
     const runStep = async () => {
       if (generation !== this.enemaOperationGeneration || this.safetyConfig.emergencyLock) return;
+      // 总时长闸门：loop 流程不再能无限循环。
+      const elapsedSec = (Date.now() - startedAt) / 1000;
+      if (elapsedSec >= totalLimitSec) {
+        await this.stopEnema();
+        return;
+      }
+      this.currentState.enema.patternRemainingSec = Math.max(0, Math.round(totalLimitSec - elapsedSec));
       const seq = pattern.sequence;
       if (stepIndex >= seq.length) {
         if (pattern.loop) stepIndex = 0;
@@ -1457,16 +1856,18 @@ export class DeviceManager {
 
       if (generation !== this.enemaOperationGeneration || this.safetyConfig.emergencyLock) return;
       stepIndex++;
+      // 单步也不得越过总预算，避免最后一步把总时长顶穿。
+      const remainingSec = Math.max(1, totalLimitSec - (Date.now() - startedAt) / 1000);
       this.activeEnemaPatternTimer = setTimeout(() => {
         void runStep().catch((error) => {
           console.warn('灌肠流程执行失败:', error);
           if (generation === this.enemaOperationGeneration) void this.latchEmergencyStop();
         });
-      }, dur * 1000);
+      }, Math.min(dur, remainingSec) * 1000);
     };
 
     await runStep();
-    return `正在执行灌肠流程【${pattern.name}】`;
+    return `正在执行灌肠流程【${pattern.name}】（总时长上限 ${totalLimitSec} 秒${pattern.loop ? '，循环流程到点自动停止' : ''}）`;
   }
 
   async stopEnema(): Promise<void> {

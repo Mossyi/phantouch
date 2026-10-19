@@ -68,7 +68,7 @@ const apkPath = resolveApkPath();
 const apkKey = typeof args['apk-key'] === 'string' ? args['apk-key'] : 'app/Phantouch.apk';
 const distDir = resolve(ROOT, typeof args.path === 'string' ? args.path : 'dist');
 const dryRun = Boolean(args['dry-run']);
-const workerUrl = typeof args['worker-url'] === 'string' ? args['worker-url'].replace(/\/+$/, '') : 'https://phantouch-updates.example.workers.dev';
+const workerUrl = typeof args['worker-url'] === 'string' ? args['worker-url'].replace(/\/+$/, '') : 'https://phantouch-updates.mossyi.workers.dev';
 
 const resolveWrangler = () => {
   const candidates = [
@@ -83,6 +83,18 @@ const resolveWrangler = () => {
 
 const wranglerEntry = resolveWrangler();
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * 上传单个对象。wrangler 的 r2 put 会间歇性报 "fetch failed"
+ * （连接抖动 / 限流），这类错误是可重试的：否则一次抖动就会让整次发布
+ * 停在半成品状态（清单已换、差分包没传完）。只对瞬时错误重试。
+ */
+const TRANSIENT_PATTERN = /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|socket hang up|network|429|500|502|503|504/i;
+
+/** 每个对象上传成功后的间隔，避免连续 PUT 触发 Cloudflare 侧瞬时拒绝。 */
+const PUT_PACING_MS = 200;
+
 const put = async (key, file) => {
   if (dryRun) {
     console.log(`  [dry-run] ${key}`);
@@ -91,11 +103,26 @@ const put = async (key, file) => {
   if (!wranglerEntry) {
     throw new Error('未找到 wrangler，请先在 cloudflare/updater-worker 下执行 npm install');
   }
-  await execFileAsync(
-    process.execPath,
-    [wranglerEntry, 'r2', 'object', 'put', `${bucket}/${key}`, '--file', file, '--remote'],
-    { cwd: ROOT, maxBuffer: 32 * 1024 * 1024 },
-  );
+  const maxAttempts = 6;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await execFileAsync(
+        process.execPath,
+        [wranglerEntry, 'r2', 'object', 'put', `${bucket}/${key}`, '--file', file, '--remote'],
+        { cwd: ROOT, maxBuffer: 32 * 1024 * 1024 },
+      );
+      // 轻微节流：连续快速 PUT 会触发 Cloudflare 侧的瞬时拒绝（表现为 fetch failed）。
+      await sleep(PUT_PACING_MS);
+      return;
+    } catch (error) {
+      const detail = `${error?.stderr || ''}${error?.stdout || ''}${error?.message || ''}`;
+      const transient = TRANSIENT_PATTERN.test(detail);
+      if (attempt >= maxAttempts || !transient) throw error;
+      const backoffMs = 1500 * attempt;
+      console.warn(`  ↻ ${key} 上传失败（第 ${attempt}/${maxAttempts} 次，疑似瞬时网络问题），${backoffMs}ms 后重试…`);
+      await sleep(backoffMs);
+    }
+  }
 };
 
 const objectExists = async (hash) => {
@@ -112,26 +139,26 @@ const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 
 console.log(`📤 上传目标：R2 存储桶 "${bucket}"${dryRun ? '（dry-run）' : ''}`);
 
-// ── 1. APK 全量更新：清单 + 安装包 ─────────────────────────────
+// ── 1. APK 全量更新：安装包优先上传，清单最后就位 ──────────────────
 console.log('\n[APK 全量更新]');
-if (existsSync(versionPath)) {
-  const info = await stat(versionPath);
-  console.log(`  ↳ app/version.json (${mb(info.size)})`);
-  await put('app/version.json', versionPath);
-} else {
-  console.warn(`  ⚠️  找不到 ${versionPath}，跳过更新清单`);
-}
-
 if (apkPath) {
   if (existsSync(apkPath)) {
     const info = await stat(apkPath);
-    console.log(`  ↳ ${apkKey} (${mb(info.size)})`);
+    console.log(`  ↳ 优先上传安装包：${apkKey} (${mb(info.size)})`);
     await put(apkKey, apkPath);
   } else {
     console.warn(`  ⚠️  找不到 APK：${apkPath}，跳过`);
   }
 } else {
   console.log('  ↳ 未提供 --apk，跳过安装包上传');
+}
+
+if (existsSync(versionPath)) {
+  const info = await stat(versionPath);
+  console.log(`  ↳ 发布版本清单：app/version.json (${mb(info.size)})`);
+  await put('app/version.json', versionPath);
+} else {
+  console.warn(`  ⚠️  找不到 ${versionPath}，跳过更新清单`);
 }
 
 // ── 2. 热更新：清单 + 完整包 + 差分文件 ────────────────────────

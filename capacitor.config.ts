@@ -10,7 +10,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
  *
  * 部署说明见 cloudflare/updater-worker/README.md
  */
-const UPDATE_ORIGIN = (process.env.VITE_UPDATE_ORIGIN || 'https://phantouch-updates.example.workers.dev').replace(/\/+$/, '');
+const UPDATE_ORIGIN = (process.env.VITE_UPDATE_ORIGIN || 'https://phantouch-updates.mossyi.workers.dev').replace(/\/+$/, '');
 
 const config: CapacitorConfig = {
   appId: 'com.yiciyuan.aicontroller',

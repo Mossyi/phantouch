@@ -12,7 +12,7 @@
  * 用法：
  *   node scripts/publish-update.mjs
  *   node scripts/publish-update.mjs --apk "幻触-Phantouch-debug.apk"
- *   node scripts/publish-update.mjs --apk build/app-release.apk --repo your-name/phantouch --notes CHANGELOG.md
+ *   node scripts/publish-update.mjs --apk build/app-release.apk --repo Mossyi/phantouch --notes CHANGELOG.md
  */
 
 import { readFile, writeFile, stat } from 'node:fs/promises';
@@ -50,7 +50,7 @@ if (typeof current.version !== 'string' || !Number.isSafeInteger(current.version
 }
 
 // 发布物统一走自托管 Cloudflare Worker（R2 作存储后端），代码仓库保持私有。
-const origin = (typeof args.origin === 'string' ? args.origin : 'https://phantouch-updates.example.workers.dev').replace(/\/+$/, '');
+const origin = (typeof args.origin === 'string' ? args.origin : 'https://phantouch-updates.mossyi.workers.dev').replace(/\/+$/, '');
 const apkAssetName = typeof args['apk-name'] === 'string' ? args['apk-name'] : 'Phantouch.apk';
 const apkUrl = typeof args['apk-url'] === 'string' ? args['apk-url'] : `${origin}/app/${apkAssetName}`;
 
@@ -126,7 +126,7 @@ const manifest = {
   notice: '幻触新版本发布，欢迎体验！',
   changelog,
   apkUrl,
-  backupUrl: typeof args.backup === 'string' ? args.backup : 'https://example.com/phantouch',
+  backupUrl: typeof args.backup === 'string' ? args.backup : 'https://afdian.com/a/CyberK/plan',
 };
 
 if (apkMeta) {

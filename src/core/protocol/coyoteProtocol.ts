@@ -78,6 +78,10 @@ export class CoyoteV2Protocol {
       return { rawA: 0, rawB: 0, strengthA: 0, strengthB: 0 };
     }
     const val = bytes[0] | (bytes[1] << 8) | (bytes[2] << 16);
+    // 保留位 (bits 22-23) 非零或全 0xFF 为 BLE 错误包，丢弃
+    if ((val & 0xC00000) !== 0) {
+      return { rawA: 0, rawB: 0, strengthA: 0, strengthB: 0 };
+    }
     const rawA = (val >> 11) & 0x7ff;
     const rawB = val & 0x7ff;
     return {

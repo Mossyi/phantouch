@@ -8,6 +8,11 @@ export class YCYEnemaProtocol {
   static readonly BLE_WRITE_UUID   = '0000ffb1-0000-1000-8000-00805f9b34fb';
   static readonly BLE_NOTIFY_UUID  = '0000ffb2-0000-1000-8000-00805f9b34fb';
 
+  // 役次元智能灌肠机 2.0 (FF50/FF51/FF52)
+  static readonly BLE_SERVICE_V2_UUID = '0000ff50-0000-1000-8000-00805f9b34fb';
+  static readonly BLE_WRITE_V2_UUID   = '0000ff51-0000-1000-8000-00805f9b34fb';
+  static readonly BLE_NOTIFY_V2_UUID  = '0000ff52-0000-1000-8000-00805f9b34fb';
+
   // 官方固定 AES-128 密钥 (16 字节)
   private static readonly AES_KEY_HEX = 'F638BC9CFA477480AB3242F6B04557A1';
 
@@ -189,35 +194,47 @@ export class YCYEnemaProtocol {
       return { type: 'unknown' };
     }
 
+    let plain: Uint8Array | null = null;
     try {
-      const plain = this.decrypt16b(encryptedBytes);
-      if (plain[0] === 0xbf && plain[1] === 0x0f && plain[2] === 0xb0) {
-        const cmd = plain[3];
-        if (cmd === 0x01) {
-          if (![this.PUMP_STOP, this.PUMP_FILL, this.PUMP_DRAIN].includes(plain[4])
-            || ![this.WATER_PUMP_STOP, this.WATER_PUMP_RUN].includes(plain[5])) {
-            return { type: 'unknown' };
-          }
-          return {
-            type: 'status',
-            data: {
-              peristaltic: plain[4], // 0=停, 1=正, 2=反
-              waterPump: plain[5]   // 0=停, 1=开
-            }
-          };
-        } else if (cmd === 0x02) {
-          const pA = (plain[4] << 8) | plain[5];
-          const pB = (plain[6] << 8) | plain[7];
-          return {
-            type: 'pressure',
-            data: { pressureA: pA, pressureB: pB }
-          };
-        } else if (cmd === 0x03) {
-          return plain[4] <= 100 ? {
-            type: 'battery',
-            data: { battery: plain[4] }
-          } : { type: 'unknown' };
+      plain = this.decrypt16b(encryptedBytes);
+    } catch {
+      // ignore
+    }
+
+    const isValidHeader = (p: Uint8Array | null) =>
+      p !== null && p.length >= 6 && p[0] === 0xbf && p[1] === 0x0f && (p[2] === 0xb0 || p[2] === 0x50 || p[2] === 0xa0);
+
+    const target = isValidHeader(plain) ? plain! : (isValidHeader(encryptedBytes) ? encryptedBytes : null);
+    if (!target) {
+      return { type: 'unknown' };
+    }
+
+    try {
+      const cmd = target[3];
+      if (cmd === 0x01) {
+        if (![this.PUMP_STOP, this.PUMP_FILL, this.PUMP_DRAIN].includes(target[4])
+          || ![this.WATER_PUMP_STOP, this.WATER_PUMP_RUN].includes(target[5])) {
+          return { type: 'unknown' };
         }
+        return {
+          type: 'status',
+          data: {
+            peristaltic: target[4], // 0=停, 1=正, 2=反
+            waterPump: target[5]   // 0=停, 1=开
+          }
+        };
+      } else if (cmd === 0x02) {
+        const pA = (target[4] << 8) | target[5];
+        const pB = (target[6] << 8) | target[7];
+        return {
+          type: 'pressure',
+          data: { pressureA: pA, pressureB: pB }
+        };
+      } else if (cmd === 0x03) {
+        return target[4] <= 100 ? {
+          type: 'battery',
+          data: { battery: target[4] }
+        } : { type: 'unknown' };
       }
     } catch {
       // ignore

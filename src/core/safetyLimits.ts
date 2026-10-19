@@ -33,6 +33,25 @@ export const clampOutputToLimit = (
   return Math.min(limit, Math.max(0, requested));
 };
 
+/**
+ * 「随机 EMS 请求」的可用上限：取**已启用的最强通道**，而不是两路上限的最小值。
+ *
+ * 只贴一路电极片的用户会把另一路上限设为 0。若按最小值取，随机强度会恒为 0，
+ * 所有"随机电击"玩法（重塑的芭比实验室 / 神经刻印 / 全视之眼 / 场景导演、
+ * 悬浮窗步进等）都会静默失效且不给任何提示。
+ *
+ * 这里放宽的只是"随机请求的取值范围"；**每个通道自己的上限仍由
+ * `clampOutputToLimit` 在执行时夹取**，所以上限为 0 的通道永远不会输出。
+ */
+export const resolveEnabledEmsCeiling = (
+  limitA: unknown,
+  limitB: unknown,
+  hardwareMaximum: number,
+): number => Math.max(
+  normalizeSafetyLimit(limitA, 0, hardwareMaximum),
+  normalizeSafetyLimit(limitB, 0, hardwareMaximum),
+);
+
 export const randomIntegerWithinLimits = (
   configuredMinimum: unknown,
   configuredMaximum: unknown,

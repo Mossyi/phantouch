@@ -40,8 +40,10 @@ const openTavernChatDatabase = (): Promise<IDBDatabase | null> => {
         }
       };
       request.onsuccess = () => {
-        request.result.onversionchange = () => { request.result.close(); databasePromise = null; };
-        resolve(request.result);
+        const db = request.result;
+        db.onversionchange = () => { db.close(); databasePromise = null; };
+        db.onclose = () => { databasePromise = null; };
+        resolve(db);
       };
       request.onerror = () => resolve(null);
       request.onblocked = () => resolve(null);

@@ -260,7 +260,7 @@ export class DungeonSaveManager {
     const lastHistoryItem = nextHistory[nextHistory.length - 1];
     if (!lastHistoryItem || lastHistoryItem.stepId !== currentStepId) {
       nextHistory.push(historyItem);
-    } else if (chosenText && !lastHistoryItem.chosenText) {
+    } else if (chosenText) {
       lastHistoryItem.chosenText = chosenText;
       lastHistoryItem.stateAfter = normalizeDungeonRunState(runState || existing.runState);
     }
@@ -299,13 +299,18 @@ export class DungeonSaveManager {
     const all = this.getAllSaves();
     const existing = all[scriptId];
     if (!existing || !Number.isInteger(historyIndex) || historyIndex < 0 || historyIndex >= existing.history.length) return null;
-    const history = existing.history.slice(0, historyIndex + 1);
+    const history = existing.history.slice(0, historyIndex + 1).map((item, idx, arr) => {
+      if (idx === arr.length - 1) {
+        return { ...item, chosenText: undefined, stateAfter: undefined };
+      }
+      return { ...item };
+    });
     const target = history[history.length - 1];
     const updated: DungeonSaveRecord = {
       ...existing,
       currentStepId: target.stepId,
       history,
-      runState: normalizeDungeonRunState(target.stateAfter),
+      runState: normalizeDungeonRunState(target.stateAfter || existing.runState),
       progressPct: Math.min(existing.progressPct, Math.round((history.length / Math.max(existing.history.length, 1)) * existing.progressPct)),
       lastUpdated: Date.now(),
     };

@@ -168,8 +168,12 @@ test('lowering a live output limit immediately stops every simulated output', as
     manager.updateSafetyConfig({ minEmsStrength: 200 });
     assert.equal(manager.getRandomEmsStrengthInConfiguredRange(), 200);
     manager.updateSafetyConfig({ maxEmsStrengthA: 180 });
-    assert.equal(manager.getSafetyConfig().minEmsStrength, 180);
-    assert.equal(manager.getRandomEmsStrengthInConfiguredRange(), 180);
+    // 随机下限与随机上限一律按「已启用的最强通道」钳制（此处 maxB 仍为 200），
+    // 而不是两路的最小值：只贴一路电极片的用户会把另一路设为 0，
+    // 若按最小值钳制，随机下限与随机上限会被一并清零，所有随机电击玩法静默失效。
+    // 反向覆盖见 scripts/ems-single-channel.test.mjs。
+    assert.equal(manager.getSafetyConfig().minEmsStrength, 200);
+    assert.equal(manager.getRandomEmsStrengthInConfiguredRange(), 200);
     assert.ok(manager.getRandomToyMotorRate('C', 6) >= 6);
     assert.equal(manager.getRandomEnemaDuration(12), 12);
     assert.match(await manager.enemaFill(60), /12 秒/);

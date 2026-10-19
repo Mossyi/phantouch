@@ -1311,7 +1311,7 @@ export class TavernStore {
     const archive = this.createChatArchive(safeCardId, messages, kind, title, metadata);
     if (!archive) return null;
     const archives = [archive, ...this.getChatArchives(safeCardId)].slice(0, MAX_TAVERN_CHAT_ARCHIVES);
-    if (!this.saveChatArchivesLocal(safeCardId, archives)) return null;
+    this.saveChatArchivesLocal(safeCardId, archives);
     void saveTavernArchiveRecord(safeCardId, archives);
     return archive;
   }
@@ -1341,7 +1341,7 @@ export class TavernStore {
       const current = this.getChatArchives(safeCardId);
       const next = current.filter((archive) => archive.id !== safeArchiveId);
       if (next.length === current.length) return false;
-      if (!this.saveChatArchivesLocal(safeCardId, next)) return false;
+      this.saveChatArchivesLocal(safeCardId, next);
       void saveTavernArchiveRecord(safeCardId, next);
       return true;
     } catch {
@@ -1372,7 +1372,7 @@ export class TavernStore {
       if (!target) return null;
       const renamed = { ...target, title: safeTitle, updatedAt: Date.now() };
       const next = current.map((archive) => archive.id === safeArchiveId ? renamed : archive);
-      if (!this.saveChatArchivesLocal(safeCardId, next)) return null;
+      this.saveChatArchivesLocal(safeCardId, next);
       void saveTavernArchiveRecord(safeCardId, next);
       return renamed;
     } catch {
@@ -1438,9 +1438,7 @@ export class TavernStore {
     if (!safeCardId) return { imported: 0, skipped: candidates.length, total: candidates.length };
     const current = this.getChatArchives(safeCardId);
     const prepared = this.prepareChatArchiveImport(safeCardId, candidates, current);
-    if (!this.saveChatArchivesLocal(safeCardId, prepared.next)) {
-      return { imported: 0, skipped: candidates.length, total: candidates.length };
-    }
+    this.saveChatArchivesLocal(safeCardId, prepared.next);
     void saveTavernArchiveRecord(safeCardId, prepared.next);
     return prepared.result;
   }

@@ -526,6 +526,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [bookmarks, setBookmarks] = useState(() => loadMessageBookmarks(activeCard.id));
   const [visibleHistoryCount, setVisibleHistoryCount] = useState(50);
   const streamRafRef = useRef<number | null>(null);
+  const messageNodes = useRef<Map<string, HTMLElement>>(new Map());
   const bookmarkedIdSet = useMemo(() => new Set(bookmarks.map((b) => b.id)), [bookmarks]);
 
   const renderedMessages = useMemo(() => {
@@ -533,8 +534,19 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     return messages.slice(-visibleHistoryCount);
   }, [messages, visibleHistoryCount]);
 
-  const messageNodes = useRef(new Map<string, HTMLDivElement>());
-  const locateMessage = (id: string) => { setLocatedMessage(id); messageNodes.current.get(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+  const locateMessage = (id: string) => {
+    setLocatedMessage(id);
+    const targetIndex = messages.findIndex((m) => m.id === id);
+    if (targetIndex >= 0) {
+      const requiredCount = messages.length - targetIndex + 10;
+      if (requiredCount > visibleHistoryCount) {
+        setVisibleHistoryCount(Math.min(messages.length, requiredCount));
+      }
+    }
+    requestAnimationFrame(() => {
+      messageNodes.current.get(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  };
   const toggleBookmark = (message: { id: string; content: string; role: string }) => {
     try {
       const isBookmarked = bookmarkedIdSet.has(message.id);
@@ -830,6 +842,19 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       inputRef.current.style.height = `${Math.min(Math.max(inputRef.current.scrollHeight, 60), 128)}px`;
     }
   }, [input]);
+
+  // 视口变动（软键盘弹起/收起）时，若用户在最底部，自动保持贴底，确保最新消息与气泡始终在视野内
+  useEffect(() => {
+    const handleViewportResize = () => {
+      if (!userScrolledUpRef.current && chatContainerRef.current) {
+        chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+      }
+    };
+    if (typeof window !== 'undefined' && window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleViewportResize);
+      return () => window.visualViewport?.removeEventListener('resize', handleViewportResize);
+    }
+  }, []);
 
   const getCardSourceMessages = () => messages.filter((message) => (
     (message.role === 'user' || message.role === 'assistant') && Boolean(message.content.trim())
@@ -1959,49 +1984,48 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const promptOverride = debugPromptOverride;
     if (promptOverride) setDebugPromptOverride(null);
 
-    // 1. 扫描硬件世界书关键词 (仅在非 OOC 模式触发)
-    let lorebookInjected = '';
-    let deferredUserActions: LorebookEntry[] = [];
-    let roundEmergencyStopped = false;
-    const cardLorebookInjected = !isOOC && isTavernPromptSectionEnabled(currentGenerationConfig, 'worldbook')
-      ? TavernCardParser.buildWorldBookContext(activeCard, rawText)
-      : '';
-    const sharedWorldbooks = loadTavernWorldbooks();
-    const sharedLorebookInjected = !isOOC && isTavernPromptSectionEnabled(currentGenerationConfig, 'worldbook')
-      ? buildTavernWorldbookContext(sharedWorldbooks, nextMessages)
-      : '';
-    const sharedLorebookMatches = !isOOC && isTavernPromptSectionEnabled(currentGenerationConfig, 'worldbook')
-      ? matchTavernWorldbooks(sharedWorldbooks, nextMessages)
-      : [];
-    if (sharedLorebookMatches.length > 0) {
-      setLorebookToast(`📚 剧情世界书：${sharedLorebookMatches.slice(0, 4).map((match) => match.entry.name || match.entry.keywords[0]).join('、')}`);
-      setTimeout(() => setLorebookToast(null), 3000);
-    }
-    if (!isOOC && activeCard.hardwareEnchanted) {
-      const { matchedEntries, actionEntries, deferredActionEntries, injectedContext } = lorebookEngine.processText(rawText, 'user');
-      deferredUserActions = deferredActionEntries;
-      roundEmergencyStopped = actionEntries.some((entry) => entry.hardwareAction?.type === 'brake_stop');
-      if (matchedEntries.length > 0) {
-        lorebookInjected = injectedContext;
-        setLorebookToast(`📖 命中世界书：${matchedEntries.map((m) => m.keywords[0]).join(', ')}${deferredActionEntries.length ? '，等待 AI 决定档位与时长' : ''}`);
-        setTimeout(() => setLorebookToast(null), 3000);
-      }
-    }
-
-    const tavernModelConfig = store.getTavernModelConfig();
-    // DZMM 不支持本地 function calling，才使用隐藏标记协议；其他通道只走原生工具，避免重复执行。
-    const aiActionRequest = !isOOC
-      && activeCard.hardwareEnchanted
-      && !roundEmergencyStopped
-      && tavernModelConfig.provider === 'dzmm'
-      ? lorebookEngine.createAiActionRequest([
-          ...deferredUserActions,
-          ...lorebookEngine.getAssistantAiActionCandidates(),
-        ])
-      : null;
-
     let requestController: AbortController | null = null;
     try {
+      // 1. 扫描硬件世界书关键词 (仅在非 OOC 模式触发)
+      let lorebookInjected = '';
+      let deferredUserActions: LorebookEntry[] = [];
+      let roundEmergencyStopped = false;
+      const cardLorebookInjected = !isOOC && isTavernPromptSectionEnabled(currentGenerationConfig, 'worldbook')
+        ? TavernCardParser.buildWorldBookContext(activeCard, rawText)
+        : '';
+      const sharedWorldbooks = loadTavernWorldbooks();
+      const sharedLorebookInjected = !isOOC && isTavernPromptSectionEnabled(currentGenerationConfig, 'worldbook')
+        ? buildTavernWorldbookContext(sharedWorldbooks, nextMessages)
+        : '';
+      const sharedLorebookMatches = !isOOC && isTavernPromptSectionEnabled(currentGenerationConfig, 'worldbook')
+        ? matchTavernWorldbooks(sharedWorldbooks, nextMessages)
+        : [];
+      if (sharedLorebookMatches.length > 0) {
+        setLorebookToast(`📚 剧情世界书：${sharedLorebookMatches.slice(0, 4).map((match) => match.entry.name || match.entry.keywords[0]).join('、')}`);
+        setTimeout(() => setLorebookToast(null), 3000);
+      }
+      if (!isOOC && activeCard.hardwareEnchanted) {
+        const { matchedEntries, actionEntries, deferredActionEntries, injectedContext } = lorebookEngine.processText(rawText, 'user');
+        deferredUserActions = deferredActionEntries;
+        roundEmergencyStopped = actionEntries.some((entry) => entry.hardwareAction?.type === 'brake_stop');
+        if (matchedEntries.length > 0) {
+          lorebookInjected = injectedContext;
+          setLorebookToast(`📖 命中世界书：${matchedEntries.map((m) => m.keywords[0]).join(', ')}${deferredActionEntries.length ? '，等待 AI 决定档位与时长' : ''}`);
+          setTimeout(() => setLorebookToast(null), 3000);
+        }
+      }
+
+      const tavernModelConfig = store.getTavernModelConfig();
+      // DZMM 不支持本地 function calling，才使用隐藏标记协议；其他通道只走原生工具，避免重复执行。
+      const aiActionRequest = !isOOC
+        && activeCard.hardwareEnchanted
+        && !roundEmergencyStopped
+        && tavernModelConfig.provider === 'dzmm'
+        ? lorebookEngine.createAiActionRequest([
+            ...deferredUserActions,
+            ...lorebookEngine.getAssistantAiActionCandidates(),
+          ])
+        : null;
       // 2. 组装 System Prompt 与附魔指令
       const playerContext = buildTavernPlayerPromptContext(store.getPlayerProfile());
       const diaryContext = isOOC ? '' : DiaryCapsuleEngine.getInstance().getDiaryContext(activeCard.name);
@@ -2325,10 +2349,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     } finally {
       if (requestControllerRef.current === requestController) {
         requestControllerRef.current = null;
-        streamingReplyRef.current = '';
-        setStreamingReply('');
-        setIsLoading(false);
       }
+      streamingReplyRef.current = '';
+      setStreamingReply('');
+      setIsLoading(false);
     }
   };
 
@@ -2952,7 +2976,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         )}
 
         {/* 消息滚动流 (自适应高度，仅内部滚动，支持长会话窗口化轻量渲染) */}
-        <div ref={chatContainerRef} className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
+        <div ref={chatContainerRef} className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 overscroll-contain">
           {messages.length > visibleHistoryCount && (
             <div className="flex items-center justify-center gap-2 py-1.5 animate-fade-in">
               <button
@@ -3112,6 +3136,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               rows={2}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onFocus={(e) => {
+                try {
+                  e.currentTarget.focus({ preventScroll: true });
+                } catch {}
+              }}
               onInput={(e) => {
                 const el = e.currentTarget;
                 el.style.height = 'auto';
@@ -3171,14 +3200,14 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       {(showQuickMenu || showActionMenu || showMessageFinder) && <button aria-label="关闭会话菜单" onClick={() => { setShowQuickMenu(false); setShowActionMenu(false); setShowMessageFinder(false); }} className="fixed inset-0 z-[35] bg-black/25" />}
 
       {showQuickMenu && (
-        <div className="tavern-quick-menu absolute bottom-[calc(9.3rem+env(safe-area-inset-bottom,0px))] left-2 z-40 max-h-[52vh] w-72 overflow-y-auto rounded-2xl border border-pink-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]">
+        <div className="tavern-quick-menu absolute bottom-[calc(9.3rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] left-2 z-40 max-h-[52vh] w-72 overflow-y-auto rounded-2xl border border-pink-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]">
           <div className="mb-1 flex items-center justify-between px-2.5 py-1.5"><span className="tavern-quick-menu-title text-[10px] font-black">快捷指令</span><span className="tavern-quick-menu-hint text-[9px]">仅写入输入框</span></div>
           {TAVERN_QUICK_COMMANDS.map((command) => <button key={command.id} onClick={() => applyQuickCommand(command.id)} className="flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-pink-50"><span className="tavern-quick-menu-label text-[11px] font-black">{command.label}</span><span className="tavern-quick-menu-hint ml-3 text-[9px]">{command.hint}</span></button>)}
         </div>
       )}
 
       {showActionMenu && (
-        <div className="tavern-floating-panel absolute bottom-[calc(9.3rem+env(safe-area-inset-bottom,0px))] right-2 z-40 w-[18.5rem] max-w-[calc(100%_-_1rem)] rounded-3xl border border-pink-200 p-3 shadow-xl">
+        <div className="tavern-floating-panel absolute bottom-[calc(9.3rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] right-2 z-40 w-[18.5rem] max-w-[calc(100%_-_1rem)] rounded-3xl border border-pink-200 p-3 shadow-xl">
           <div className="grid grid-cols-3 gap-2">
             <button
               onClick={() => {
@@ -3226,7 +3255,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       )}
 
       {showMessageFinder && (
-        <div className="absolute bottom-[calc(9.3rem+env(safe-area-inset-bottom,0px))] right-2 left-2 max-w-md mx-auto z-40">
+        <div className="absolute bottom-[calc(9.3rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] right-2 left-2 max-w-md mx-auto z-40">
           <MessageFinderPanel
             messages={messages}
             query={messageQuery}

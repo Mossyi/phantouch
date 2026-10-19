@@ -4,8 +4,11 @@
 
 @layer base {
   :root {
+    --sat: 18px;
+    --sat: env(safe-area-inset-top, 18px);
     --sat: max(env(safe-area-inset-top, 0px), 18px);
-    --sab: max(env(safe-area-inset-bottom, 0px), 16px);
+    --sab: 16px;
+    --sab: clamp(0px, env(safe-area-inset-bottom, 16px), 2rem);
     --surface: rgba(255, 255, 255, 0.96);
     --surface-strong: #ffffff;
     --surface-soft: #f7f7f8;
@@ -19,6 +22,41 @@
     --success: #047857;
     --danger: #be123c;
     --info: #1f6678;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    min-height: 100%;
+    max-height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  /* 适配各类移动端系统，确保全屏高度无缝撑满且软键盘唤起时严密适配 */
+  .app-viewport {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  /* 保证所有内部滚动区域在各类老旧移动端内核上都能正常滑屏与动量滚动 */
+  .overflow-y-auto,
+  .overflow-x-auto,
+  [class*="overflow-y-auto"] {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    overscroll-behavior-y: contain;
   }
 
   body {
@@ -306,13 +344,25 @@ button[class*="bg-rose-500"] {
 /* 安全区域辅助类 */
 .pt-safe-header {
   /* Respect notches/status bars while avoiding unnecessary desktop/WebView whitespace. */
+  padding-top: 18px;
+  padding-top: env(safe-area-inset-top, 18px);
   padding-top: max(env(safe-area-inset-top, 0px), 18px);
 }
 
-
-
 .tavern-chat-composer {
-  padding-bottom: calc(3.8rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: 3.8rem;
+  padding-bottom: calc(3.8rem + clamp(0px, env(safe-area-inset-bottom, 0px), 1.75rem));
+}
+
+/* 软键盘唤起时，输入区紧密贴合键盘顶沿，消除多余空白并释放聊天高度 */
+.keyboard-open .tavern-chat-composer,
+.keyboard-open .companion-chat-composer {
+  padding-bottom: 0.5rem !important;
+}
+
+.keyboard-open .tavern-quick-menu,
+.keyboard-open .tavern-floating-panel {
+  bottom: 5.5rem !important;
 }
 
 /* 酒馆弹层必须遮住后方剧情文字，避免无效透明度工具类造成穿透。 */
@@ -531,6 +581,7 @@ select {
 
 /* 3.1 苹果原生吸底晶莹液态导览栏 (Bottom-anchored Liquid Bar) */
 .liquid-bottom-bar {
+  bottom: 0px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 248, 252, 0.94) 100%);
   backdrop-filter: blur(28px) saturate(210%);
   -webkit-backdrop-filter: blur(28px) saturate(210%);

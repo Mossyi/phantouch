@@ -6,7 +6,7 @@ export const LLM_TOOLS = [
     type: 'function',
     function: {
       name: 'set_ems_strength',
-      description: '调节电击器 (EMS) 的通道强度。可单独调节 A 通道、B 通道或同时调节 AB 通道。',
+      description: '调节电击器 (EMS) 的通道强度。可单独调节 A 通道、B 通道或同时调节 AB 通道。输出会在 duration_sec 秒后自动归零（安全上限），想继续请重新调用。',
       parameters: {
         type: 'object',
         properties: {
@@ -20,6 +20,12 @@ export const LLM_TOOLS = [
             minimum: 0,
             maximum: 200,
             description: '电击强度数值，范围 0 - 200。0 表示关闭。请根据对话情绪渐进调节，不要瞬间拉满。'
+          },
+          duration_sec: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 60,
+            description: '本次输出持续秒数（1-60，缺省按 5 秒）。到点自动归零，避免无限期电击。'
           }
         },
         required: ['channel', 'strength']
@@ -30,7 +36,7 @@ export const LLM_TOOLS = [
     type: 'function',
     function: {
       name: 'send_ems_wave',
-      description: '向电击器 (EMS) 发送特定节奏的脉冲电击波形。拥有 24+ 种专业波形。',
+      description: '向电击器 (EMS) 发送特定节奏的脉冲电击波形。拥有 24+ 种专业波形。波形只改变手感，幅度取决于当前强度；如果强度为 0 会先按安全下限起振。输出会在 duration_sec 秒后自动归零。',
       parameters: {
         type: 'object',
         properties: {
@@ -47,6 +53,12 @@ export const LLM_TOOLS = [
               'punish_thunder', 'morse_code', 'sawtooth_grind', 'chaos_random', 'orgasm_drain', 'heartbeat_rush', 'magnetic_flow', 'silent_creep'
             ],
             description: '内置波形ID：electric_sting(毒蜂蜇刺), numbing_buzz(酥麻微流), staircase_shock(九重天阶梯), edging_spark(边缘火花), cyclone_surge(龙卷旋风), punish_thunder(天谴狂雷), orgasm_drain(高潮榨取), breathe(呼吸), tide(潮汐), combo(连击)等'
+          },
+          duration_sec: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 60,
+            description: '本次波形持续秒数（1-60，缺省按 5 秒）。到点自动归零。'
           }
         },
         required: ['channel', 'wave_name']

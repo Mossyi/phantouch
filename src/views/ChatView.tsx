@@ -110,6 +110,19 @@ export const ChatView: React.FC = () => {
     }
   }, [messages, isChatLoading]);
 
+  // 视口变动（软键盘弹起/收起）时，自动保持贴底
+  useEffect(() => {
+    const handleViewportResize = () => {
+      if (chatContainerRef.current) {
+        chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+      }
+    };
+    if (typeof window !== 'undefined' && window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleViewportResize);
+      return () => window.visualViewport?.removeEventListener('resize', handleViewportResize);
+    }
+  }, []);
+
   // 智能自动调教循环
   useEffect(() => {
     let autoTimer: ReturnType<typeof setTimeout>;
@@ -595,7 +608,7 @@ export const ChatView: React.FC = () => {
       </div>
 
       {/* 消息滚动列表 (自适应高度，仅内容滚动) */}
-      <div ref={chatContainerRef} className="flex-1 min-h-0 overflow-y-auto px-3.5 py-3 space-y-3.5 relative z-0">
+      <div ref={chatContainerRef} className="flex-1 min-h-0 overflow-y-auto px-3.5 py-3 space-y-3.5 relative z-0 overscroll-contain">
         {messages.length > visibleHistoryCount && (
           <div className="flex items-center justify-center gap-2 py-1 animate-fade-in">
             <button
@@ -650,7 +663,7 @@ export const ChatView: React.FC = () => {
       </div>
 
       {/* 底部输入区 (Apple Liquid Dock) */}
-      <div className="liquid-dock shrink-0 pb-[calc(3.8rem+env(safe-area-inset-bottom,0px))] z-20">
+      <div className="companion-chat-composer liquid-dock shrink-0 pb-[calc(3.8rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] z-20">
         {/* 快捷互动小气泡 (粉色系主题) */}
         <div className="px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto scrollbar-none border-b border-white/60">
           {quickPrompts.map((qp, idx) => (
@@ -687,6 +700,11 @@ export const ChatView: React.FC = () => {
               rows={2}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onFocus={(e) => {
+                try {
+                  e.currentTarget.focus({ preventScroll: true });
+                } catch {}
+              }}
               onKeyDown={handleKeyDown}
               placeholder={
                 isListening

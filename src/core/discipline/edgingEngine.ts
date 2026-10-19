@@ -45,19 +45,17 @@ export class EdgingEngine {
     DeviceManager.getInstance().subscribeState((devState) => {
       if (!this.state.isActive) return;
 
-      const p1 = Math.max(devState.enema.pressureA || 0, devState.enema.pressureB || 0);
-      if (p1 > 0) {
-        const result = this.detector.feedPressure(p1);
-        this.state.currentPressure = result.currentPressure;
-        this.state.baselinePressure = result.baseline;
-        this.state.arousalPercent = result.arousalPercent;
+      const p1 = Math.max(0, devState.enema.pressureA ?? 0, devState.enema.pressureB ?? 0);
+      const result = this.detector.feedPressure(p1);
+      this.state.currentPressure = result.currentPressure;
+      this.state.baselinePressure = result.baseline;
+      this.state.arousalPercent = result.arousalPercent;
 
-        // 如果在加温激发阶段且传感器捕捉到了括约肌收紧动作 ➔ 自动触发毫秒级急刹断电！
-        if (this.state.currentPhase === 'warming' && result.isClenchDetected) {
-          this.triggerDenialBrake(true);
-        } else {
-          this.notify();
-        }
+      // 如果在加温激发阶段且传感器捕捉到了括约肌收紧动作 ➔ 自动触发毫秒级急刹断电！
+      if (this.state.currentPhase === 'warming' && result.isClenchDetected) {
+        this.triggerDenialBrake(true);
+      } else {
+        this.notify();
       }
     });
   }

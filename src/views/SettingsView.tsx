@@ -8,6 +8,7 @@ import { AppDiagnosticsPanel } from '../components/AppDiagnosticsPanel';
 import { TavernMessageContent } from '../components/tavern/TavernMessageContent';
 import { useAppStore } from '../store/useAppStore';
 import { parseApiBaseUrl } from '../core/apiBaseUrl';
+import { resolveEnabledEmsCeiling } from '../core/safetyLimits';
 import { hasSameApiCredentialScope } from '../core/llmConfig';
 import { findLlmProviderPreset, LLM_PROVIDER_PRESETS, LlmProviderPreset } from '../core/llmProviders';
 import { probeVolcenginePlanModel } from '../core/ai/llmClient';
@@ -700,7 +701,7 @@ export const SettingsView: React.FC = () => {
           <div className="space-y-3 rounded-xl border border-pink-500/20 bg-pink-950/10 p-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-black text-pink-300">EMS 电击输出范围</span>
-              <span className="rounded-md bg-pink-500/10 px-2 py-0.5 font-mono text-[9px] text-pink-300">自动随机 {safetyConfig.minEmsStrength}–{Math.min(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB)}</span>
+              <span className="rounded-md bg-pink-500/10 px-2 py-0.5 font-mono text-[9px] text-pink-300">自动随机 {safetyConfig.minEmsStrength}–{resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200)}</span>
             </div>
             <div>
               <div className="flex items-center justify-between text-xs mb-1">

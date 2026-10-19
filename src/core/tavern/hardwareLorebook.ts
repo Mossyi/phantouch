@@ -1,7 +1,9 @@
 import { LorebookEntry } from './tavernTypes';
 import { DeviceManager } from '../deviceManager';
+import { resolveEnabledEmsCeiling } from '../safetyLimits';
 import { EMSWaveEngine } from '../protocol/waveEngine';
 import { TOY_PATTERNS } from '../protocol/toyPatterns';
+import { useAppStore } from '../../store/useAppStore';
 
 export type LorebookMessageSource = 'user' | 'assistant';
 
@@ -537,7 +539,8 @@ export const parseLorebookAiActionDecisions = (
   const decisions = new Map<string, LorebookAiActionDecision>();
   if (!request || typeof reply !== 'string') return { cleanedReply: reply, decisions };
   const requestEntries = new Map(request.entries.map((entry) => [entry.id, entry]));
-  const marker = new RegExp(`\\[\\[YCY_HW:${request.token}:([a-zA-Z0-9_-]{1,100}):(\\d{1,4}):(\\d{1,3})\\]\\]`, 'g');
+  const escapedToken = request.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const marker = new RegExp(`\\[\\[YCY_HW:${escapedToken}:([a-zA-Z0-9_-]{1,100}):(\\d{1,4}):(\\d{1,3})\\]\\]`, 'g');
   const cleanedReply = reply.replace(marker, (_full, id: string, rawDuration: string, rawLevel: string) => {
     const candidate = requestEntries.get(id);
     if (!candidate) return '';
@@ -703,7 +706,7 @@ export class HardwareLorebookEngine {
     const safety = DeviceManager.getInstance().getSafetyConfig();
     return createLorebookAiActionRequest(entries, {
       minimumEms: safety.minEmsStrength,
-      maximumEms: Math.min(safety.maxEmsStrengthA, safety.maxEmsStrengthB),
+      maximumEms: resolveEnabledEmsCeiling(safety.maxEmsStrengthA, safety.maxEmsStrengthB, 200),
       minimumToy: safety.minToyMotorRate,
       maximumToy: Math.max(safety.maxToyMotorARate, safety.maxToyMotorBRate, safety.maxToyMotorCRate),
       minimumEnemaSec: safety.minEnemaDurationSec,
@@ -720,11 +723,12 @@ export class HardwareLorebookEngine {
     options: { deferAiActions?: boolean } = { deferAiActions: true },
   ): HardwareLorebookMatchResult {
     const matchedEntries = matchHardwareLorebookEntries(this.entries, text, source);
-    const selectedEntries = selectHardwareLorebookActions(matchedEntries);
     const now = Date.now();
-    const actionEntries = selectedEntries.filter((entry) => (
+    // 先做冷却时间过滤，避免在冷却期的条目抢占了可用通道的唯一执行名额导致次优规则被饿死
+    const cooledEntries = matchedEntries.filter((entry) => (
       now - (this.lastTriggeredAt.get(entry.id) || 0) >= (entry.cooldownSec || 3) * 1000
     ));
+    const actionEntries = selectHardwareLorebookActions(cooledEntries);
     actionEntries.forEach((entry) => this.lastTriggeredAt.set(entry.id, now));
 
     const deferredActionEntries = options.deferAiActions === false
@@ -754,7 +758,7 @@ export class HardwareLorebookEngine {
     const usesLevel = action.type === 'ems_wave' || action.type === 'ems_strength' || isToy;
     const maximum = isToy
       ? Math.max(safety.maxToyMotorARate, safety.maxToyMotorBRate, safety.maxToyMotorCRate)
-      : usesLevel ? Math.min(safety.maxEmsStrengthA, safety.maxEmsStrengthB) : 1;
+      : usesLevel ? resolveEnabledEmsCeiling(safety.maxEmsStrengthA, safety.maxEmsStrengthB, 200) : 1;
     const minimum = usesLevel
       ? Math.min(maximum, isToy ? safety.minToyMotorRate : safety.minEmsStrength)
       : 1;
@@ -772,7 +776,24 @@ export class HardwareLorebookEngine {
 
   private async executeActionsSequentially(entries: LorebookEntry[]): Promise<void> {
     for (const entry of entries) {
-      if (entry.hardwareAction?.type === 'brake_stop') await this.executeHardwareAction(entry);
+      if (entry.hardwareAction?.type === 'brake_stop') {
+        await this.executeHardwareAction(entry);
+      } else if (entry.hardwareAction) {
+        // 立即模式（非急停动作）：基于用户当前安全上下限与条目默认配置安全执行
+        const safety = useAppStore.getState().safetyConfig;
+        const act = entry.hardwareAction;
+        const isToy = act.type === 'toy_motor' || act.type === 'toy_pattern';
+        const usesLevel = act.type === 'ems_wave' || act.type === 'ems_strength' || isToy;
+        const maxLevel = isToy
+          ? Math.max(safety.maxToyMotorARate, safety.maxToyMotorBRate, safety.maxToyMotorCRate)
+          : usesLevel ? resolveEnabledEmsCeiling(safety.maxEmsStrengthA, safety.maxEmsStrengthB, 200) : 1;
+        const minLevel = usesLevel
+          ? Math.min(maxLevel, isToy ? safety.minToyMotorRate : safety.minEmsStrength)
+          : 1;
+        const defaultLevel = Math.max(minLevel, Math.min(maxLevel, isToy ? 5 : 15));
+        const durationSec = act.durationSec ?? 10;
+        await this.executeHardwareAction(entry, defaultLevel, durationSec);
+      }
     }
   }
 
@@ -816,6 +837,11 @@ export class HardwareLorebookEngine {
     if (act.stopMode === 'timed' && aiDurationSec !== null) {
       if (outputType === 'ems') dev.scheduleOutputStop('ems', aiDurationSec);
       else if (act.type === 'toy_motor') dev.scheduleOutputStop('toy', aiDurationSec);
+    } else {
+      // 持续模式也必须具备最大时限保护（默认最多持续 300 秒），防止失控永久输出
+      const fallbackMaxSec = Math.max(1, Math.min(300, act.durationSec || 60));
+      if (outputType === 'ems') dev.scheduleOutputStop('ems', fallbackMaxSec);
+      else if (act.type === 'toy_motor') dev.scheduleOutputStop('toy', fallbackMaxSec);
     }
   }
 }

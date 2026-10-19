@@ -233,15 +233,24 @@ export const HypnosisAsmrTab: React.FC = () => {
     // Saved scripts are text/audio only; imported content cannot start hardware.
     const dev = DeviceManager.getInstance();
     if (!track.id.startsWith('ai-')) void (async () => {
+      // 电击是核心输出：失败时归零本通道，但不动全局急停锁。
       try {
-        await dev.sendEmsWave('AB', track.hardwarePreset.wave);
+        // autoStartStrength:false —— 下一行就会用音轨自己的强度（10~16，低于
+        // 默认随机下限 35），不能让波形先按安全下限打出一帧更热的脉冲。
+        await dev.sendEmsWave('AB', track.hardwarePreset.wave, undefined, { autoStartStrength: false });
         if (generation !== playbackGenerationRef.current) return;
         await dev.setEmsStrength('AB', track.hardwarePreset.strength);
-        if (generation !== playbackGenerationRef.current) return;
+      } catch (error) {
+        console.warn('ASMR 电击预设启动失败:', error);
+        await dev.setEmsStrength('AB', 0).catch(() => undefined);
+        return;
+      }
+      // 马达是可选外设：未连接或写入失败只跳过，不得连累已经输出的电击。
+      if (generation !== playbackGenerationRef.current) return;
+      try {
         await dev.setToyMotor(track.hardwarePreset.motorRate, 0, 0);
       } catch (error) {
-        console.warn('ASMR 硬件预设启动失败:', error);
-        await dev.emergencyStop();
+        console.warn('ASMR 马达预设已跳过:', error);
       }
     })();
 

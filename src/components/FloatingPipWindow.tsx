@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppStore } from '../store/useAppStore';
 import { DeviceManager } from '../core/deviceManager';
+import { resolveEnabledEmsCeiling } from '../core/safetyLimits';
 import {
   ShieldAlert,
   Minimize2,
@@ -63,7 +64,8 @@ export const FloatingPipWindow: React.FC = () => {
 
   const dev = DeviceManager.getInstance();
   const maxStrength = Math.max(deviceState.ems.strengthA, deviceState.ems.strengthB);
-  const maxAllowedEms = Math.min(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB);
+  // 步进上限取"已启用的最强通道"：只贴一路电极片时，+/- 不应整体失效。
+  const maxAllowedEms = resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200);
 
   const runManualAction = (action: () => Promise<unknown>) => {
     if (contractState?.isActive) return;
@@ -83,10 +85,13 @@ export const FloatingPipWindow: React.FC = () => {
         x: Math.max(8, Math.min(window.innerWidth - 62, prev.x)),
         y: Math.max(50, Math.min(window.innerHeight - 110, prev.y)),
       }));
-      setPanelPos((prev) => ({
-        x: Math.max(8, Math.min(window.innerWidth - 298, prev.x)),
-        y: Math.max(50, Math.min(window.innerHeight - 360, prev.y)),
-      }));
+      setPanelPos((prev) => {
+        const panelH = panelRef.current?.getBoundingClientRect().height || 460;
+        return {
+          x: Math.max(8, Math.min(window.innerWidth - 298, prev.x)),
+          y: Math.max(16, Math.min(Math.max(16, window.innerHeight - panelH - 16), prev.y)),
+        };
+      });
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -359,6 +364,7 @@ export const FloatingPipWindow: React.FC = () => {
 
   // 监听原生系统画中画退出
   useEffect(() => {
+    if (!floatingWindowState.isOpen) return;
     const video = videoRef.current;
     if (!video) return;
     const handleLeavePip = () => {
@@ -370,7 +376,7 @@ export const FloatingPipWindow: React.FC = () => {
       video.removeEventListener('leavepictureinpicture', handleLeavePip);
       stopPipStream();
     };
-  }, [setFloatingWindowState]);
+  }, [floatingWindowState.isOpen, setFloatingWindowState]);
 
   // 启动系统原生画中画 (Picture-in-Picture)
   const handleRequestSystemPip = async () => {
@@ -411,14 +417,46 @@ export const FloatingPipWindow: React.FC = () => {
   // 硬件操作快捷增减（安全限幅保护与多通道联动保持）
   const handleEmsStep = (delta: number) => {
     if (contractState?.isActive) return;
-    const nextVal = Math.max(0, Math.min(maxAllowedEms, maxStrength + delta));
-    useAppStore.setState((prev) => ({
-      deviceState: {
-        ...prev.deviceState,
-        ems: { ...prev.deviceState.ems, strengthA: nextVal, strengthB: nextVal },
-      },
-    }));
-    runManualAction(() => dev.setEmsStrength('AB', nextVal));
+    const curA = deviceState.ems?.strengthA ?? 0;
+    const curB = deviceState.ems?.strengthB ?? 0;
+    const maxA = safetyConfig.maxEmsStrengthA;
+    const maxB = safetyConfig.maxEmsStrengthB;
+
+    let nextA = curA;
+    let nextB = curB;
+
+    // 若用户仅使用了单通道（例如A开启，B未开启），保持B为0，不强行激活B
+    if (curA > 0 && curB === 0) {
+      nextA = Math.max(0, Math.min(maxA, curA + delta));
+      useAppStore.setState((prev) => ({
+        deviceState: { ...prev.deviceState, ems: { ...prev.deviceState.ems, strengthA: nextA } },
+      }));
+      runManualAction(() => dev.setEmsStrength('A', nextA));
+    } else if (curB > 0 && curA === 0) {
+      nextB = Math.max(0, Math.min(maxB, curB + delta));
+      useAppStore.setState((prev) => ({
+        deviceState: { ...prev.deviceState, ems: { ...prev.deviceState.ems, strengthB: nextB } },
+      }));
+      runManualAction(() => dev.setEmsStrength('B', nextB));
+    } else {
+      // 双方均有输出或双方均处于0初始待机态
+      nextA = Math.max(0, Math.min(maxA, curA + delta));
+      nextB = Math.max(0, Math.min(maxB, curB + delta));
+      useAppStore.setState((prev) => ({
+        deviceState: {
+          ...prev.deviceState,
+          ems: { ...prev.deviceState.ems, strengthA: nextA, strengthB: nextB },
+        },
+      }));
+      if (nextA === nextB) {
+        runManualAction(() => dev.setEmsStrength('AB', nextA));
+      } else {
+        runManualAction(async () => {
+          await dev.setEmsStrength('A', nextA);
+          await dev.setEmsStrength('B', nextB);
+        });
+      }
+    }
   };
 
   const handleEmsZero = () => {
@@ -488,7 +526,8 @@ export const FloatingPipWindow: React.FC = () => {
             top: panelPos.y,
             width: 290,
             maxWidth: 'calc(100vw - 16px)',
-            maxHeight: 'calc(100vh - 72px)',
+            maxHeight: `calc(100vh - ${Math.max(16, panelPos.y)}px - 16px)`,
+            overflowY: 'auto',
             zIndex: 9999,
             transition: isDraggingPanel ? 'none' : 'box-shadow 0.2s',
           }}

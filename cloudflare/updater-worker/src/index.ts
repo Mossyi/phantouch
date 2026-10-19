@@ -128,12 +128,21 @@ const handleUpdates = async (request: Request, env: Env, url: URL): Promise<Resp
   const entry = manifest[platform];
   if (!entry || entry.disabled || !entry.key || !entry.checksum) return noUpdate();
 
-  const currentCode = parseVersionCode(body.version_name);
+  const parsedCode = parseVersionCode(body.version_name);
   const nativeCode = Number.parseInt(body.version_code || '', 10);
+  const validNative = Number.isFinite(nativeCode) ? nativeCode : null;
 
-  // 若当前运行的是 APK 内置资源（builtin），其代码版本即为原生 APK 的 versionCode；
-  // 若原生 APK 本身就已包含当前或更新的 Web 资源，则无需再下发热更新。
-  const effectiveCode = currentCode !== null ? currentCode : (Number.isFinite(nativeCode) ? nativeCode : null);
+  // 若当前运行的是 APK 内置资源（builtin）或全新安装的 APK，
+  // 必须保证 effectiveCode 至少不低于原生 APK 的 versionCode，避免将新包误判为旧版。
+  let effectiveCode: number | null = null;
+  if (parsedCode !== null && validNative !== null) {
+    effectiveCode = Math.max(parsedCode, validNative);
+  } else if (parsedCode !== null) {
+    effectiveCode = parsedCode;
+  } else {
+    effectiveCode = validNative;
+  }
+
   if (effectiveCode !== null && effectiveCode >= entry.versionCode) return noUpdate();
 
   if (entry.minNativeVersionCode && Number.isFinite(nativeCode) && nativeCode < entry.minNativeVersionCode) {

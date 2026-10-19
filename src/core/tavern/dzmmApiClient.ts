@@ -87,6 +87,7 @@ export class DZMMApiClient {
       : 'card';
     const requestBody: Record<string, unknown> = {
       model,
+      stream: true,
       style: 'standard',
       user_name: typeof options.userName === 'string' ? options.userName.trim().slice(0, 40) || '旅人' : '旅人',
       user_id: this.sessionUserId,
@@ -175,7 +176,12 @@ export class DZMMApiClient {
       } finally {
         cleanup();
       }
-      throw new Error(`DZMM Card Chat 请求失败（${response.status}）${detail ? `：${detail}` : ''}`);
+      let sanitizedDetail = detail;
+      if (apiToken) {
+        sanitizedDetail = sanitizedDetail.split(apiToken).join('***');
+      }
+      sanitizedDetail = sanitizedDetail.replace(/Bearer\s+[a-zA-Z0-9_\-.]+/gi, 'Bearer ***');
+      throw new Error(`DZMM Card Chat 请求失败（${response.status}）${sanitizedDetail ? `：${sanitizedDetail}` : ''}`);
     }
 
     const contentType = response.headers.get('content-type') || '';
@@ -210,6 +216,10 @@ export class DZMMApiClient {
       if (!raw || raw === '[DONE]') return;
       let event: any;
       try { event = JSON.parse(raw); } catch { return; }
+      if (event?.error) {
+        const errMsg = typeof event.error === 'string' ? event.error : event.error?.message || JSON.stringify(event.error);
+        throw new Error(`DZMM 流式响应错误: ${errMsg}`);
+      }
       const content = event?.choices?.[0]?.delta?.content ?? event?.choices?.[0]?.message?.content;
       if (typeof content === 'string' && content) {
         reply += content;

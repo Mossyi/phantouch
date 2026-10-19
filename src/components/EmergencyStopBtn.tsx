@@ -9,6 +9,8 @@ export const FloatingEmergencyStop: React.FC = () => {
   
   const timer1Ref = useRef<NodeJS.Timeout>();
   const timer2Ref = useRef<NodeJS.Timeout>();
+  const isExecutingRef = useRef(false);
+  const [isStopping, setIsStopping] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -29,25 +31,35 @@ export const FloatingEmergencyStop: React.FC = () => {
     (deviceState?.enema?.peristalticState ?? 0) > 0
   );
 
-  const shouldShowButton = (activeTab !== 'chat' && activeTab !== 'tavern') && isHardwareActive;
+  const shouldShowButton = (activeTab !== 'chat' && activeTab !== 'tavern') && (isHardwareActive || isStopping);
 
   if (!shouldShowButton && !toast) {
     return null;
   }
 
   const handleClick = async () => {
+    if (isExecutingRef.current) return;
+    isExecutingRef.current = true;
+    setIsStopping(true);
     setIsPressed(true);
-    const msg = await triggerEmergencyStop();
-    setToast(msg);
-    timer1Ref.current = setTimeout(() => setIsPressed(false), 300);
-    timer2Ref.current = setTimeout(() => setToast(null), 3000);
+    try {
+      const msg = await triggerEmergencyStop();
+      setToast(msg);
+    } finally {
+      timer1Ref.current = setTimeout(() => {
+        setIsPressed(false);
+        setIsStopping(false);
+        isExecutingRef.current = false;
+      }, 500);
+      timer2Ref.current = setTimeout(() => setToast(null), 3000);
+    }
   };
 
   return (
     <>
       {/* 悬浮右下急停按钮（仅在硬件活跃输出时唤醒） */}
       {shouldShowButton && (
-        <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-3.5 z-50 animate-in fade-in zoom-in-75 duration-200">
+        <div className="fixed bottom-[calc(4.5rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] right-3.5 z-50 animate-in fade-in zoom-in-75 duration-200">
           <button
             onClick={handleClick}
             className={`relative group flex items-center justify-center w-12 h-12 rounded-full shadow-2xl transition-all duration-200 border-2 ${

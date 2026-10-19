@@ -28,13 +28,6 @@ android/app/src/main/res/xml/config.xml
 .idea/
 .vscode/
 
-# iOS synced output (cap sync 生成，不入库)
-ios/App/App/public/
-ios/App/App/capacitor.config.json
-ios/App/App/config.xml
-ios/App/Pods/
-ios/App/build/
-
 # Cloudflare Wrangler local state
 .wrangler/
 

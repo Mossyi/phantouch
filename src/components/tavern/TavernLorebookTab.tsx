@@ -6,6 +6,7 @@ import {
   LorebookMessageSource,
 } from '../../core/tavern/hardwareLorebook';
 import { LorebookEntry } from '../../core/tavern/tavernTypes';
+import { resolveEnabledEmsCeiling } from '../../core/safetyLimits';
 import { useAppStore } from '../../store/useAppStore';
 import { TavernWorldbookManager } from './TavernWorldbookManager';
 import {
@@ -59,7 +60,7 @@ const TavernHardwareLorebookPanel: React.FC = () => {
   const [testSource, setTestSource] = useState<LorebookMessageSource>('user');
   const [testResult, setTestResult] = useState<ReturnType<typeof engine.previewText> | null>(null);
 
-  const emsMaximum = Math.min(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB);
+  const emsMaximum = resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200);
   const emsMinimum = Math.min(safetyConfig.minEmsStrength, emsMaximum);
   const toyMaximum = Math.max(
     safetyConfig.maxToyMotorARate,

@@ -39,7 +39,7 @@ export const TavernView: React.FC = () => {
   ];
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col w-full h-full overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col w-full overflow-hidden">
       {/* 🍎 顶部滑动分段控制器 (visionOS Floating Liquid Pill Slider) */}
       <div className="liquid-header shrink-0 px-2.5 py-2 z-30">
         <div className="liquid-pill-track max-w-md mx-auto flex gap-1 p-1 overflow-x-auto scrollbar-none rounded-[1.25rem]">
@@ -73,7 +73,7 @@ export const TavernView: React.FC = () => {
           setActiveSubTab('cards');
         }} />
       ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto max-w-md mx-auto w-full px-3.5 py-3 pb-36">
+        <div className="flex-1 min-h-0 overflow-y-auto max-w-md mx-auto w-full px-3.5 py-3 pb-36 overscroll-contain">
           {activeSubTab === 'cards' && <TavernCardsTab onSelectCard={handleSelectCard} onSelectCardAndChat={handleSelectCardAndChat} openAiWriterRequest={openCardWriterRequest} conversationWriterRequest={conversationWriterRequest} />}
           {activeSubTab === 'player' && <TavernPlayerPresetsTab />}
           {activeSubTab === 'lorebook' && <TavernLorebookTab />}

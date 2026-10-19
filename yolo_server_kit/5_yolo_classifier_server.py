@@ -60,22 +60,23 @@ CAMERA_SOURCE = build_camera_source()
 DEFAULT_MODEL_PATHS = [
     os.getenv('YOLO_CLASSIFIER_PATH', ''),
     'yolo_action_cls.pt',
+    r'D:\xunlian\yolo_action_cls.pt',
     'yolo_action_cls.onnx',
+    r'D:\xunlian\yolo_action_cls.onnx',
     'yolov8n-cls.pt',
-    os.path.join(_current_dir, 'yolo_action_cls.pt'),
-    os.path.join(_current_dir, 'yolo_action_cls.onnx'),
-    os.path.join(_current_dir, 'yolov8n-cls.pt'),
+    r'D:\xunlian\yolov8n-cls.pt',
 ]
 
 # 自动寻找前置人体定位检测器 (用于家庭监控/广角大场景：先定位人体后裁剪分类)
 DEFAULT_DETECTOR_PATHS = [
     os.getenv('YOLO_DETECTOR_PATH', ''),
     'yolov8n-pose.pt',
+    r'D:\xunlian\yolov8n-pose.pt',
+    r'd:\rj\kaifa\yiciyuan2\yolov8n-pose.pt',
     'yolo26n.pt',
+    r'D:\xunlian\yolo26n.pt',
     'yolov8n.pt',
-    os.path.join(_current_dir, 'yolov8n-pose.pt'),
-    os.path.join(_current_dir, 'yolo26n.pt'),
-    os.path.join(_current_dir, 'yolov8n.pt'),
+    r'D:\xunlian\yolov8n.pt',
 ]
 
 def resolve_detector_path():
@@ -94,7 +95,7 @@ def resolve_model_input_size():
     env_size = os.getenv('YOLO_MODEL_INPUT_SIZE')
     if env_size:
         return min(640, max(128, int(env_size)))
-    for p in [Path('labels.json'), Path(__file__).resolve().parent / 'labels.json', Path(_current_dir) / 'labels.json']:
+    for p in [Path('labels.json'), Path(__file__).resolve().parent / 'labels.json', Path(r'D:\xunlian\labels.json')]:
         if p.exists():
             try:
                 with open(p, 'r', encoding='utf-8') as f:
