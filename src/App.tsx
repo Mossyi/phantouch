@@ -1,4 +1,5 @@
 import React, { lazy, Suspense } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { useAppStore } from './store/useAppStore';
 import { DeviceStatusBar } from './components/DeviceStatusBar';
 import { FloatingEmergencyStop } from './components/EmergencyStopBtn';
@@ -81,33 +82,51 @@ export const App: React.FC = () => {
   React.useEffect(() => {
     let removePluginListeners: (() => void) | undefined;
 
-    // 1. 优先使用 Capacitor Keyboard 插件官方事件（针对 Android 11+ 及 iOS）
-    import('@capacitor/keyboard')
-      .then(({ Keyboard }) => {
-        const showHandle = Keyboard.addListener('keyboardWillShow', () => setIsKeyboardOpen(true));
-        const hideHandle = Keyboard.addListener('keyboardWillHide', () => setIsKeyboardOpen(false));
-        removePluginListeners = () => {
-          showHandle.then((h) => h.remove()).catch(() => {});
-          hideHandle.then((h) => h.remove()).catch(() => {});
-        };
-      })
-      .catch(() => {});
+    // 1. 原生 App 优先使用 Capacitor Keyboard 插件官方事件（Android 11+ / iOS）。
+    //    网页端该插件未实现，调用 addListener 只会抛错，因此仅在原生平台注册。
+    if (Capacitor.isNativePlatform()) {
+      import('@capacitor/keyboard')
+        .then(({ Keyboard }) => {
+          const showHandle = Keyboard.addListener('keyboardWillShow', () => setIsKeyboardOpen(true));
+          const hideHandle = Keyboard.addListener('keyboardWillHide', () => setIsKeyboardOpen(false));
+          showHandle.catch(() => {});
+          hideHandle.catch(() => {});
+          removePluginListeners = () => {
+            showHandle.then((h) => h.remove()).catch(() => {});
+            hideHandle.then((h) => h.remove()).catch(() => {});
+          };
+        })
+        .catch(() => {});
+    }
 
-    // 2. 双重保底机制：基于视口高度收缩判定软键盘状态（针对 Android 10、老旧机型及 Web 端）
-    let initialHeight = typeof window !== 'undefined'
-      ? Math.max(window.innerHeight, window.screen?.height ? Math.round(window.screen.height / (window.devicePixelRatio || 1)) : 0, 750)
-      : 800;
+    // 2. 保底机制：基于视口高度收缩判定软键盘（Android 10、老旧机型及手机浏览器）。
+    //    只有「触屏设备 + 焦点在可输入的文本框」时才可能是软键盘：电脑浏览器窗口天然比屏幕矮，
+    //    若拿屏幕高度当基准，任何一次点击（focusin）都会被误判为键盘弹出，
+    //    底部导航随之隐藏且不可点击——表现为「点了没反应、直接消失」。
+    const isTouchDevice = Capacitor.isNativePlatform()
+      || (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches)
+      || (navigator.maxTouchPoints ?? 0) > 0;
+    const NON_TEXT_INPUT_TYPES = new Set(['button', 'checkbox', 'radio', 'range', 'submit', 'reset', 'file', 'color', 'image']);
+    const isTextEntryFocused = () => {
+      const el = document.activeElement;
+      if (!(el instanceof HTMLElement)) return false;
+      if (el.isContentEditable || el.tagName === 'TEXTAREA') return true;
+      return el.tagName === 'INPUT' && !NON_TEXT_INPUT_TYPES.has((el as HTMLInputElement).type);
+    };
+
+    const currentViewportHeight = () => Math.min(window.innerHeight, window.visualViewport?.height ?? window.innerHeight);
+    // 基准取「没有文本框聚焦时」观测到的视口高度，而不是屏幕高度
+    let baselineHeight = currentViewportHeight();
 
     const checkViewportHeight = () => {
-      const h = window.innerHeight;
-      const vh = window.visualViewport?.height ?? h;
-      const minH = Math.min(h, vh);
-
-      if (minH >= initialHeight - 50) {
-        initialHeight = Math.max(initialHeight, minH);
+      const minH = currentViewportHeight();
+      const textFocused = isTextEntryFocused();
+      if (!textFocused) baselineHeight = minH;
+      if (!isTouchDevice || !textFocused) {
+        setIsKeyboardOpen(false);
+        return;
       }
-
-      const diff = initialHeight - minH;
+      const diff = baselineHeight - minH;
       if (diff > 140) {
         setIsKeyboardOpen(true);
       } else if (diff < 70) {
@@ -130,7 +149,7 @@ export const App: React.FC = () => {
     window.addEventListener('focusout', handleFocusCheck);
     const handleOrientationChange = () => {
       setTimeout(() => {
-        initialHeight = window.innerHeight;
+        if (!isTextEntryFocused()) baselineHeight = currentViewportHeight();
         checkViewportHeight();
       }, 300);
     };
