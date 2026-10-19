@@ -72,3 +72,12 @@ test('viewport compat: safe-area-inset-bottom is clamped to prevent keyboard hei
   assert.ok(indexCss.includes('clamp(0px, env(safe-area-inset-bottom, 0px), 1.75rem)'), 'index.css composer must clamp safe area bottom');
 });
 
+
+test('viewport compat: soft-keyboard detection never fires on desktop clicks', async () => {
+  const appTsx = await readFile(resolve(ROOT, 'src/App.tsx'), 'utf-8');
+  // 电脑浏览器窗口天然比屏幕矮：以屏幕高度为基准会把任何一次点击误判为键盘弹出，底部导航随之隐藏且不可点击
+  assert.ok(!appTsx.includes('window.screen'), 'keyboard baseline must not use screen height');
+  assert.ok(appTsx.includes('isTextEntryFocused'), 'keyboard state requires a focused text field');
+  assert.ok(appTsx.includes('isTouchDevice'), 'keyboard state requires a touch device');
+  assert.ok(appTsx.includes('Capacitor.isNativePlatform()'), 'Keyboard plugin is registered only on native platforms');
+});
