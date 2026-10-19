@@ -64,7 +64,8 @@ export class YCYEMSProtocol {
 
   static parseNotifyPacket(bytes: Uint8Array): {
     type: 'channelA' | 'channelB' | 'battery' | 'unknown';
-    data?: { strength?: number; mode?: number; battery?: number; isActive?: boolean };
+    /** connection：0 = 电极未接入，1 = 已接入在放电，2 = 已接入未放电（官方协议「通道连接状态」） */
+    data?: { strength?: number; mode?: number; battery?: number; isActive?: boolean; connection?: number };
   } {
     if (bytes.length < 4 || bytes[0] !== 0x35 || bytes[1] !== 0x71) return { type: 'unknown' };
     if (this.checksum(bytes.slice(0, -1)) !== bytes[bytes.length - 1]) return { type: 'unknown' };
@@ -72,6 +73,7 @@ export class YCYEMSProtocol {
       return {
         type: bytes[2] === 0x01 ? 'channelA' : 'channelB',
         data: {
+          connection: bytes[3],
           isActive: bytes[4] === 0x01,
           strength: (bytes[5] << 8) | bytes[6],
           mode: bytes[7],

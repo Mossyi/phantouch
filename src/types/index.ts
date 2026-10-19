@@ -1,5 +1,5 @@
 // 设备类型
-export type DeviceCategory = 'ems' | 'toy' | 'enema' | 'all';
+export type DeviceCategory = 'ems' | 'toy' | 'enema' | 'sensor' | 'all';
 export type ToyType = 'cup' | 'egg' | 'toy'; // 飞机杯 / 跳蛋 / 通用
 
 // 连接模式
@@ -31,6 +31,8 @@ export interface ToyState {
   activePattern: string | null;
   patternRemainingSec: number;
   isTurbo: boolean;
+  /** 已连接玩具的协议：役次元飞机杯/跳蛋 (A/B/C 三马达) 或 DG-LAB 负鼠 (A/B 两路震动) */
+  protocol?: 'ycy' | 'opossum';
 }
 
 // 智能灌肠机 (Enema) 状态
@@ -45,6 +47,13 @@ export interface EnemaState {
   isHoldChallenge: boolean;
 }
 
+// DG-LAB 灵猫控射传感器状态
+export interface SensorState {
+  pressureKpa: number;   // 实时压力 (kPa)，每 100ms 上报
+  isReporting: boolean;  // 是否已开启压力上报
+  battery: number;       // 0 - 100
+}
+
 export interface DeviceSystemState {
   connectionMode: ConnectionMode;
   connectionStatus: ConnectionStatus; // Legacy/Aggregate status
@@ -56,10 +65,12 @@ export interface DeviceSystemState {
     ems: { isConnected: boolean; name: string | null };
     toy: { isConnected: boolean; name: string | null };
     enema: { isConnected: boolean; name: string | null };
+    sensor: { isConnected: boolean; name: string | null };
   };
   ems: EMSState;
   toy: ToyState;
   enema: EnemaState;
+  sensor: SensorState;
 }
 
 // 安全限制与全局反馈设置

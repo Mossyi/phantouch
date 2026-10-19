@@ -14,7 +14,8 @@ import { TOY_PATTERNS } from './protocol/toyPatterns';
 import { ENEMA_PATTERNS } from './protocol/enemaPatterns';
 import { AchievementEngine } from './achievements/achievementEngine';
 import { BountyQuestEngine } from './tavern/bountyQuestEngine';
-import { BLEManager, EMSProtocolVersion } from './bluetooth/bleManager';
+import { BLEManager, BLECategory, EMSProtocolVersion } from './bluetooth/bleManager';
+import { CivetProtocol, OpossumProtocol } from './protocol/dglabAccessoryProtocol';
 import { DeviceSimulator } from './bluetooth/simulator';
 import { YCYIMBridgeClient } from './bridge/ycyImClient';
 import { DGLabSocketClient } from './bridge/dglabSocketClient';
@@ -31,13 +32,15 @@ export type EmergencyStopCallback = () => void;
  * - no_usable_channel  目标通道的安全上限都是 0（没有任何可用通道）
  * - zero_strength      波形请求时强度为 0 且无法自动起振（最小强度下限也是 0）
  * - write_timeout      硬件写入超时（链路假死），本次输出已放弃
+ * - electrode_off      役次元电击器回报该通道电极片未接入，设备不会放电
  */
 export type EmsOutputRefusalReason =
   | 'emergency_lock'
   | 'emergency_lock_restored'
   | 'no_usable_channel'
   | 'zero_strength'
-  | 'write_timeout';
+  | 'write_timeout'
+  | 'electrode_off';
 
 /**
  * 单次硬件写入超时。
@@ -62,7 +65,7 @@ export interface EmsOutputRefusal {
   message: string;
 }
 export type EmsOutputRefusalCallback = (refusal: EmsOutputRefusal) => void;
-type HardwareWriteChannel = 'ems' | 'toy' | 'enema' | 'bridge';
+type HardwareWriteChannel = 'ems' | 'toy' | 'enema' | 'sensor' | 'bridge';
 
 const TOY_PATTERN_ALIASES: Record<string, string> = {
   gentle_wave: 'gentle',
@@ -105,10 +108,11 @@ export class DeviceManager {
   private stateCallbacks: DeviceStateCallback[] = [];
   private emergencyCallbacks: EmergencyStopCallback[] = [];
 
-  private bleManagers: Record<'ems' | 'toy' | 'enema', BLEManager> = {
+  private bleManagers: Record<BLECategory, BLEManager> = {
     ems: new BLEManager(),
     toy: new BLEManager(),
     enema: new BLEManager(),
+    sensor: new BLEManager(),
   };
   private simulator: DeviceSimulator;
   private imClient: YCYIMBridgeClient;
@@ -128,6 +132,15 @@ export class DeviceManager {
   private dglabQueuedUntil: Record<'A' | 'B', number> = { A: 0, B: 0 };
   private isDglabStreamingBusy = false;
   private static readonly DGLAB_CHUNK_FRAMES = 10;
+  /**
+   * 负鼠震动控制器：B3 只设定通道强度，震动本身要靠每 100ms 一帧的 B0 脉冲数据维持，
+   * 与郊狼一样需要推流。opossumCommand 记录最近一次下发的强度，用来识别迟到的旧 B3 回报。
+   */
+  private opossumStreamTimer: ReturnType<typeof setInterval> | null = null;
+  private isOpossumStreamingBusy = false;
+  private opossumCommand: { A: number; B: number; at: number } | null = null;
+  private static readonly OPOSSUM_ECHO_WINDOW_MS = 400;
+  private civetOrientation: 1 | 3 = 1;
   private static readonly DGLAB_REFILL_AHEAD_MS = 600;
 
   private currentMode: ConnectionMode = 'simulator';
@@ -186,6 +199,7 @@ export class DeviceManager {
    * 窗口结束后恢复严格判定，避免放过真正卡住的设备。
    */
   private static readonly EMS_STALE_REPORT_GRACE_MS = 3000;
+  private electrodeOffNotifiedAt: Record<'A' | 'B', number> = { A: 0, B: 0 };
   private emsStaleReportGraceUntil = 0;
   private emsStaleAuthorizedCeilingA = 0;
   private emsStaleAuthorizedCeilingB = 0;
@@ -194,12 +208,14 @@ export class DeviceManager {
     ems: Promise.resolve(),
     toy: Promise.resolve(),
     enema: Promise.resolve(),
+    sensor: Promise.resolve(),
     bridge: Promise.resolve(),
   };
   private hardwareWriteGenerations: Record<HardwareWriteChannel, number> = {
     ems: 0,
     toy: 0,
     enema: 0,
+    sensor: 0,
     bridge: 0,
   };
   /** 单次硬件写入的超时；超时即放弃该次写入并恢复队列（见 HardwareWriteTimeoutError）。 */
@@ -283,7 +299,7 @@ export class DeviceManager {
 
     // 绑定多设备蓝牙监听
     Object.entries(this.bleManagers).forEach(([key, manager]) => {
-      const category = key as 'ems' | 'toy' | 'enema';
+      const category = key as BLECategory;
       manager.onNotify((bytes) => {
         this.handleBleNotify(bytes, category);
       });
@@ -294,6 +310,8 @@ export class DeviceManager {
         void this.emergencyStop().catch(() => {});
         this.currentState.devices[category].isConnected = false;
         this.currentState.devices[category].name = null;
+        if (category === 'sensor') this.currentState.sensor = { pressureKpa: 0, isReporting: false, battery: 0 };
+        if (category === 'toy') this.currentState.toy.protocol = undefined;
         this.updateGlobalConnectionStatus();
         this.notifyState();
       });
@@ -906,6 +924,158 @@ export class DeviceManager {
     }
   }
 
+  private isOpossumConnected(): boolean {
+    return this.currentMode === 'ble'
+      && this.bleManagers.toy.isConnected()
+      && this.bleManagers.toy.getToyProtocol() === 'opossum';
+  }
+
+  private startOpossumStreamLoop() {
+    if (this.opossumStreamTimer) return;
+    this.opossumStreamTimer = setInterval(() => {
+      void this.tickOpossumStream();
+    }, 100);
+  }
+
+  private stopOpossumStreamLoop() {
+    if (this.opossumStreamTimer) {
+      clearInterval(this.opossumStreamTimer);
+      this.opossumStreamTimer = null;
+    }
+    this.isOpossumStreamingBusy = false;
+  }
+
+  private async tickOpossumStream() {
+    if (this.safetyConfig.emergencyLock || !this.isOpossumConnected()) {
+      this.stopOpossumStreamLoop();
+      return;
+    }
+    const { motorA, motorB } = this.currentState.toy;
+    if (motorA <= 0 && motorB <= 0) {
+      this.stopOpossumStreamLoop();
+      return;
+    }
+    if (this.isOpossumStreamingBusy) return;
+    this.isOpossumStreamingBusy = true;
+    try {
+      // 通道强度由 B3 决定，脉冲数据保持满幅即为持续震动
+      const full = [100, 100, 100, 100];
+      const none = [0, 0, 0, 0];
+      const packet = OpossumProtocol.buildPulsePacket(motorA > 0 ? full : none, motorB > 0 ? full : none);
+      await this.enqueueHardwareWrite('toy', () => this.bleManagers.toy.sendPacket(packet));
+    } catch (err) {
+      console.warn('负鼠震动推流异常:', err);
+    } finally {
+      this.isOpossumStreamingBusy = false;
+    }
+  }
+
+  /** 按当前玩具协议下发三路马达速率（负鼠只有 A/B 两路，C 忽略） */
+  private async writeToyRates(a: number, b: number, c: number): Promise<void> {
+    const toy = this.bleManagers.toy;
+    if (toy.getToyProtocol() !== 'opossum') {
+      await this.enqueueHardwareWrite('toy', () => toy.sendPacket(YCYToyProtocol.buildRatePacket(a, b, c)), true);
+      return;
+    }
+    const intensityA = OpossumProtocol.rateToIntensity(a);
+    const intensityB = OpossumProtocol.rateToIntensity(b);
+    this.opossumCommand = { A: intensityA, B: intensityB, at: Date.now() };
+    await this.enqueueHardwareWrite('toy', async () => {
+      await toy.sendPacket(OpossumProtocol.buildIntensityPacket(intensityA, intensityB));
+      await this.sendOpossumDisplay(intensityA, intensityB);
+    }, true);
+    if (a > 0 || b > 0) {
+      this.startOpossumStreamLoop();
+      void this.tickOpossumStream();
+    } else {
+      this.stopOpossumStreamLoop();
+      await this.enqueueHardwareWrite('toy', () => toy.sendPacket(OpossumProtocol.buildPulsePacket([0, 0, 0, 0], [0, 0, 0, 0])));
+    }
+  }
+
+  /**
+   * B2 屏幕同步共 24 字节，超过默认 MTU 的单包上限（官方建议 Android 设 MTU 144）。
+   * 它只影响屏幕显示，写入失败不能连带让强度指令失败、触发停机。
+   */
+  private async sendOpossumDisplay(intensityA: number, intensityB: number): Promise<void> {
+    try {
+      await this.bleManagers.toy.sendPacket(OpossumProtocol.buildDisplayPacket(intensityA, intensityB));
+    } catch (err) {
+      console.warn('负鼠屏幕同步失败（不影响震动输出）:', err);
+    }
+  }
+
+  private toyStopPacket(): Uint8Array {
+    return this.bleManagers.toy.getToyProtocol() === 'opossum'
+      ? OpossumProtocol.buildStopPacket()
+      : YCYToyProtocol.buildRatePacket(0, 0, 0);
+  }
+
+  private handleToyNotify(bytes: Uint8Array) {
+    const toy = this.bleManagers.toy;
+    if (toy.getToyProtocol() !== 'opossum') {
+      // 役次元玩具电量上报：0x35 0x13 0x01 电量 校验和
+      if (
+        bytes.length >= 5 && bytes[0] === 0x35 && bytes[1] === 0x13 && bytes[2] === 0x01
+        && bytes[3] <= 100 && YCYToyProtocol.checksum(bytes.slice(0, 4)) === bytes[4]
+      ) {
+        this.currentState.batteryLevel = bytes[3];
+        this.notifyState();
+      }
+      return;
+    }
+
+    const parsed = OpossumProtocol.parseNotifyPacket(bytes);
+    if (parsed.type !== 'intensity') return;
+    const command = this.opossumCommand;
+    if (
+      command
+      && Date.now() - command.at < DeviceManager.OPOSSUM_ECHO_WINDOW_MS
+      && (parsed.intensityA !== command.A || parsed.intensityB !== command.B)
+    ) {
+      return; // 刚下发的新强度之前的旧回报
+    }
+
+    // 机身按键也会改强度：超过安全上限或处于急停锁时立刻压回
+    const maxA = this.safetyConfig.emergencyLock ? 0 : OpossumProtocol.rateToIntensity(this.safetyConfig.maxToyMotorARate);
+    const maxB = this.safetyConfig.emergencyLock ? 0 : OpossumProtocol.rateToIntensity(this.safetyConfig.maxToyMotorBRate);
+    const intensityA = Math.min(parsed.intensityA, maxA);
+    const intensityB = Math.min(parsed.intensityB, maxB);
+    const clamped = intensityA !== parsed.intensityA || intensityB !== parsed.intensityB;
+    if (clamped) this.opossumCommand = { A: intensityA, B: intensityB, at: Date.now() };
+    // 官方要求：收到 B3 回报后用 B2 同步屏幕显示
+    void this.enqueueHardwareWrite('toy', async () => {
+      if (clamped) await toy.sendPacket(OpossumProtocol.buildIntensityPacket(intensityA, intensityB));
+      await this.sendOpossumDisplay(intensityA, intensityB);
+    }).catch((err) => console.warn('负鼠显示同步失败:', err));
+
+    this.currentState.toy.motorA = OpossumProtocol.intensityToRate(intensityA);
+    this.currentState.toy.motorB = OpossumProtocol.intensityToRate(intensityB);
+    this.currentState.toy.motorC = 0;
+    if (this.currentState.toy.motorA > 0 || this.currentState.toy.motorB > 0) {
+      this.startOpossumStreamLoop();
+    }
+    this.notifyState();
+  }
+
+  /** 灵猫：把当前压力读数归零（佩戴好后校准用） */
+  async zeroPressureSensor(): Promise<void> {
+    if (this.currentMode !== 'ble' || !this.bleManagers.sensor.isConnected()) {
+      throw new Error('灵猫控射传感器尚未连接');
+    }
+    await this.enqueueHardwareWrite('sensor', () => this.bleManagers.sensor.sendPacket(CivetProtocol.buildZeroPressurePacket()));
+  }
+
+  /** 灵猫：翻转屏幕显示方向 */
+  async flipPressureSensorDisplay(): Promise<void> {
+    if (this.currentMode !== 'ble' || !this.bleManagers.sensor.isConnected()) {
+      throw new Error('灵猫控射传感器尚未连接');
+    }
+    this.civetOrientation = this.civetOrientation === 1 ? 3 : 1;
+    const orientation = this.civetOrientation;
+    await this.enqueueHardwareWrite('sensor', () => this.bleManagers.sensor.sendPacket(CivetProtocol.buildDisplayOrientationPacket(orientation)));
+  }
+
   setEmsProtocolVersion(version: EMSProtocolVersion) {
     this.bleManagers.ems.setEmsProtocolVersion(version);
   }
@@ -968,8 +1138,10 @@ export class DeviceManager {
       this.currentState.devices = {
         ems: { isConnected: false, name: null },
         toy: { isConnected: false, name: null },
-        enema: { isConnected: false, name: null }
+        enema: { isConnected: false, name: null },
+        sensor: { isConnected: false, name: null }
       };
+      this.currentState.sensor = { pressureKpa: 0, isReporting: false, battery: 0 };
       this.notifyState();
     } else if (mode === 'bridge') {
       this.currentState.connectionStatus = 'disconnected';
@@ -1000,7 +1172,7 @@ export class DeviceManager {
     }
   }
 
-  async connectBle(category: 'ems' | 'toy' | 'enema'): Promise<void> {
+  async connectBle(category: BLECategory): Promise<void> {
     try {
       if (this.currentMode !== 'ble') await this.switchMode('ble');
       this.currentState.connectionStatus = 'connecting';
@@ -1036,6 +1208,30 @@ export class DeviceManager {
         } catch (queryErr) {
           console.warn('灌肠机初始状态查询受限:', queryErr);
         }
+      } else if (category === 'toy') {
+        const protocol = this.bleManagers.toy.getToyProtocol();
+        this.currentState.toy.protocol = protocol;
+        if (protocol === 'opossum') {
+          if (!info.name || info.name.startsWith('47L') || info.name.includes('智能硬件')) {
+            info.name = `DG-LAB 负鼠震动控制器 (${info.name || '47L127000'})`;
+          }
+          // 连接主机后负鼠屏幕不会自行刷新：先归零强度并同步一次显示
+          try {
+            await this.enqueueHardwareWrite('toy', async () => {
+              await this.bleManagers.toy.sendPacket(OpossumProtocol.buildStopPacket());
+              await this.sendOpossumDisplay(0, 0);
+            });
+          } catch (initErr) {
+            console.warn('负鼠初始化指令发送受限:', initErr);
+          }
+        }
+      } else if (category === 'sensor') {
+        if (!info.name || info.name.startsWith('47L') || info.name.includes('智能硬件')) {
+          info.name = `DG-LAB 灵猫控射传感器 (${info.name || '47L124000'})`;
+        }
+        // 灵猫只有收到 50 指令后才会每 100ms 上报压力
+        await this.enqueueHardwareWrite('sensor', () => this.bleManagers.sensor.sendPacket(CivetProtocol.buildReportingPacket(true)));
+        this.currentState.sensor = { ...this.currentState.sensor, pressureKpa: 0, isReporting: true };
       }
       this.currentMode = 'ble';
       this.currentState.connectionMode = 'ble';
@@ -1053,7 +1249,7 @@ export class DeviceManager {
     }
   }
 
-  async disconnectBle(category?: 'ems' | 'toy' | 'enema') {
+  async disconnectBle(category?: BLECategory) {
     await this.emergencyStop();
     if (category) {
       await this.bleManagers[category].disconnect();
@@ -1061,18 +1257,22 @@ export class DeviceManager {
       // 需手动更新设备连接状态，否则 UI 永久卡在"已连接"
       this.currentState.devices[category].isConnected = false;
       this.currentState.devices[category].name = null;
+      if (category === 'sensor') this.currentState.sensor = { pressureKpa: 0, isReporting: false, battery: 0 };
+      if (category === 'toy') this.currentState.toy.protocol = undefined;
     } else {
       await Promise.all(Object.values(this.bleManagers).map(m => m.disconnect()));
-      for (const cat of ['ems', 'toy', 'enema'] as const) {
+      for (const cat of ['ems', 'toy', 'enema', 'sensor'] as const) {
         this.currentState.devices[cat].isConnected = false;
         this.currentState.devices[cat].name = null;
       }
+      this.currentState.sensor = { pressureKpa: 0, isReporting: false, battery: 0 };
+      this.currentState.toy.protocol = undefined;
     }
     this.updateGlobalConnectionStatus();
     this.notifyState();
   }
 
-  private handleBleNotify(bytes: Uint8Array, category: 'ems' | 'toy' | 'enema') {
+  private handleBleNotify(bytes: Uint8Array, category: BLECategory) {
     if (category === 'ems') {
       const emsVer = this.bleManagers.ems.getEmsProtocolVersion();
       if (emsVer === 'coyote_v2') {
@@ -1168,6 +1368,15 @@ export class DeviceManager {
       }
 
       const result = YCYEMSProtocol.parseNotifyPacket(bytes);
+      if ((result.type === 'channelA' || result.type === 'channelB') && result.data?.connection === 0x00) {
+        const channel = result.type === 'channelA' ? 'A' : 'B';
+        const commanded = channel === 'A' ? this.currentState.ems.strengthA : this.currentState.ems.strengthB;
+        const now = Date.now();
+        if (commanded > 0 && now - this.electrodeOffNotifiedAt[channel] > 10_000) {
+          this.electrodeOffNotifiedAt[channel] = now;
+          this.reportOutputRefusal('electrode_off', `通道 ${channel} 的电极片未接入或未贴合，设备不会放电`);
+        }
+      }
       if (result.type === 'channelA' && result.data) {
         const reportedStrength = result.data.strength;
         if (result.data.isActive === false) {
@@ -1202,6 +1411,18 @@ export class DeviceManager {
       }
       this.currentState.ems.isShocking = this.currentState.ems.strengthA > 0 || this.currentState.ems.strengthB > 0;
       this.notifyState();
+      return;
+    }
+    if (category === 'sensor') {
+      const parsed = CivetProtocol.parseNotifyPacket(bytes);
+      if (parsed.type === 'pressure' && Number.isFinite(parsed.pressureKpa)) {
+        this.currentState.sensor.pressureKpa = parsed.pressureKpa;
+        this.notifyState();
+      }
+      return;
+    }
+    if (category === 'toy') {
+      this.handleToyNotify(bytes);
       return;
     }
     if (category !== 'enema') return;
@@ -1572,7 +1793,8 @@ export class DeviceManager {
     const limitC = this.safetyConfig.maxToyMotorCRate ?? 20;
     const a = Math.max(0, Math.min(limitA, Math.round(motorA)));
     const b = Math.max(0, Math.min(limitB, Math.round(motorB)));
-    const c = Math.max(0, Math.min(limitC, Math.round(motorC)));
+    // 负鼠只有 A/B 两路震动，C 路不存在，状态里也不应显示在转
+    const c = this.isOpossumConnected() ? 0 : Math.max(0, Math.min(limitC, Math.round(motorC)));
 
     // 1. 同步即时更新本地状态与仿真
     this.currentState.toy.motorA = a;
@@ -1584,8 +1806,7 @@ export class DeviceManager {
     // 2. 硬件下发
     if (this.currentMode === 'ble' && this.bleManagers.toy.isConnected()) {
       try {
-        const packet = YCYToyProtocol.buildRatePacket(a, b, c);
-        await this.enqueueHardwareWrite('toy', () => this.bleManagers.toy.sendPacket(packet), true);
+        await this.writeToyRates(a, b, c);
       } catch (e) {
         const detail = e instanceof Error ? e.message : String(e);
         // 马达不是生命保障通道：先把本通道归零并确认停机指令真的送达。
@@ -1596,8 +1817,9 @@ export class DeviceManager {
         this.currentState.toy.motorC = 0;
         this.simulator.setToyMotor(0, 0, 0);
         this.notifyState();
+        this.stopOpossumStreamLoop();
         try {
-          await this.bleManagers.toy.sendPacket(YCYToyProtocol.buildRatePacket(0, 0, 0));
+          await this.bleManagers.toy.sendPacket(this.toyStopPacket());
         } catch {
           await this.latchEmergencyStop();
           throw new Error(`BLE 玩具马达下发失败且无法确认停机，已锁定全局急停: ${detail}`);
@@ -1985,6 +2207,7 @@ export class DeviceManager {
     const staleWrites = this.invalidateQueuedHardwareWrites();
     this.stopCoyoteStreamLoop();
     this.stopDglabStreamLoop();
+    this.stopOpossumStreamLoop();
     this.clearEmsOperations();
     this.clearToyOperations();
     this.clearEnemaOperations();
@@ -2029,7 +2252,7 @@ export class DeviceManager {
           }
         }
         if (this.bleManagers.toy.isConnected()) {
-          attempts.push(this.bleManagers.toy.sendPacket(YCYToyProtocol.buildRatePacket(0, 0, 0)));
+          attempts.push(this.bleManagers.toy.sendPacket(this.toyStopPacket()));
         }
         if (this.bleManagers.enema.isConnected()) {
           attempts.push(this.bleManagers.enema.sendPacket(YCYEnemaProtocol.buildStopPacket()));

@@ -20,6 +20,7 @@ const HINTS: Record<EmsOutputRefusalReason, string> = {
   no_usable_channel: '请到【设置 → 硬件安全】把该通道的安全上限调高（当前为 0）。',
   zero_strength: '请先在控制页设置一个强度，或把「最小强度下限」调高。',
   write_timeout: '链路可能假死：请检查蓝牙连接，必要时断开重连设备。停止包已尝试直发，本地输出已归零。',
+  electrode_off: '设备回报该通道电极片未接入或未贴合皮肤：请检查导线插头与电极片贴合，设备在此状态下不会放电。',
 };
 
 const TITLES: Record<EmsOutputRefusalReason, string> = {
@@ -28,6 +29,7 @@ const TITLES: Record<EmsOutputRefusalReason, string> = {
   no_usable_channel: '没有可用的电击通道',
   zero_strength: '强度为 0，波形不会产生输出',
   write_timeout: '硬件写入超时，本次输出已放弃',
+  electrode_off: '电极片未接入',
 };
 
 const VISIBLE_MS = 5200;

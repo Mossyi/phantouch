@@ -47,7 +47,7 @@ export const DeviceView: React.FC = () => {
     }
   };
 
-  const handleBleDisconnect = async (category: 'ems' | 'toy' | 'enema') => {
+  const handleBleDisconnect = async (category: 'ems' | 'toy' | 'enema' | 'sensor') => {
     setScanError(null);
     try {
       await deviceManager.disconnectBle(category);
@@ -57,7 +57,7 @@ export const DeviceView: React.FC = () => {
   };
 
   // 蓝牙扫描直连
-  const handleBleScan = async (category: 'ems' | 'toy' | 'enema') => {
+  const handleBleScan = async (category: 'ems' | 'toy' | 'enema' | 'sensor') => {
     setIsScanning(true);
     setScanError(null);
     try {
@@ -201,8 +201,9 @@ export const DeviceView: React.FC = () => {
           <div className="space-y-2">
             {([
               { id: 'ems', name: '连接电击设备 (EMS)', subtitle: '支持: 郊狼 Coyote 3.0 / 2.0 / 役次元全系列 (自动识别)' },
-              { id: 'toy', name: '连接飞机杯 / 跳蛋', subtitle: '支持常见智能跳蛋 / 伸缩杯 BLE 直连' },
-              { id: 'enema', name: '连接智能灌肠机', subtitle: '支持役次元 1.0 / 2.0 智能灌肠机 / 肠道训练注水泵 (自动识别)' }
+              { id: 'toy', name: '连接飞机杯 / 跳蛋 / 负鼠', subtitle: '支持役次元跳蛋 / 伸缩杯，及 DG-LAB 负鼠震动控制器 (47L127000，A/B 两路)' },
+              { id: 'enema', name: '连接智能灌肠机', subtitle: '支持役次元 1.0 / 2.0 智能灌肠机 / 肠道训练注水泵 (自动识别)' },
+              { id: 'sensor', name: '连接灵猫控射传感器', subtitle: 'DG-LAB 灵猫 (47L124000)：实时压力，用于控射页的括约肌收缩检测' }
             ] as const).map(cat => {
               const isConnectedBle = deviceState.connectionMode === 'ble' && deviceState.devices[cat.id].isConnected;
               return (
@@ -239,6 +240,34 @@ export const DeviceView: React.FC = () => {
               );
             })}
           </div>
+
+          {deviceState.connectionMode === 'ble' && deviceState.devices.sensor?.isConnected && (
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-pink-100 bg-white p-2.5 shadow-sm">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold text-slate-500">灵猫实时压力</p>
+                <p className="font-mono text-lg font-black text-pink-700">
+                  {deviceState.sensor.pressureKpa.toFixed(2)} <span className="text-[10px] font-bold text-slate-500">kPa</span>
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void deviceManager.zeroPressureSensor().catch((error) => setScanError(error instanceof Error ? error.message : String(error)))}
+                  className="ui-button-secondary px-2.5 py-1.5 text-[10px]"
+                  title="佩戴好、放松状态下归零，控射检测会以此为静息基线"
+                >
+                  归零
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void deviceManager.flipPressureSensorDisplay().catch((error) => setScanError(error instanceof Error ? error.message : String(error)))}
+                  className="ui-button-secondary px-2.5 py-1.5 text-[10px]"
+                >
+                  翻转屏幕
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 郊狼专属避坑小贴士 */}
           <div className="bg-pink-50/70 border border-pink-100/90 rounded-2xl p-2.5 text-[10px] text-slate-600 space-y-1">

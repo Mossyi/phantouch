@@ -18,6 +18,7 @@ export const ControlView: React.FC = () => {
     setSafetyConfig,
   } = useAppStore();
   const deviceManager = DeviceManager.getInstance();
+  const isOpossum = deviceState.connectionMode === 'ble' && deviceState.toy.protocol === 'opossum';
 
   const [localStrengthA, setLocalStrengthA] = useState<number>(deviceState.ems.strengthA);
   const [localStrengthB, setLocalStrengthB] = useState<number>(deviceState.ems.strengthB);
@@ -479,8 +480,8 @@ export const ControlView: React.FC = () => {
                 <Activity className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-pink-950">飞机杯 / 跳蛋 (三马达)</h3>
-                <p className="text-[10px] text-pink-800/70">独立抽插、吮吸与旋转无级调速</p>
+                <h3 className="text-sm font-bold text-pink-950">{isOpossum ? 'DG-LAB 负鼠震动控制器' : '飞机杯 / 跳蛋 (三马达)'}</h3>
+                <p className="text-[10px] text-pink-800/70">{isOpossum ? 'A / B 两路震动独立调速（每档对应负鼠强度 10）' : '独立抽插、吮吸与旋转无级调速'}</p>
               </div>
             </div>
 
@@ -494,19 +495,19 @@ export const ControlView: React.FC = () => {
           </div>
 
           {/* 三马达仪表盘 */}
-          <div className="grid grid-cols-3 gap-2">
-            <MotorGauge label="马达 A (主抽插)" value={deviceState.toy.motorA} color="#ec4899" />
-            <MotorGauge label="马达 B (吮吸)" value={deviceState.toy.motorB} color="#f43f5e" />
-            <MotorGauge label="马达 C (旋转)" value={deviceState.toy.motorC} color="#d946ef" />
+          <div className={`grid gap-2 ${isOpossum ? 'grid-cols-2' : 'grid-cols-3'}`}>
+            <MotorGauge label={isOpossum ? '震动 A' : '马达 A (主抽插)'} value={deviceState.toy.motorA} color="#ec4899" />
+            <MotorGauge label={isOpossum ? '震动 B' : '马达 B (吮吸)'} value={deviceState.toy.motorB} color="#f43f5e" />
+            {!isOpossum && <MotorGauge label="马达 C (旋转)" value={deviceState.toy.motorC} color="#d946ef" />}
           </div>
 
           {/* 马达滑块列表 */}
           <div className="bg-white/55 backdrop-blur-md p-3.5 rounded-2xl border border-white/85 shadow-xs space-y-3">
             {[
-              { key: 'A', name: '马达 A (主抽插 / 震动)', val: deviceState.toy.motorA, max: safetyConfig.maxToyMotorARate, color: 'accent-pink-500' },
-              { key: 'B', name: '马达 B (吮吸 / 夹紧)', val: deviceState.toy.motorB, max: safetyConfig.maxToyMotorBRate, color: 'accent-rose-500' },
+              { key: 'A', name: isOpossum ? '震动 A 通道' : '马达 A (主抽插 / 震动)', val: deviceState.toy.motorA, max: safetyConfig.maxToyMotorARate, color: 'accent-pink-500' },
+              { key: 'B', name: isOpossum ? '震动 B 通道' : '马达 B (吮吸 / 夹紧)', val: deviceState.toy.motorB, max: safetyConfig.maxToyMotorBRate, color: 'accent-rose-500' },
               { key: 'C', name: '马达 C (旋转 / 绞磨)', val: deviceState.toy.motorC, max: safetyConfig.maxToyMotorCRate, color: 'accent-purple-500' },
-            ].map((m) => (
+            ].filter((m) => !(isOpossum && m.key === 'C')).map((m) => (
               <div key={m.key} className="space-y-1">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-pink-950 font-bold">{m.name}</span>

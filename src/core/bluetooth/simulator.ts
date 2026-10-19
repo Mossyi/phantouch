@@ -22,7 +22,9 @@ export class DeviceSimulator {
       devices: {
         ems: { isConnected: true, name: 'Virtual EMS' },
         toy: { isConnected: true, name: 'Virtual Toy' },
-        enema: { isConnected: true, name: 'Virtual Enema' }
+        enema: { isConnected: true, name: 'Virtual Enema' },
+        // 灵猫传感器不做仿真：控射检测在仿真模式下继续使用虚拟灌肠机的压力
+        sensor: { isConnected: false, name: null }
       },
       ems: {
         strengthA: 0,
@@ -56,6 +58,11 @@ export class DeviceSimulator {
         activePattern: null,
         patternRemainingSec: 0,
         isHoldChallenge: false,
+      },
+      sensor: {
+        pressureKpa: 0,
+        isReporting: false,
+        battery: 0,
       },
     };
 

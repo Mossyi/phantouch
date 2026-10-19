@@ -4,12 +4,25 @@ import { YCYToyProtocol } from '../protocol/toyProtocol';
 import { YCYEnemaProtocol } from '../protocol/enemaProtocol';
 import { YCYEMSProtocol } from '../protocol/emsProtocol';
 import { COYOTE_V2_UUIDS, COYOTE_V3_UUIDS, CoyoteV3Protocol } from '../protocol/coyoteProtocol';
+import { DGLabV3FamilyModel, identifyDGLabV3Family } from '../protocol/dglabAccessoryProtocol';
 
 export interface BLEDeviceInfo {
   id: string;
   name: string;
-  category: 'ems' | 'toy' | 'enema' | 'unknown';
+  category: BLECategory | 'unknown';
 }
+
+/** sensor = DG-LAB 灵猫控射传感器（只读压力，不输出） */
+export type BLECategory = 'ems' | 'toy' | 'enema' | 'sensor';
+export type ToyProtocolKind = 'ycy' | 'opossum';
+
+const CATEGORY_LABELS: Record<BLECategory | 'unknown', string> = {
+  ems: '电击器',
+  toy: '飞机杯 / 跳蛋 / 负鼠',
+  enema: '灌肠机',
+  sensor: '灵猫控射传感器',
+  unknown: '未知设备',
+};
 
 export type EMSProtocolVersion = 'v1' | 'v2' | 'coyote_v2' | 'coyote_v3';
 
@@ -35,11 +48,13 @@ export class BLEManager {
   private notifyCharacteristic: any = null;
   private webNotifyListener: EventListener | null = null;
 
-  private currentCategory: 'ems' | 'toy' | 'enema' | 'unknown' = 'unknown';
+  private currentCategory: BLECategory | 'unknown' = 'unknown';
   private activeServiceUuid: string = '';
   private activeWriteUuid: string = '';
   private activeNotifyUuid: string = '';
   private emsProtocolVersion: EMSProtocolVersion = DEFAULT_EMS_PROTOCOL_VERSION;
+  /** 共用 0x180C 服务的 DG-LAB 设备具体型号（郊狼 3.0 / 灵猫 / 负鼠） */
+  private dglabModel: DGLabV3FamilyModel = 'unknown';
   private cachedCharacteristics: Map<string, any> = new Map();
 
   private onNotifyCallback: ((data: Uint8Array) => void) | null = null;
@@ -56,7 +71,7 @@ export class BLEManager {
     return typeof navigator !== 'undefined' && 'bluetooth' in navigator;
   }
 
-  async scanAndConnect(targetCategory?: 'ems' | 'toy' | 'enema'): Promise<BLEDeviceInfo> {
+  async scanAndConnect(targetCategory?: BLECategory): Promise<BLEDeviceInfo> {
     this.isNative = Capacitor.isNativePlatform();
     await this.disconnect();
     const generation = this.connectionGeneration;
@@ -68,6 +83,23 @@ export class BLEManager {
     }
   }
 
+  /**
+   * 0x180C 服务由郊狼 3.0、灵猫、负鼠共用。先按蓝牙名识别；名称缺失时按用户点的连接入口推断，
+   * 绝不能把灵猫/负鼠当成郊狼（否则会向它们写电击包）。
+   */
+  private resolveDGLabV3Family(deviceName: string | null | undefined, targetCategory: BLECategory | undefined): {
+    model: Exclude<DGLabV3FamilyModel, 'unknown'>;
+    category: BLECategory;
+  } {
+    let model = identifyDGLabV3Family(deviceName);
+    if (model === 'unknown') {
+      model = targetCategory === 'toy' ? 'opossum' : targetCategory === 'sensor' ? 'civet' : 'coyote_v3';
+    }
+    this.dglabModel = model;
+    if (model === 'coyote_v3') this.emsProtocolVersion = 'coyote_v3';
+    return { model, category: model === 'civet' ? 'sensor' : model === 'opossum' ? 'toy' : 'ems' };
+  }
+
   private isCurrentConnection(generation: number): boolean {
     return generation === this.connectionGeneration;
   }
@@ -75,7 +107,7 @@ export class BLEManager {
   /**
    * 1. Android 原生 App 蓝牙直连通道 (Capacitor BLE - 深度容灾与动态服务发现)
    */
-  private async connectNativeBle(targetCategory: 'ems' | 'toy' | 'enema' | undefined, generation: number): Promise<BLEDeviceInfo> {
+  private async connectNativeBle(targetCategory: BLECategory | undefined, generation: number): Promise<BLEDeviceInfo> {
     try {
       console.log('🤖 正在初始化 Android 原生蓝牙底层插件...');
       await BleClient.initialize({ androidNeverForLocation: true });
@@ -135,7 +167,10 @@ export class BLEManager {
           '0000fee7-0000-1000-8000-00805f9b34fb',
         ];
       } else if (targetCategory === 'toy') {
-        optionalServices = [YCYToyProtocol.BLE_SERVICE_UUID];
+        // 役次元玩具 + DG-LAB 负鼠震动控制器
+        optionalServices = [YCYToyProtocol.BLE_SERVICE_UUID, COYOTE_V3_UUIDS.SERVICE, COYOTE_V3_UUIDS.BATTERY_SERVICE];
+      } else if (targetCategory === 'sensor') {
+        optionalServices = [COYOTE_V3_UUIDS.SERVICE, COYOTE_V3_UUIDS.BATTERY_SERVICE];
       } else if (targetCategory === 'enema') {
         optionalServices = [
           YCYEnemaProtocol.BLE_SERVICE_UUID,
@@ -172,7 +207,7 @@ export class BLEManager {
       }
 
       console.log('🔗 GATT 连接成功，正在探测设备暴露的 GATT Services...');
-      let category: 'ems' | 'toy' | 'enema' | 'unknown' = 'unknown';
+      let category: BLECategory | 'unknown' = 'unknown';
 
       // 1. 尝试动态获取全部暴露的 Services 列表
       let services: any[] = [];
@@ -187,9 +222,8 @@ export class BLEManager {
       for (const s of services) {
         const u = (s.uuid || '').toLowerCase();
         if (u.includes('180c')) {
-          // 郊狼 Coyote V3 (服务 0x180C)
-          category = 'ems';
-          this.emsProtocolVersion = 'coyote_v3';
+          // DG-LAB 0x180C 家族：郊狼 3.0 / 灵猫 / 负鼠
+          category = this.resolveDGLabV3Family(device.name, targetCategory).category;
           this.activeServiceUuid = s.uuid;
           const w = s.characteristics?.find((c: any) => c.uuid.toLowerCase().includes('150a'));
           const n = s.characteristics?.find((c: any) => c.uuid.toLowerCase().includes('150b'));
@@ -261,6 +295,12 @@ export class BLEManager {
       }
 
       // 3. 若 Services 列表为空或未识别出特定 UUID，使用标准 EMS / 郊狼协议兜底
+      if (category === 'unknown' && identifyDGLabV3Family(device.name) !== 'unknown') {
+        category = this.resolveDGLabV3Family(device.name, targetCategory).category;
+        this.activeServiceUuid = COYOTE_V3_UUIDS.SERVICE;
+        this.activeWriteUuid = COYOTE_V3_UUIDS.WRITE_CHAR;
+        this.activeNotifyUuid = COYOTE_V3_UUIDS.NOTIFY_CHAR;
+      }
       if (category === 'unknown') {
         const devName = (device.name || '').toLowerCase();
         if (targetCategory === 'toy' || devName.includes('cup') || devName.includes('toy') || devName.includes('vibe') || devName.includes('piston')) {
@@ -282,6 +322,7 @@ export class BLEManager {
         ) {
           category = 'ems';
           this.emsProtocolVersion = 'coyote_v3';
+          this.dglabModel = 'coyote_v3';
           this.activeServiceUuid = COYOTE_V3_UUIDS.SERVICE;
           this.activeWriteUuid = COYOTE_V3_UUIDS.WRITE_CHAR;
           this.activeNotifyUuid = COYOTE_V3_UUIDS.NOTIFY_CHAR;
@@ -309,7 +350,7 @@ export class BLEManager {
       }
 
       if (targetCategory && category !== targetCategory) {
-        throw new Error(`所选设备识别为 ${category}，与请求的 ${targetCategory} 类型不匹配`);
+        throw new Error(`所选设备识别为「${CATEGORY_LABELS[category]}」，与当前要连接的「${CATEGORY_LABELS[targetCategory]}」不匹配`);
       }
 
       this.currentCategory = category;
@@ -338,7 +379,7 @@ export class BLEManager {
       }
 
       // 5. 官方规范：Coyote V3 连接建立后必须立即写入 BF 软上限初始化包
-      if (this.emsProtocolVersion === 'coyote_v3') {
+      if (this.dglabModel === 'coyote_v3') {
         try {
           const bfPacket = CoyoteV3Protocol.buildBFPacket(200, 200, 128, 128, 128, 128);
           await this.sendPacket(bfPacket, COYOTE_V3_UUIDS.SERVICE, COYOTE_V3_UUIDS.WRITE_CHAR);
@@ -367,7 +408,7 @@ export class BLEManager {
   /**
    * 2. Web 浏览器蓝牙通道 (Web Bluetooth API)
    */
-  private async connectWebBle(targetCategory: 'ems' | 'toy' | 'enema' | undefined, generation: number): Promise<BLEDeviceInfo> {
+  private async connectWebBle(targetCategory: BLECategory | undefined, generation: number): Promise<BLEDeviceInfo> {
     if (!BLEManager.isSupported()) {
       throw new Error('当前浏览器未开放 Web Bluetooth 接口。建议直接安装我们的原生 APK 应用，或在设置中开启虚拟仿真模式。');
     }
@@ -417,7 +458,7 @@ export class BLEManager {
           { services: [COYOTE_V3_UUIDS.SERVICE] },
           { services: ['0000180c-0000-1000-8000-00805f9b34fb'] },
           { services: [0x180c] },
-          { namePrefix: '47L' },
+          { namePrefix: '47L' }, // 郊狼 3.0 47L121000 / 灵猫 47L124000 / 负鼠 47L127000
           { namePrefix: '47l' },
           { namePrefix: 'D-LAB' },
           { namePrefix: 'd-lab' },
@@ -458,7 +499,7 @@ export class BLEManager {
       }
       this.gattServer = server;
 
-      let category: 'ems' | 'toy' | 'enema' | 'unknown' = 'unknown';
+      let category: BLECategory | 'unknown' = 'unknown';
 
       const detectEnemaService = async () => {
         let enemaService = await server.getPrimaryService(YCYEnemaProtocol.BLE_SERVICE_V2_UUID).catch(() => null);
@@ -504,8 +545,7 @@ export class BLEManager {
               || await coyoteV3Service.getCharacteristic(0x150b).catch(() => null);
             await this.startWebNotification(generation);
           } catch {}
-          category = 'ems';
-          this.emsProtocolVersion = 'coyote_v3';
+          category = this.resolveDGLabV3Family(device.name, targetCategory).category;
           this.activeServiceUuid = COYOTE_V3_UUIDS.SERVICE;
           this.activeWriteUuid = COYOTE_V3_UUIDS.WRITE_CHAR;
           this.activeNotifyUuid = COYOTE_V3_UUIDS.NOTIFY_CHAR;
@@ -585,7 +625,7 @@ export class BLEManager {
         throw new Error('已发现设备服务，但 BLE 写入特征不可用');
       }
       if (targetCategory && category !== targetCategory) {
-        throw new Error(`所选设备识别为 ${category}，与请求的 ${targetCategory} 类型不匹配`);
+        throw new Error(`所选设备识别为「${CATEGORY_LABELS[category]}」，与当前要连接的「${CATEGORY_LABELS[targetCategory]}」不匹配`);
       }
       if (!this.isCurrentConnection(generation)) {
         device.gatt.disconnect();
@@ -595,7 +635,7 @@ export class BLEManager {
       this.currentCategory = category;
 
       // 官方规范：Coyote V3 连接建立后必须立即写入 BF 软上限初始化包
-      if (this.emsProtocolVersion === 'coyote_v3') {
+      if (this.dglabModel === 'coyote_v3') {
         try {
           const bfPacket = CoyoteV3Protocol.buildBFPacket(200, 200, 128, 128, 128, 128);
           await this.sendPacket(bfPacket, COYOTE_V3_UUIDS.SERVICE, COYOTE_V3_UUIDS.WRITE_CHAR);
@@ -607,7 +647,7 @@ export class BLEManager {
 
       return {
         id: device.id,
-        name: device.name || (this.emsProtocolVersion === 'coyote_v3' ? '郊狼 Coyote 3.0' : this.emsProtocolVersion === 'coyote_v2' ? '郊狼 Coyote 2.0' : '役次元智能设备'),
+        name: device.name || (this.dglabModel === 'civet' ? 'DG-LAB 灵猫控射传感器' : this.dglabModel === 'opossum' ? 'DG-LAB 负鼠震动控制器' : this.emsProtocolVersion === 'coyote_v3' ? '郊狼 Coyote 3.0' : this.emsProtocolVersion === 'coyote_v2' ? '郊狼 Coyote 2.0' : '役次元智能设备'),
         category,
       };
     } catch (e: any) {
@@ -703,6 +743,15 @@ export class BLEManager {
     return this.emsProtocolVersion;
   }
 
+  getDGLabModel(): DGLabV3FamilyModel {
+    return this.dglabModel;
+  }
+
+  /** 当前玩具连接走哪套协议：役次元 FF40 或 DG-LAB 负鼠 */
+  getToyProtocol(): ToyProtocolKind {
+    return this.dglabModel === 'opossum' ? 'opossum' : 'ycy';
+  }
+
   getActiveServiceUuid(): string {
     return this.activeServiceUuid;
   }
@@ -716,6 +765,7 @@ export class BLEManager {
     this.connectionGeneration++;
     // 复位协议版本，避免影响下一次连接（见 DEFAULT_EMS_PROTOCOL_VERSION 的说明）。
     this.emsProtocolVersion = DEFAULT_EMS_PROTOCOL_VERSION;
+    this.dglabModel = 'unknown';
     if (this.webDevice) {
       try {
         this.webDevice.removeEventListener('gattserverdisconnected', this.boundWebDisconnectHandler);
@@ -744,6 +794,7 @@ export class BLEManager {
     this.connectionGeneration++;
     // 复位协议版本：下次连接必须重新识别，不能沿用上一台设备的协议。
     this.emsProtocolVersion = DEFAULT_EMS_PROTOCOL_VERSION;
+    this.dglabModel = 'unknown';
     if (this.isNative && this.nativeDeviceId) {
       try {
         await BleClient.disconnect(this.nativeDeviceId);
@@ -786,7 +837,7 @@ export class BLEManager {
     return !!(this.gattServer && this.gattServer.connected);
   }
 
-  getCategory(): 'ems' | 'toy' | 'enema' | 'unknown' {
+  getCategory(): BLECategory | 'unknown' {
     return this.currentCategory;
   }
 }

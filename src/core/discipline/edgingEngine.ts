@@ -8,6 +8,15 @@ import { BountyQuestEngine } from '../tavern/bountyQuestEngine';
 export type EdgingStateListener = (state: EdgingDenialState) => void;
 
 /**
+ * 灵猫上报单位为 kPa（官方 int16 / 100）。检测器按「相对基线的倍率」判定收缩，
+ * 读数归零后静息压力接近 0，基线过小会让噪声被放大成误触发，
+ * 因此换算为 0.01 kPa 整数并加 2 kPa 偏置：静息约 200，收紧 0.7 kPa 以上（×1.35）才会触发。
+ */
+export const civetPressureToDetectorUnits = (pressureKpa: number): number => (
+  Number.isFinite(pressureKpa) ? Math.round(Math.max(0, pressureKpa) * 100) + 200 : 200
+);
+
+/**
  * 役次元 高潮剥夺与边缘控射引擎 (基于肛塞/括约肌压力传感器生理闭环)
  */
 export class EdgingEngine {
@@ -45,7 +54,11 @@ export class EdgingEngine {
     DeviceManager.getInstance().subscribeState((devState) => {
       if (!this.state.isActive) return;
 
-      const p1 = Math.max(0, devState.enema.pressureA ?? 0, devState.enema.pressureB ?? 0);
+      // 优先使用 DG-LAB 灵猫控射传感器；未连接时沿用役次元灌肠机的压力传感器
+      const civetActive = devState.devices.sensor?.isConnected && devState.sensor?.isReporting;
+      const p1 = civetActive
+        ? civetPressureToDetectorUnits(devState.sensor.pressureKpa)
+        : Math.max(0, devState.enema.pressureA ?? 0, devState.enema.pressureB ?? 0);
       const result = this.detector.feedPressure(p1);
       this.state.currentPressure = result.currentPressure;
       this.state.baselinePressure = result.baseline;

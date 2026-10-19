@@ -129,7 +129,7 @@
 }
 
 .app-header {
-  background: rgba(250, 247, 249, 0.82);
+  background: rgba(250, 247, 249, 0.95);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 1px solid var(--line-soft);
@@ -193,7 +193,7 @@
 
 /* 子导航条（酒馆 / 强度 / 设置 / 重塑 的二级标签） */
 .subnav-bar {
-  background: rgba(250, 247, 249, 0.82);
+  background: rgba(250, 247, 249, 0.95);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 1px solid var(--line-soft);
