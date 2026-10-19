@@ -3200,14 +3200,14 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       {(showQuickMenu || showActionMenu || showMessageFinder) && <button aria-label="关闭会话菜单" onClick={() => { setShowQuickMenu(false); setShowActionMenu(false); setShowMessageFinder(false); }} className="fixed inset-0 z-[35] bg-black/25" />}
 
       {showQuickMenu && (
-        <div className="tavern-quick-menu absolute bottom-[calc(9.3rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] left-2 z-40 max-h-[52vh] w-72 overflow-y-auto rounded-2xl border border-pink-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]">
+        <div className="tavern-quick-menu absolute bottom-[calc(10.1rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] left-2 z-40 max-h-[52vh] w-72 overflow-y-auto rounded-2xl border border-pink-200 bg-white p-2 shadow-[0_16px_36px_rgba(15,23,42,0.18)]">
           <div className="mb-1 flex items-center justify-between px-2.5 py-1.5"><span className="tavern-quick-menu-title text-[10px] font-black">快捷指令</span><span className="tavern-quick-menu-hint text-[9px]">仅写入输入框</span></div>
           {TAVERN_QUICK_COMMANDS.map((command) => <button key={command.id} onClick={() => applyQuickCommand(command.id)} className="flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-pink-50"><span className="tavern-quick-menu-label text-[11px] font-black">{command.label}</span><span className="tavern-quick-menu-hint ml-3 text-[9px]">{command.hint}</span></button>)}
         </div>
       )}
 
       {showActionMenu && (
-        <div className="tavern-floating-panel absolute bottom-[calc(9.3rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] right-2 z-40 w-[18.5rem] max-w-[calc(100%_-_1rem)] rounded-3xl border border-pink-200 p-3 shadow-xl">
+        <div className="tavern-floating-panel absolute bottom-[calc(10.1rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] right-2 z-40 w-[18.5rem] max-w-[calc(100%_-_1rem)] rounded-3xl border border-pink-200 p-3 shadow-xl">
           <div className="grid grid-cols-3 gap-2">
             <button
               onClick={() => {
@@ -3255,7 +3255,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       )}
 
       {showMessageFinder && (
-        <div className="absolute bottom-[calc(9.3rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] right-2 left-2 max-w-md mx-auto z-40">
+        <div className="absolute bottom-[calc(10.1rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] right-2 left-2 max-w-md mx-auto z-40">
           <MessageFinderPanel
             messages={messages}
             query={messageQuery}

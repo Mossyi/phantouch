@@ -59,7 +59,7 @@ export const FloatingEmergencyStop: React.FC = () => {
     <>
       {/* 悬浮右下急停按钮（仅在硬件活跃输出时唤醒） */}
       {shouldShowButton && (
-        <div className="fixed bottom-[calc(4.5rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] right-3.5 z-50 animate-in fade-in zoom-in-75 duration-200">
+        <div className="fixed bottom-[calc(5.25rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] right-3.5 z-50 animate-in fade-in zoom-in-75 duration-200">
           <button
             onClick={handleClick}
             className={`relative group flex items-center justify-center w-12 h-12 rounded-full shadow-2xl transition-all duration-200 border-2 ${

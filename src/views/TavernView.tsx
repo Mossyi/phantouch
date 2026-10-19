@@ -9,6 +9,8 @@ import { TavernDiaryCapsuleTab } from '../components/tavern/TavernDiaryCapsuleTa
 import { TavernApiTab } from '../components/tavern/TavernApiTab';
 import { TavernPlayerPresetsTab } from '../components/tavern/TavernPlayerPresetsTab';
 import { TavernTextRulesTab } from '../components/tavern/TavernTextRulesTab';
+import { SegmentedTabs, SegmentedTabItem } from '../components/SegmentedTabs';
+import { BookOpen, Contact, MessagesSquare, NotebookPen, Puzzle, SlidersHorizontal, Target, UserRound } from 'lucide-react';
 
 export const TavernView: React.FC = () => {
   const store = TavernStore.getInstance();
@@ -27,39 +29,27 @@ export const TavernView: React.FC = () => {
     setActiveSubTab('chat');
   };
 
-  const subTabs = [
-    { id: 'chat', label: '💬 对谈' },
-    { id: 'cards', label: '🎴 角色' },
-    { id: 'player', label: '👤 预设' },
-    { id: 'lorebook', label: '📖 世界书' },
-    { id: 'text_rules', label: '🧩 规则' },
-    { id: 'quests', label: '🎯 悬赏' },
-    { id: 'diary', label: '📓 日记' },
-    { id: 'api', label: '⚙️ 设置' },
+  const subTabs: SegmentedTabItem<typeof activeSubTab>[] = [
+    { id: 'chat', label: '对谈', icon: MessagesSquare },
+    { id: 'cards', label: '角色', icon: Contact },
+    { id: 'player', label: '预设', icon: UserRound },
+    { id: 'lorebook', label: '世界书', icon: BookOpen },
+    { id: 'text_rules', label: '规则', icon: Puzzle },
+    { id: 'quests', label: '悬赏', icon: Target },
+    { id: 'diary', label: '日记', icon: NotebookPen },
+    { id: 'api', label: '设置', icon: SlidersHorizontal },
   ];
 
   return (
     <div className="flex-1 min-h-0 flex flex-col w-full overflow-hidden">
-      {/* 🍎 顶部滑动分段控制器 (visionOS Floating Liquid Pill Slider) */}
-      <div className="liquid-header shrink-0 px-2.5 py-2 z-30">
-        <div className="liquid-pill-track max-w-md mx-auto flex gap-1 p-1 overflow-x-auto scrollbar-none rounded-[1.25rem]">
-          {subTabs.map((tab) => {
-            const isSelected = activeSubTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveSubTab(tab.id as any)}
-                className={`py-1.5 px-3 rounded-xl text-xs font-black whitespace-nowrap transition-all flex items-center justify-center shrink-0 active:scale-95 ${
-                  isSelected
-                    ? 'bg-white/95 text-pink-600 shadow-[0_4px_16px_rgba(244,63,142,0.2),inset_0_1.5px_2px_#ffffff] border border-white scale-[1.03]'
-                    : 'text-slate-500 hover:text-pink-600 hover:bg-white/50'
-                }`}
-              >
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
+      <div className="subnav-bar shrink-0 px-3 py-2 z-30">
+        <SegmentedTabs
+          ariaLabel="酒馆分区"
+          items={subTabs}
+          value={activeSubTab}
+          onChange={setActiveSubTab}
+          className="mx-auto max-w-md"
+        />
       </div>
 
       {/* 渲染具体的子模块 */}

@@ -663,7 +663,7 @@ export const ChatView: React.FC = () => {
       </div>
 
       {/* 底部输入区 (Apple Liquid Dock) */}
-      <div className="companion-chat-composer liquid-dock shrink-0 pb-[calc(3.8rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] z-20">
+      <div className="companion-chat-composer liquid-dock shrink-0 pb-[calc(4.6rem+clamp(0px,env(safe-area-inset-bottom,0px),1.75rem))] z-20">
         {/* 快捷互动小气泡 (粉色系主题) */}
         <div className="px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto scrollbar-none border-b border-white/60">
           {quickPrompts.map((qp, idx) => (

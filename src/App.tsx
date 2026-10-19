@@ -251,20 +251,8 @@ export const App: React.FC = () => {
 
   return (
     <div className="app-viewport fixed inset-0 flex flex-col bg-transparent text-slate-800 select-none overflow-hidden w-full">
-      {/* 🌸 visionOS High-Performance Luxury Liquid Ambient Mesh (Zero-GPU-Lag Gradient Mesh) */}
-      <div
-        className="pointer-events-none fixed inset-0 z-0"
-        style={{
-          background: `
-            radial-gradient(ellipse 65% 55% at 5% 5%, rgba(251, 182, 206, 0.35) 0%, transparent 60%),
-            radial-gradient(ellipse 60% 50% at 95% 15%, rgba(254, 205, 211, 0.38) 0%, transparent 65%),
-            radial-gradient(ellipse 70% 60% at 20% 90%, rgba(244, 114, 182, 0.22) 0%, transparent 70%),
-            radial-gradient(ellipse 50% 40% at 80% 85%, rgba(253, 226, 236, 0.45) 0%, transparent 60%),
-            linear-gradient(180deg, #ffffff 0%, #fffbfc 50%, #fff7fa 100%)
-          `,
-        }}
-        aria-hidden="true"
-      />
+      {/* 暖白底色 + 顶部一抹玫瑰光晕（纯渐变，无模糊滤镜，低端机零负担） */}
+      <div className="app-backdrop pointer-events-none fixed inset-0 z-0" aria-hidden="true" />
 
       {/* 顶部设备状态栏 */}
       <DeviceStatusBar />
@@ -281,21 +269,21 @@ export const App: React.FC = () => {
 
       {/* 主视图区域 (自适应填满剩余空间，杜绝双滚动条) */}
       <main className="flex-1 min-h-0 flex flex-col relative overflow-hidden">
-        <Suspense fallback={<div className="flex-1 grid place-items-center text-sm font-bold text-pink-500">正在打开…</div>}>
+        <Suspense fallback={<div className="flex-1 grid place-items-center text-sm font-semibold text-slate-500">正在打开…</div>}>
           {activeTab === 'chat' && <ChatView />}
           {activeTab === 'tavern' && <TavernView />}
           {(activeTab === 'femboy_training' || activeTab === ('dungeon' as any)) && (
-            <div className="flex-1 min-h-0 overflow-y-auto pb-16 overscroll-contain">
+            <div className="flex-1 min-h-0 overflow-y-auto pb-24 overscroll-contain">
               <FemboyTrainingView />
             </div>
           )}
           {isDisciplineActive && (
-            <div className="flex-1 min-h-0 overflow-y-auto pb-16 overscroll-contain">
+            <div className="flex-1 min-h-0 overflow-y-auto pb-24 overscroll-contain">
               <DisciplineHubView />
             </div>
           )}
           {isSpaceActive && (
-            <div className="flex-1 min-h-0 overflow-y-auto pb-16 overscroll-contain">
+            <div className="flex-1 min-h-0 overflow-y-auto pb-24 overscroll-contain">
               <SpaceHubView />
             </div>
           )}
@@ -311,13 +299,14 @@ export const App: React.FC = () => {
       {/* 🔄 全局更新检查：启动与回到前台时自动检查，不受当前页面影响 */}
       <GlobalUpdateChecker />
 
-      {/* 🍎 苹果原生晶莹吸底导览栏 (Bottom-anchored Liquid Bar) */}
+      {/* 底部悬浮 Dock：选中项以品牌色图标胶囊标识 */}
       <nav
-        className={`absolute bottom-0 left-0 right-0 z-30 w-full liquid-bottom-bar select-none transition-all duration-200 ${
-          isKeyboardOpen ? 'translate-y-full opacity-0 pointer-events-none' : 'translate-y-0 opacity-100 pointer-events-auto'
+        aria-label="主导航"
+        className={`absolute inset-x-3 z-30 bottom-[calc(0.25rem+clamp(0.35rem,env(safe-area-inset-bottom,0px),1.75rem))] select-none transition-all duration-300 ${
+          isKeyboardOpen ? 'translate-y-[150%] opacity-0 pointer-events-none' : 'translate-y-0 opacity-100 pointer-events-auto'
         }`}
       >
-        <div className="w-full grid grid-cols-5 items-center px-2 pt-1.5 pb-[clamp(0.35rem,env(safe-area-inset-bottom,0px),1.75rem)]">
+        <div className="app-dock mx-auto grid h-14 max-w-md grid-cols-5 items-stretch rounded-[1.375rem] px-1.5 py-1">
           {mainTabs.map((tab) => {
             const Icon = tab.icon;
             const active = tab.isActive;
@@ -328,38 +317,20 @@ export const App: React.FC = () => {
                 type="button"
                 onClick={tab.action}
                 aria-label={tab.label}
-                className="flex flex-col items-center justify-center py-0.5 px-0.5 rounded-xl transition-all duration-200 active:scale-90 relative"
+                aria-current={active ? 'page' : undefined}
+                className="dock-item relative"
               >
-                <div
-                  className={`relative w-11 h-7 rounded-xl transition-all duration-300 flex items-center justify-center ${
-                    active
-                      ? 'bg-gradient-to-r from-pink-500/18 via-rose-500/18 to-pink-500/12 text-pink-600 shadow-[inset_0_1px_1px_rgba(255,255,255,0.95),0_2px_8px_rgba(244,63,142,0.14)] border border-pink-200/80 scale-105'
-                      : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100/60'
-                  }`}
-                >
-                  <Icon
-                    className={`w-[1.2rem] h-[1.2rem] transition-all duration-300 ${
-                      active ? 'scale-105 stroke-[2.3] text-pink-600 drop-shadow-[0_1px_3px_rgba(244,63,142,0.35)]' : 'stroke-[1.8]'
-                    }`}
-                  />
+                <span className="dock-icon relative">
+                  <Icon className="h-[1.15rem] w-[1.15rem]" strokeWidth={active ? 2.3 : 1.9} />
                   {tab.badge && (
-                    <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-full text-[8px] bg-gradient-to-r from-pink-500 to-rose-500 text-white font-mono animate-pulse font-black shadow-md shadow-pink-500/30 border border-white">
+                    <span className="absolute -right-1.5 -top-1.5 min-w-[1.1rem] rounded-full border-2 border-white bg-rose-500 px-1 text-center font-mono text-[9px] font-black leading-[0.95rem] text-white">
                       {tab.badge}
                     </span>
                   )}
-                </div>
-                <span
-                  className={`mt-0.5 text-[9.5px] leading-tight tracking-tight transition-colors duration-200 truncate w-full text-center ${
-                    active ? 'font-black text-pink-600 drop-shadow-[0_1px_1px_rgba(244,63,142,0.12)]' : 'font-bold text-slate-500'
-                  }`}
-                >
+                </span>
+                <span className={`w-full truncate text-center text-[10.5px] leading-tight ${active ? 'font-extrabold' : 'font-semibold'}`}>
                   {tab.label}
                 </span>
-                {active ? (
-                  <span className="h-[2px] w-3 rounded-full bg-gradient-to-r from-pink-500 to-rose-500 shadow-xs shadow-pink-500/50 mt-0.5" />
-                ) : (
-                  <span className="h-[2px] w-3 mt-0.5 opacity-0" />
-                )}
               </button>
             );
           })}

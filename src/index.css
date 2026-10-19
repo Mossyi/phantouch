@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* =========================================================
+   幻触 Phantouch Design System ·「玫瑰石英」
+   - 暖白中性底色 + 白色实体卡片，粉色只用于操作、选中与强调
+   - 所有颜色都从下方 token 派生，组件类名（liquid-* / ui-*）保持不变
+   ========================================================= */
+
 @layer base {
   :root {
     --sat: 18px;
@@ -9,19 +15,40 @@
     --sat: max(env(safe-area-inset-top, 0px), 18px);
     --sab: 16px;
     --sab: clamp(0px, env(safe-area-inset-bottom, 16px), 2rem);
+
+    /* 表面 */
+    --canvas: #faf7f9;
     --surface: rgba(255, 255, 255, 0.96);
     --surface-strong: #ffffff;
-    --surface-soft: #f7f7f8;
-    --line: #e5e7eb;
-    --ink: #1f2937;
-    --ink-secondary: #4b5563;
-    --muted: #6b7280;
-    --pink: #e96892;
-    --action: #b82d60;
-    --action-hover: #92224b;
+    --surface-soft: #f6f2f4;
+    --surface-sunken: rgba(34, 26, 32, 0.045);
+    --line: #ece4e9;
+    --line-soft: rgba(34, 26, 32, 0.06);
+
+    /* 文字 */
+    --ink: #221a20;
+    --ink-secondary: #574c55;
+    --muted: #7d7179;
+
+    /* 品牌与语义色 */
+    --pink: #e2457f;
+    --brand: #e2457f;
+    --brand-strong: #c92f6a;
+    --brand-soft: #fdeaf1;
+    --brand-gradient: linear-gradient(135deg, #ec5a8f 0%, #e2457f 45%, #e34d6c 100%);
+    --action: #c92f6a;
+    --action-hover: #a82456;
     --success: #047857;
     --danger: #be123c;
-    --info: #1f6678;
+    --info: #2f6575;
+
+    /* 阴影与圆角 */
+    --shadow-xs: 0 1px 2px rgba(34, 26, 32, 0.05);
+    --shadow-soft: 0 1px 2px rgba(34, 26, 32, 0.04), 0 8px 24px -10px rgba(34, 26, 32, 0.12);
+    --shadow-lift: 0 2px 4px rgba(34, 26, 32, 0.04), 0 18px 40px -16px rgba(34, 26, 32, 0.22);
+    --shadow-brand: 0 8px 20px -8px rgba(226, 69, 127, 0.55);
+    --radius-card: 1.375rem;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   html,
@@ -60,53 +87,221 @@
   }
 
   body {
-    background-color: #fbfcfe;
-    background-image: 
-      radial-gradient(ellipse 65% 50% at 5% 10%, rgba(254, 215, 235, 0.45) 0%, transparent 60%),
-      radial-gradient(ellipse 55% 45% at 95% 15%, rgba(253, 232, 242, 0.42) 0%, transparent 55%),
-      radial-gradient(ellipse 60% 50% at 50% 88%, rgba(243, 232, 255, 0.35) 0%, transparent 65%),
-      radial-gradient(circle at 80% 55%, rgba(254, 226, 236, 0.3) 0%, transparent 45%),
-      linear-gradient(180deg, #ffffff 0%, #fbfcfe 50%, #f7f8fa 100%);
-    background-attachment: fixed;
+    background-color: var(--canvas);
     color: var(--ink);
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", "Microsoft YaHei UI", Helvetica, Arial, sans-serif;
+    font-feature-settings: "tnum" 1;
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior: none;
     padding-top: 0;
   }
 
   ::selection {
-    background-color: #ec4899;
-    color: #ffffff;
+    background-color: rgba(226, 69, 127, 0.22);
+    color: var(--ink);
+  }
+
+  /* 细滚动条：桌面端不再出现粗重的系统滚动条 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(34, 26, 32, 0.16) transparent;
+  }
+  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar-thumb { background: rgba(34, 26, 32, 0.16); border-radius: 9999px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+
+  :focus-visible {
+    outline: 2px solid rgba(226, 69, 127, 0.55);
+    outline-offset: 2px;
   }
 }
 
-/* 浅色淡粉质感卡片与容器全局美化 (苹果流体毛边毛玻璃) */
+/* =========================================================
+   应用外壳：背景、顶栏、子导航、底部 Dock
+   ========================================================= */
+
+.app-backdrop {
+  background:
+    radial-gradient(120% 60% at 50% -10%, rgba(253, 222, 234, 0.75) 0%, rgba(253, 222, 234, 0) 60%),
+    radial-gradient(60% 40% at 100% 100%, rgba(244, 226, 240, 0.55) 0%, rgba(244, 226, 240, 0) 70%),
+    var(--canvas);
+}
+
+.app-header {
+  background: rgba(250, 247, 249, 0.82);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* 设备状态胶囊（顶栏左侧） */
+.status-capsule {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0.3rem 0.75rem 0.3rem 0.3rem;
+  border-radius: 9999px;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-xs);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.status-capsule:hover { border-color: #f5aeca; box-shadow: var(--shadow-soft); }
+
+/* 方形图标按钮（顶栏工具） */
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 2.375rem;
+  height: 2.375rem;
+  border-radius: 0.875rem;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  color: var(--ink-secondary);
+  box-shadow: var(--shadow-xs);
+  transition: all 0.2s var(--ease-out);
+}
+.icon-button:hover { color: var(--brand-strong); border-color: #f5aeca; }
+.icon-button:active { transform: scale(0.94); }
+.icon-button[data-active="true"] {
+  background: var(--brand-soft);
+  border-color: #f5aeca;
+  color: var(--brand-strong);
+}
+
+/* 急停：任何主题下都必须是最醒目的红色实体按钮 */
+.estop-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 2.375rem;
+  padding: 0 0.875rem 0 0.7rem;
+  border-radius: 0.875rem;
+  background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
+  color: #ffffff !important;
+  font-size: 0.8125rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  border: 1px solid #b91c1c;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 16px -6px rgba(220, 38, 38, 0.7);
+  transition: transform 0.15s var(--ease-out), box-shadow 0.15s ease;
+}
+.estop-button:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 8px 20px -6px rgba(220, 38, 38, 0.85); }
+.estop-button:active { transform: scale(0.95); }
+
+/* 子导航条（酒馆 / 强度 / 设置 / 重塑 的二级标签） */
+.subnav-bar {
+  background: rgba(250, 247, 249, 0.82);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.segmented-track {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 1rem;
+  background: var(--surface-sunken);
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+.segmented-track::-webkit-scrollbar { display: none; }
+
+.segmented-item {
+  position: relative;
+  display: inline-flex;
+  flex: 1 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0.45rem 0.8rem;
+  border-radius: 0.8rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  color: var(--ink-secondary);
+  transition: color 0.2s ease, background-color 0.2s ease, box-shadow 0.25s var(--ease-out), transform 0.15s ease;
+}
+.segmented-item:hover { color: var(--ink); }
+.segmented-item:active { transform: scale(0.97); }
+.segmented-item[aria-selected="true"] {
+  background: var(--surface-strong);
+  color: var(--brand-strong);
+  font-weight: 800;
+  box-shadow: 0 1px 2px rgba(34, 26, 32, 0.06), 0 4px 12px -4px rgba(34, 26, 32, 0.14);
+}
+.segmented-badge {
+  min-width: 1.1rem;
+  padding: 0 0.35rem;
+  border-radius: 9999px;
+  font-size: 0.625rem;
+  font-weight: 800;
+  line-height: 1.1rem;
+  text-align: center;
+  color: #ffffff;
+  background: var(--brand);
+}
+
+/* 底部悬浮 Dock */
+.app-dock {
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 1px var(--line-soft), var(--shadow-lift);
+}
+
+.dock-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  height: 100%;
+  border-radius: 1rem;
+  color: var(--muted);
+  transition: color 0.2s ease, transform 0.15s var(--ease-out);
+}
+.dock-item:active { transform: scale(0.92); }
+.dock-item .dock-icon {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 1.75rem;
+  border-radius: 9999px;
+  transition: background 0.3s var(--ease-out), box-shadow 0.3s var(--ease-out), color 0.2s ease;
+}
+.dock-item[aria-current="page"] { color: var(--brand-strong); }
+.dock-item[aria-current="page"] .dock-icon {
+  background: var(--brand-gradient);
+  color: #ffffff;
+  box-shadow: var(--shadow-brand);
+}
+
+/* =========================================================
+   卡片与容器
+   ========================================================= */
+
 .modern-card,
-.liquid-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(255, 245, 250, 0.58) 100%);
-  backdrop-filter: blur(32px) saturate(200%) contrast(102%);
-  -webkit-backdrop-filter: blur(32px) saturate(200%) contrast(102%);
-  border: 1px solid rgba(255, 255, 255, 0.88);
-  border-radius: 1.75rem;
-  box-shadow: 
-    0 0 0 1px rgba(255, 255, 255, 0.75),
-    0 0 20px 2px rgba(255, 255, 255, 0.7),
-    inset 0 1.5px 2px 0 rgba(255, 255, 255, 0.98),
-    inset 0 -1px 2px 0 rgba(233, 104, 146, 0.05),
-    0 12px 36px -4px rgba(233, 104, 146, 0.08),
-    0 3px 10px -2px rgba(15, 23, 42, 0.02);
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+.liquid-card,
+.bg-cyber-card {
+  background: var(--surface-strong) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-card) !important;
+  box-shadow: var(--shadow-soft) !important;
+  transition: border-color 0.25s ease, box-shadow 0.25s var(--ease-out);
 }
 
 .modern-card:hover,
-.liquid-card:hover {
-  border-color: rgba(255, 255, 255, 1);
-  box-shadow: 
-    0 0 0 1px rgba(255, 255, 255, 0.9),
-    0 0 28px 6px rgba(255, 255, 255, 0.85),
-    inset 0 1.5px 2px 0 #ffffff,
-    0 16px 44px -4px rgba(233, 104, 146, 0.14);
+.liquid-card:hover,
+.bg-cyber-card:hover {
+  border-color: #e6d7df !important;
+  box-shadow: var(--shadow-lift) !important;
 }
 
 .barbie-shine {
@@ -119,10 +314,195 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(115deg, rgba(255, 255, 255, 0.38), transparent 42%, transparent 72%, rgba(233, 104, 146, 0.025));
+  background: linear-gradient(115deg, rgba(255, 255, 255, 0.38), transparent 42%, transparent 72%, rgba(226, 69, 127, 0.03));
 }
 
-/* 全局文本表单与输入框清晰度提升（严格排除 range 滑块与 radio/checkbox） */
+/* 通用玻璃容器（主卡片 / 悬浮视窗） */
+.liquid-glass {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lift);
+}
+
+/* 次级容器（子卡片、次级按钮、候选项） */
+.liquid-glass-subtle {
+  background: var(--surface-soft);
+  border: 1px solid var(--line-soft);
+}
+
+.liquid-dock {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px) saturate(190%);
+  -webkit-backdrop-filter: blur(20px) saturate(190%);
+  border-top: 1px solid var(--line-soft);
+  box-shadow: 0 -8px 30px -12px rgba(34, 26, 32, 0.14);
+}
+
+.liquid-bottom-bar {
+  bottom: 0px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  border-top: 1px solid var(--line-soft);
+}
+
+.liquid-header {
+  background: rgba(250, 247, 249, 0.86);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* 分段控制器轨道 */
+.liquid-pill-track {
+  background: var(--surface-sunken);
+  border: 1px solid transparent;
+  border-radius: 1rem;
+}
+
+/* 分段控制器选中态（实色品牌） */
+.liquid-pill-active {
+  background: var(--brand-gradient) !important;
+  color: #ffffff !important;
+  border: 1px solid transparent !important;
+  box-shadow: var(--shadow-brand) !important;
+}
+
+/* 分段控制器选中态（白色浮起） */
+.liquid-pill-glass-active {
+  background: var(--surface-strong) !important;
+  color: var(--brand-strong) !important;
+  font-weight: 800 !important;
+  border: 1px solid transparent !important;
+  box-shadow: 0 1px 2px rgba(34, 26, 32, 0.06), 0 4px 12px -4px rgba(34, 26, 32, 0.14) !important;
+}
+
+/* AI 角色气泡 */
+.liquid-bubble-ai {
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: 1.375rem;
+  border-top-left-radius: 0.5rem;
+  box-shadow: var(--shadow-soft);
+}
+
+/* 狂暴模式气泡 */
+.liquid-bubble-sese {
+  background: linear-gradient(160deg, #fff5f9 0%, #ffffff 70%);
+  border: 1px solid #f5aeca;
+  border-radius: 1.375rem;
+  border-top-left-radius: 0.5rem;
+  box-shadow: 0 10px 28px -14px rgba(226, 69, 127, 0.45);
+}
+
+/* 用户气泡 */
+.liquid-bubble-user {
+  background: var(--brand-gradient);
+  color: #ffffff !important;
+  border: 1px solid transparent;
+  border-radius: 1.375rem;
+  border-top-right-radius: 0.5rem;
+  box-shadow: var(--shadow-brand);
+}
+
+/* 曲面高光（保留类名，效果收敛为极淡的顶部光泽） */
+.liquid-specular {
+  position: relative;
+  overflow: hidden;
+}
+
+.liquid-specular::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, transparent 100%);
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 1;
+}
+
+.liquid-btn {
+  transition: transform 0.2s var(--ease-out), box-shadow 0.2s ease, background-color 0.2s ease;
+}
+.liquid-btn:hover {
+  transform: translateY(-1px);
+}
+.liquid-btn:active {
+  transform: scale(0.96);
+}
+
+/* 选中态卡片 */
+.liquid-card-selected {
+  background: linear-gradient(160deg, #fff6f9 0%, #ffffff 65%) !important;
+  border: 1.5px solid #ee7fa8 !important;
+  border-radius: var(--radius-card) !important;
+  box-shadow: 0 0 0 4px rgba(226, 69, 127, 0.1), var(--shadow-soft) !important;
+}
+
+.frosted-feather-glass {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  border: 1px solid var(--line);
+  border-radius: 1.25rem;
+  box-shadow: var(--shadow-soft);
+}
+
+/* 胶囊标签 */
+.liquid-chip {
+  background: var(--surface-strong) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: var(--shadow-xs);
+  border-radius: 9999px;
+  font-weight: 700;
+  transition: all 0.2s var(--ease-out);
+}
+.liquid-chip:hover {
+  border-color: #f5aeca !important;
+  color: var(--brand-strong);
+}
+.liquid-chip:active {
+  transform: scale(0.96);
+}
+
+.liquid-input {
+  background: var(--surface-strong) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: inset 0 1px 2px rgba(34, 26, 32, 0.03) !important;
+  border-radius: 1.125rem !important;
+  color: var(--ink) !important;
+  font-weight: 500;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+.liquid-input:focus {
+  border-color: var(--brand) !important;
+  box-shadow: 0 0 0 4px rgba(226, 69, 127, 0.14) !important;
+}
+
+/* 共享表面与按钮：文字与背景在同一规则中定义 */
+.ui-card { --ink: #221a20; --ink-secondary: #574c55; --muted: #7d7179; --success: #047857; --info: #2f6575; background: var(--surface-strong); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-card); padding: 1rem; min-width: 0; box-shadow: var(--shadow-soft); }
+.ui-muted { color: var(--ink-secondary); }
+.ui-button, .ui-button-secondary { padding: .6rem .9rem; border-radius: .875rem; font-size: .8125rem; font-weight: 700; line-height: 1.4; transition: transform .15s var(--ease-out), background-color .2s ease, box-shadow .2s ease; }
+.ui-button { background: var(--brand-gradient); color: white; border: 1px solid transparent; box-shadow: var(--shadow-brand); }
+.ui-button:hover { filter: brightness(0.96); }
+.ui-button:active, .ui-button-secondary:active { transform: scale(0.97); }
+.ui-button-secondary { background: var(--surface-strong); color: var(--ink); border: 1px solid var(--line); box-shadow: var(--shadow-xs); }
+.ui-button-secondary:hover { border-color: #f5aeca; }
+.ui-button:disabled, .ui-button-secondary:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.ui-button:focus-visible, .ui-button-secondary:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.ui-status-success { color: var(--success); background: #ecfdf5; }
+.ui-status-error { color: var(--danger); background: #fff1f2; }
+
+/* =========================================================
+   表单控件
+   ========================================================= */
+
+/* 文本输入与下拉（严格排除 range 滑块与 radio/checkbox） */
 input[type="text"],
 input[type="password"],
 input[type="number"],
@@ -133,13 +513,14 @@ input[type="tel"],
 input:not([type]),
 textarea,
 select {
-  border-radius: 0.85rem !important;
-  color: #1f2937 !important;
-  background-color: rgba(255, 255, 255, 0.95) !important;
-  border: 1px solid #dfe3e8 !important;
-  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.02);
+  border-radius: 0.875rem !important;
+  color: var(--ink) !important;
+  background-color: #ffffff !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: inset 0 1px 2px rgba(34, 26, 32, 0.03);
   font-weight: 500;
   color-scheme: light !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 select,
@@ -151,12 +532,12 @@ optgroup {
 select option,
 select optgroup {
   background-color: #ffffff !important;
-  color: #1f2937 !important;
+  color: var(--ink) !important;
 }
 
 select optgroup {
-  background-color: #f8fafc !important;
-  color: #475569 !important;
+  background-color: #faf7f9 !important;
+  color: #574c55 !important;
   font-weight: 700 !important;
 }
 
@@ -165,28 +546,87 @@ input[type="password"]:focus,
 input[type="number"]:focus,
 input[type="email"]:focus,
 input[type="search"]:focus,
+input[type="url"]:focus,
+input[type="tel"]:focus,
 input:not([type]):focus,
 textarea:focus,
 select:focus {
-  border-color: #e96892 !important;
-  outline: 2px solid rgba(233, 104, 146, 0.18) !important;
-  outline-offset: 1px;
+  border-color: var(--brand) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 4px rgba(226, 69, 127, 0.14) !important;
 }
 
 input[type="text"]::placeholder,
 input[type="password"]::placeholder,
 input[type="number"]::placeholder,
+input[type="email"]::placeholder,
+input[type="search"]::placeholder,
+input[type="url"]::placeholder,
+input[type="tel"]::placeholder,
 input:not([type])::placeholder,
 textarea::placeholder {
-  color: #9ca3af !important;
+  color: #93878f !important;
+  opacity: 1 !important;
+  font-weight: 450;
 }
 
-/* Mobile readability baseline: the app contains dense status panels, so no label is allowed to become hairline text. */
+/* 移动端触控滑块：中性轨道 + 品牌色拇指 */
+input[type="range"] {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  background: #efe5ea !important;
+  height: 6px !important;
+  border-radius: 9999px !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: inset 0 1px 2px rgba(34, 26, 32, 0.08) !important;
+  cursor: pointer !important;
+  touch-action: pan-y;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  width: 24px !important;
+  height: 24px !important;
+  border-radius: 50% !important;
+  background: #ffffff !important;
+  border: 6px solid var(--brand) !important;
+  box-shadow: 0 2px 8px rgba(226, 69, 127, 0.4), 0 1px 2px rgba(34, 26, 32, 0.15) !important;
+  cursor: pointer !important;
+  transition: transform 0.12s ease !important;
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.15) !important;
+  box-shadow: 0 0 0 8px rgba(226, 69, 127, 0.16), 0 2px 8px rgba(226, 69, 127, 0.4) !important;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px !important;
+  height: 14px !important;
+  border-radius: 50% !important;
+  background: #ffffff !important;
+  border: 6px solid var(--brand) !important;
+  box-shadow: 0 2px 8px rgba(226, 69, 127, 0.4) !important;
+  cursor: pointer !important;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--brand);
+}
+
+/* =========================================================
+   排版与可读性
+   ========================================================= */
+
 #root {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
 
+/* 信息密集的状态面板：任何标签都不允许缩成发丝级小字 */
 [class*="text-[8px]"],
 [class*="text-[8.5px]"],
 [class*="text-[9px]"],
@@ -200,6 +640,12 @@ textarea::placeholder {
   line-height: 1.5 !important;
 }
 
+[class*="font-mono"] {
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 文字色阶（slate 已反转为浅色主题，这里映射回语义墨色） */
 .text-slate-400 {
   color: var(--ink-secondary);
 }
@@ -210,7 +656,7 @@ textarea::placeholder {
 .text-amber-300, .text-amber-400, .text-yellow-300, .text-yellow-400 { color: #946200; }
 .text-indigo-200, .text-indigo-300 { color: var(--info); }
 
-/* Explicit inverse surfaces opt in; a nested card restores reading colors. */
+/* 显式反色表面：内部文字切换为浅色，嵌套卡片再恢复阅读色 */
 .text-white, .bg-pink-950, .bg-pink-900, .bg-rose-950, .bg-rose-900, .bg-indigo-900 {
   --ink: #ffffff;
   --ink-secondary: #f1e5eb;
@@ -228,10 +674,7 @@ textarea::placeholder {
 }
 
 .text-pink-200,
-.text-pink-300 {
-  color: var(--action);
-}
-
+.text-pink-300,
 .text-purple-200,
 .text-purple-300 {
   color: var(--action);
@@ -242,95 +685,22 @@ textarea::placeholder {
   color: var(--info);
 }
 
-/* Shared surfaces and actions: keep text and its background in one rule. */
-.ui-card { --ink: #1f2937; --ink-secondary: #4b5563; --muted: #6b7280; --success: #047857; --info: #1f6678; background: var(--surface-strong); color: var(--ink); border: 1px solid var(--line); border-radius: 1.25rem; padding: 1rem; min-width: 0; }
-.ui-muted { color: var(--ink-secondary); }
-.ui-button, .ui-button-secondary { padding: .6rem .8rem; border-radius: .8rem; font-size: .8rem; font-weight: 700; line-height: 1.4; }
-.ui-button { background: var(--action); color: white; border: 1px solid var(--action); }
-.ui-button:hover { background: var(--action-hover); }
-.ui-button-secondary { background: var(--surface-soft); color: var(--ink); border: 1px solid var(--line); }
-.ui-button:disabled, .ui-button-secondary:disabled { opacity: .5; cursor: not-allowed; }
-.ui-button:focus-visible, .ui-button-secondary:focus-visible { outline: 2px solid var(--info); outline-offset: 3px; }
-.ui-status-success { color: var(--success); background: #ecfdf5; }
-.ui-status-error { color: var(--danger); background: #fff1f2; }
+/* slate 反转后 slate-100~300 是深墨色，但这些背景/边框类在代码里一律按「浅灰」语义书写，
+   不纠正会出现深底深字的芯片与黑色描边。 */
+.bg-slate-100, .hover\:bg-slate-100:hover, .bg-slate-100\/95, .bg-slate-100\/70 { background-color: var(--surface-soft); }
+.bg-slate-200, .hover\:bg-slate-200:hover { background-color: #ece4e9; }
+.bg-slate-300 { background-color: #d8ccd3; }
+.border-slate-100 { border-color: var(--line-soft); }
+.border-slate-200, .border-slate-200\/80, .border-slate-200\/70, .border-slate-200\/50 { border-color: var(--line); }
+.border-slate-300, .border-slate-300\/80 { border-color: #e2d6dd; }
 
-[class*="font-mono"] {
-  letter-spacing: 0.01em;
-}
+/* cyan 色阶同样被反转：800/900 是浅色、200/300 是深色，与代码中的语义相反 */
+.text-cyan-800, .text-cyan-900 { color: #2f5560; }
+.border-cyan-200 { border-color: #cfe2e7; }
+.border-cyan-300 { border-color: #a9cbd4; }
+.bg-cyan-200 { background-color: #d6e8ec; }
 
-/* Character Studio is information-dense, so it uses a deliberately high-contrast reading surface. */
-.tavern-card-studio {
-  background: linear-gradient(145deg, #fffafe 0%, #fff0f7 52%, #fdf2ff 100%);
-  color: #3e0b27;
-}
-
-.tavern-card-studio label,
-.tavern-card-studio .text-slate-400 {
-  color: #6c1d48 !important;
-  font-size: 0.75rem !important;
-  line-height: 1.45 !important;
-}
-
-.tavern-card-studio input:not([type="checkbox"]),
-.tavern-card-studio textarea {
-  background: #ffffff !important;
-  border: 1.5px solid #f9a8d4 !important;
-  color: #3e0b27 !important;
-  font-size: 0.875rem !important;
-  font-weight: 600 !important;
-  line-height: 1.6 !important;
-  caret-color: #db2777;
-}
-
-.tavern-card-studio input:not([type="checkbox"])::placeholder,
-.tavern-card-studio textarea::placeholder {
-  color: #9d4b76 !important;
-  opacity: 1;
-}
-
-/* 🎯 专为移动端触控优化的精致粉色滑块 (Range Slider) */
-input[type="range"] {
-  -webkit-appearance: none !important;
-  appearance: none !important;
-  background: #fbcfe8 !important;
-  height: 8px !important;
-  border-radius: 9999px !important;
-  border: none !important;
-  outline: none !important;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08) !important;
-  cursor: pointer !important;
-  touch-action: pan-y;
-}
-
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none !important;
-  appearance: none !important;
-  width: 26px !important;
-  height: 26px !important;
-  border-radius: 50% !important;
-  background: linear-gradient(135deg, #f43f8e, #db2777) !important;
-  border: 2.5px solid #ffffff !important;
-  box-shadow: 0 4px 10px rgba(219, 39, 119, 0.35), 0 1px 3px rgba(0,0,0,0.15) !important;
-  cursor: pointer !important;
-  transition: transform 0.1s ease !important;
-}
-
-input[type="range"]::-webkit-slider-thumb:active {
-  transform: scale(1.18) !important;
-  box-shadow: 0 6px 16px rgba(219, 39, 119, 0.5) !important;
-}
-
-input[type="range"]::-moz-range-thumb {
-  width: 26px !important;
-  height: 26px !important;
-  border-radius: 50% !important;
-  background: linear-gradient(135deg, #f43f8e, #db2777) !important;
-  border: 2.5px solid #ffffff !important;
-  box-shadow: 0 4px 10px rgba(219, 39, 119, 0.35) !important;
-  cursor: pointer !important;
-}
-
-/* 按钮文字白色强制清晰保障 */
+/* 品牌色按钮文字强制白色 */
 .text-white,
 button[class*="from-pink"],
 button[class*="from-rose"],
@@ -341,138 +711,43 @@ button[class*="bg-rose-500"] {
   color: #ffffff !important;
 }
 
-/* 安全区域辅助类 */
-.pt-safe-header {
-  /* Respect notches/status bars while avoiding unnecessary desktop/WebView whitespace. */
-  padding-top: 18px;
-  padding-top: env(safe-area-inset-top, 18px);
-  padding-top: max(env(safe-area-inset-top, 0px), 18px);
+/* =========================================================
+   酒馆专用
+   ========================================================= */
+
+/* 角色工坊信息密集，使用高对比阅读表面 */
+.tavern-card-studio {
+  background: linear-gradient(160deg, #fff8fb 0%, #ffffff 60%);
+  color: #3d0e21;
 }
 
-.tavern-chat-composer {
-  padding-bottom: 3.8rem;
-  padding-bottom: calc(3.8rem + clamp(0px, env(safe-area-inset-bottom, 0px), 1.75rem));
+.tavern-card-studio label,
+.tavern-card-studio .text-slate-400 {
+  color: #841d45 !important;
+  font-size: 0.75rem !important;
+  line-height: 1.45 !important;
 }
 
-/* 软键盘唤起时，输入区紧密贴合键盘顶沿，消除多余空白并释放聊天高度 */
-.keyboard-open .tavern-chat-composer,
-.keyboard-open .companion-chat-composer {
-  padding-bottom: 0.5rem !important;
+.tavern-card-studio input:not([type="checkbox"]),
+.tavern-card-studio textarea {
+  background: #ffffff !important;
+  border: 1px solid #f5aeca !important;
+  color: #3d0e21 !important;
+  font-size: 0.875rem !important;
+  font-weight: 600 !important;
+  line-height: 1.6 !important;
+  caret-color: var(--brand);
 }
 
-.keyboard-open .tavern-quick-menu,
-.keyboard-open .tavern-floating-panel {
-  bottom: 5.5rem !important;
+.tavern-card-studio input:not([type="checkbox"])::placeholder,
+.tavern-card-studio textarea::placeholder {
+  color: #a8577a !important;
+  opacity: 1;
 }
 
-/* 酒馆弹层必须遮住后方剧情文字，避免无效透明度工具类造成穿透。 */
-.tavern-floating-panel {
-  background-color: #ffffff !important;
-  background-image: linear-gradient(145deg, #ffffff 0%, #fcfcfd 100%);
-  box-shadow:
-    0 22px 55px rgba(15, 23, 42, 0.14),
-    0 7px 18px rgba(15, 23, 42, 0.06),
-    inset 0 1px 0 #ffffff;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  isolation: isolate;
-}
-
-/* 快捷指令菜单固定使用高对比文字，避免白底上被继承的浅灰色覆盖。 *//* 浅色淡粉质感卡片与容器全局美化 (苹果流体毛边毛玻璃) */
-.modern-card,
-.liquid-card,
-.bg-cyber-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 246, 251, 0.75) 100%) !important;
-  backdrop-filter: blur(16px) saturate(180%) contrast(101%) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(101%) !important;
-  border: 1.5px solid rgba(255, 255, 255, 0.95) !important;
-  border-radius: 1.75rem !important;
-  box-shadow: 
-    0 0 0 1px rgba(255, 255, 255, 0.85),
-    0 16px 40px -6px rgba(244, 114, 182, 0.10),
-    inset 0 2px 3px 0 #ffffff,
-    inset 0 -1px 2px 0 rgba(244, 63, 94, 0.04),
-    0 2px 8px -1px rgba(15, 23, 42, 0.02) !important;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.modern-card:hover,
-.liquid-card:hover,
-.bg-cyber-card:hover {
-  border-color: rgba(255, 255, 255, 1) !important;
-  box-shadow: 
-    0 0 0 1px rgba(255, 255, 255, 0.95),
-    0 0 32px 6px rgba(255, 255, 255, 0.9),
-    inset 0 2px 2.5px 0 #ffffff,
-    0 20px 48px -4px rgba(244, 63, 142, 0.18) !important;
-}
-
-.barbie-shine {
-  position: relative;
-  overflow: hidden;
-}
-
-.barbie-shine::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(115deg, rgba(255, 255, 255, 0.38), transparent 42%, transparent 72%, rgba(233, 104, 146, 0.025));
-}
-
-/* 全局文本表单与输入框清晰度提升（严格排除 range 滑块与 radio/checkbox） */
-input[type="text"],
-input[type="password"],
-input[type="number"],
-input[type="email"],
-input[type="search"],
-input[type="url"],
-input[type="tel"],
-input:not([type]),
-textarea,
-select {
-  border-radius: 0.85rem !important;
-  color: #1f2937 !important;
-  background-color: rgba(255, 255, 255, 0.95) !important;
-  border: 1px solid #dfe3e8 !important;
-  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.02);
-  font-weight: 500;
-}
-
-input[type="text"]:focus,
-input[type="password"]:focus,
-input[type="number"]:focus,
-input[type="email"]:focus,
-input[type="search"]:focus,
-input:not([type]):focus,
-textarea:focus,
-select:focus {
-  border-color: #e96892 !important;
-  outline: 2px solid rgba(233, 104, 146, 0.18) !important;
-  outline-offset: 1px;
-}
-
-input[type="text"]::placeholder,
-input[type="password"]::placeholder,
-input[type="number"]::placeholder,
-input[type="email"]::placeholder,
-input[type="search"]::placeholder,
-input[type="url"]::placeholder,
-input[type="tel"]::placeholder,
-input:not([type])::placeholder,
-textarea::placeholder {
-  color: #6b7280 !important;
-  opacity: 1 !important;
-  font-weight: 450;
-}
-
-select {
-  color: #1f2937 !important;
-}
-
-/* 酒馆台词与动作高对比度阅读强化 */
+/* 台词与动作高对比度阅读 */
 .tavern-narrative-action {
-  color: #0284c7 !important;
+  color: #0369a1 !important;
   font-style: italic;
   font-weight: 600;
   letter-spacing: 0.015em;
@@ -499,16 +774,60 @@ select {
 
 .tavern-quick-menu-title,
 .tavern-quick-menu-label {
-  color: #0f172a !important;
+  color: #221a20 !important;
   font-weight: 800 !important;
 }
 
 .tavern-quick-menu-hint {
-  color: #475569 !important;
+  color: #574c55 !important;
   opacity: 1 !important;
 }
 
-/* 隐藏滚动条 */
+/* 酒馆弹层必须遮住后方剧情文字，避免透明度工具类造成穿透 */
+.tavern-floating-panel {
+  background-color: #ffffff !important;
+  background-image: none;
+  border-color: var(--line) !important;
+  box-shadow:
+    0 24px 60px -12px rgba(34, 26, 32, 0.25),
+    0 0 0 1px var(--line-soft);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  isolation: isolate;
+}
+
+/* =========================================================
+   安全区域与软键盘
+   ========================================================= */
+
+.pt-safe-header {
+  /* 尊重刘海/状态栏，同时避免桌面端与 WebView 中多余留白 */
+  padding-top: 12px;
+  padding-top: env(safe-area-inset-top, 12px);
+  padding-top: max(env(safe-area-inset-top, 0px), 12px);
+}
+
+/* 为底部悬浮 Dock 预留空间 */
+.tavern-chat-composer {
+  padding-bottom: 4.6rem;
+  padding-bottom: calc(4.6rem + clamp(0px, env(safe-area-inset-bottom, 0px), 1.75rem));
+}
+
+/* 软键盘唤起时，输入区紧贴键盘顶沿，释放聊天高度 */
+.keyboard-open .tavern-chat-composer,
+.keyboard-open .companion-chat-composer {
+  padding-bottom: 0.5rem !important;
+}
+
+.keyboard-open .tavern-quick-menu,
+.keyboard-open .tavern-floating-panel {
+  bottom: 5.5rem !important;
+}
+
+/* =========================================================
+   工具类
+   ========================================================= */
+
 .no-scrollbar::-webkit-scrollbar,
 .scrollbar-none::-webkit-scrollbar {
   display: none;
@@ -519,259 +838,32 @@ select {
   scrollbar-width: none;
 }
 
-/* 樱花淡粉发光阴影类 */
 .pink-glow {
-  box-shadow: 0 10px 25px rgba(233, 104, 146, 0.12);
+  box-shadow: 0 10px 25px -10px rgba(226, 69, 127, 0.35);
 }
 .pink-glow-sm {
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-soft);
 }
 .pink-glow-lg {
-  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.12);
+  box-shadow: var(--shadow-lift);
 }
 .pink-border-glow {
-  border-color: rgba(233, 104, 146, 0.32);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 8px 20px rgba(15, 23, 42, 0.06);
+  border-color: #f5aeca;
+  box-shadow: var(--shadow-soft);
+}
+
+/* 未安装 tailwindcss-animate：为 animate-in 提供轻量淡入（只动 opacity，不覆盖 translate 定位） */
+.animate-in {
+  animation: phantouch-enter 0.24s var(--ease-out) both;
+}
+
+@keyframes phantouch-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes shrink {
   from { width: 100%; }
   to { width: 0%; }
-}
-
-/* =========================================================
-   🍎 Apple Liquid Glass & Fluid Glassmorphism Design System
-   ========================================================= */
-
-/* 1. 核心流体毛玻璃容器 (主卡片 / 悬浮视窗 / 顶栏底栏) */
-.liquid-glass {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 246, 251, 0.75) 100%);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1.5px solid rgba(255, 255, 255, 0.95);
-  box-shadow: 
-    inset 0 2px 2.5px 0 rgba(255, 255, 255, 1),
-    inset 0 -1px 1.5px 0 rgba(244, 63, 142, 0.05),
-    0 14px 36px -5px rgba(244, 63, 142, 0.10),
-    0 4px 12px -2px rgba(15, 23, 42, 0.03);
-}
-
-/* 2. 微光轻量流体玻璃 (用于子卡片、次级按钮、候选项) */
-.liquid-glass-subtle {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 245, 250, 0.68) 100%);
-  backdrop-filter: blur(12px) saturate(170%);
-  -webkit-backdrop-filter: blur(12px) saturate(170%);
-  border: 1px solid rgba(255, 255, 255, 0.92);
-  box-shadow: 
-    inset 0 1.5px 2px 0 rgba(255, 255, 255, 1),
-    0 4px 16px 0 rgba(15, 23, 42, 0.03);
-}
-
-/* 3. 苹果风格悬浮底部 Dock (液态导览坞) */
-.liquid-dock {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.90) 0%, rgba(255, 246, 251, 0.80) 100%);
-  backdrop-filter: blur(20px) saturate(190%);
-  -webkit-backdrop-filter: blur(20px) saturate(190%);
-  border-top: 1.5px solid rgba(255, 255, 255, 0.95);
-  box-shadow: 
-    inset 0 2px 2px 0 rgba(255, 255, 255, 1),
-    0 -12px 40px -4px rgba(244, 63, 142, 0.10),
-    0 -2px 6px 0 rgba(15, 23, 42, 0.02);
-}
-
-/* 3.1 苹果原生吸底晶莹液态导览栏 (Bottom-anchored Liquid Bar) */
-.liquid-bottom-bar {
-  bottom: 0px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 248, 252, 0.94) 100%);
-  backdrop-filter: blur(28px) saturate(210%);
-  -webkit-backdrop-filter: blur(28px) saturate(210%);
-  border-top: 1px solid rgba(255, 255, 255, 0.95);
-  box-shadow: 
-    0 -4px 20px -2px rgba(244, 63, 142, 0.08),
-    0 -1px 2px 0 rgba(15, 23, 42, 0.03),
-    inset 0 1px 1px 0 rgba(255, 255, 255, 1);
-}
-
-
-/* 4. 苹果风格悬浮顶栏 Header */
-.liquid-header {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 246, 251, 0.75) 100%);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border-bottom: 1.5px solid rgba(255, 255, 255, 0.92);
-  box-shadow: 
-    inset 0 -1px 1.5px 0 rgba(255, 255, 255, 0.98),
-    0 10px 32px -4px rgba(244, 63, 142, 0.06);
-}
-
-/* 5. 分段控制器液态轨道 (Segmented Control Track) */
-.liquid-pill-track {
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(12px) saturate(180%);
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-  border: 1.5px solid rgba(255, 255, 255, 0.95);
-  box-shadow: 
-    inset 0 1.5px 2.5px 0 rgba(255, 255, 255, 1),
-    inset 0 -1px 1.5px 0 rgba(244, 63, 142, 0.05),
-    0 6px 22px -2px rgba(244, 63, 142, 0.08);
-  border-radius: 9999px;
-}
-
-/* 6. 液态胶囊激活按钮 (Liquid Pill Active) */
-.liquid-pill-active {
-  background: linear-gradient(135deg, #f43f8e 0%, #e11d48 100%) !important;
-  color: #ffffff !important;
-  border: 1px solid rgba(255, 255, 255, 0.65) !important;
-  box-shadow: 
-    inset 0 1.5px 2px 0 rgba(255, 255, 255, 0.75),
-    0 6px 18px -1px rgba(225, 29, 72, 0.32) !important;
-}
-
-/* 7. 液态白晶激活胶囊 (用于浅色背景高对比选中态) */
-.liquid-pill-glass-active {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 245, 250, 0.92) 100%) !important;
-  color: #be185d !important;
-  font-weight: 800 !important;
-  border: 1.5px solid rgba(255, 255, 255, 0.98) !important;
-  box-shadow: 
-    inset 0 2px 2px 0 #ffffff,
-    0 4px 16px -1px rgba(244, 63, 142, 0.20) !important;
-}
-
-/* 8. AI 角色剧情与对谈液态气泡 (兼具剔透玻璃质感与 100% 墨黑字体清晰度，零 GPU 卡顿渲染) */
-.liquid-bubble-ai {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 248, 252, 0.90) 100%);
-  border: 1.5px solid rgba(255, 255, 255, 0.98);
-  border-radius: 1.6rem;
-  box-shadow: 
-    0 0 0 1px rgba(255, 255, 255, 0.85),
-    inset 0 2px 2px 0 #ffffff,
-    inset 0 -1px 1.5px 0 rgba(244, 63, 142, 0.04),
-    0 8px 24px -3px rgba(244, 63, 142, 0.08),
-    0 2px 6px 0 rgba(15, 23, 42, 0.02);
-}
-
-/* 9. 狂暴瑟瑟态液态气泡 */
-.liquid-bubble-sese {
-  background: linear-gradient(135deg, rgba(255, 240, 248, 0.96) 0%, rgba(255, 245, 251, 0.90) 100%);
-  border: 1.5px solid rgba(244, 114, 182, 0.65);
-  border-radius: 1.6rem;
-  box-shadow: 
-    inset 0 2px 2px 0 #ffffff,
-    inset 0 -1px 2px 0 rgba(225, 29, 72, 0.10),
-    0 10px 28px -2px rgba(244, 63, 94, 0.16);
-}
-
-/* 10. 用户输入发送气泡 (液态晶莹渐变) */
-.liquid-bubble-user {
-  background: linear-gradient(135deg, #f43f8e 0%, #ec4899 50%, #f43f5e 100%);
-  color: #ffffff !important;
-  border: 1.5px solid rgba(255, 255, 255, 0.65);
-  border-radius: 1.6rem;
-  box-shadow: 
-    inset 0 2px 2px 0 rgba(255, 255, 255, 0.65),
-    inset 0 -1px 2px 0 rgba(0, 0, 0, 0.12),
-    0 10px 28px -4px rgba(244, 63, 94, 0.32);
-}
-
-/* 11. 物理流体高光顶沿 (Apple Curved Glass Specular Highlight) */
-.liquid-specular {
-  position: relative;
-  overflow: hidden;
-}
-
-.liquid-specular::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 45%;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.08) 65%, transparent 100%);
-  pointer-events: none;
-  border-radius: inherit;
-  z-index: 1;
-}
-
-/* 12. 微动感液态交互按钮 */
-.liquid-btn {
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.liquid-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 18px -2px rgba(233, 104, 146, 0.18);
-}
-.liquid-btn:active {
-  transform: scale(0.96);
-}
-
-/* 13. 选中态流体毛边高光卡片 (Feathered Rim Highlight Card) */
-.liquid-card-selected {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 240, 248, 0.78) 100%) !important;
-  backdrop-filter: blur(16px) saturate(190%) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(190%) !important;
-  border: 1.5px solid rgba(244, 114, 182, 0.65) !important;
-  border-radius: 1.75rem !important;
-  box-shadow: 
-    0 0 0 1.5px rgba(255, 255, 255, 0.95),
-    0 0 28px 6px rgba(233, 104, 146, 0.18),
-    inset 0 2px 2px 0 #ffffff,
-    0 16px 44px -4px rgba(233, 104, 146, 0.14) !important;
-}
-
-/* 14. 超感毛边玻璃容器 (Feathered Edge Frosted Glass) */
-.frosted-feather-glass {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.76) 0%, rgba(255, 246, 251, 0.62) 100%);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.88);
-  border-radius: 1.5rem;
-  box-shadow: 
-    0 0 0 1px rgba(255, 255, 255, 0.75),
-    0 0 20px 2px rgba(255, 255, 255, 0.7),
-    inset 0 1.5px 2px 0 rgba(255, 255, 255, 0.98),
-    0 12px 32px -4px rgba(233, 104, 146, 0.08);
-}
-
-/* 15. 流体微晶胶囊标签 (Liquid Feather Chip - 零开销高光胶囊) */
-.liquid-chip {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 245, 250, 0.82) 100%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.95) !important;
-  box-shadow: 
-    0 0 0 1px rgba(255, 255, 255, 0.75),
-    inset 0 1px 1.5px rgba(255, 255, 255, 1),
-    0 2px 8px rgba(233, 104, 146, 0.06);
-  border-radius: 9999px;
-  font-weight: 700;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.liquid-chip:hover {
-  background: rgba(255, 255, 255, 0.98) !important;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.95), 0 0 14px rgba(233, 104, 146, 0.18);
-  transform: translateY(-0.5px);
-}
-.liquid-chip:active {
-  transform: scale(0.96);
-}
-
-/* 16. 流体拟物输入控件 (Liquid Input - 高响应无卡顿输入框) */
-.liquid-input {
-  background: rgba(255, 255, 255, 0.92) !important;
-  border: 1px solid rgba(255, 255, 255, 0.95) !important;
-  box-shadow: 
-    inset 0 1.5px 3px 0 rgba(15, 23, 42, 0.03),
-    inset 0 -0.5px 1px 0 rgba(255, 255, 255, 0.95),
-    0 3px 10px rgba(233, 104, 146, 0.05) !important;
-  border-radius: 1.25rem !important;
-  color: #1f2937 !important;
-  font-weight: 500;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
-}
-.liquid-input:focus {
-  background: rgba(255, 255, 255, 0.98) !important;
-  border-color: rgba(244, 63, 142, 0.55) !important;
-  box-shadow: 
-    0 0 0 3px rgba(233, 104, 146, 0.16),
-    inset 0 1px 2px 0 rgba(15, 23, 42, 0.02) !important;
 }
 

@@ -32,7 +32,10 @@ import {
   Award,
   Headphones,
   Scroll,
+  Eye,
+  Dumbbell,
 } from 'lucide-react';
+import { SegmentedTabs, SegmentedTabItem } from '../components/SegmentedTabs';
 
 export const FemboyTrainingView: React.FC = () => {
   const engine = FemboyTrainingEngine.getInstance();
@@ -122,101 +125,30 @@ export const FemboyTrainingView: React.FC = () => {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  const femboySubTabs: SegmentedTabItem<typeof activeSubTab>[] = [
+    { id: 'lab', label: '芭比实验室', icon: Sparkles },
+    { id: 'pavlov', label: '神经刻印', icon: Brain },
+    { id: 'yolo', label: '全视之眼', icon: Eye },
+    { id: 'asmr', label: '催眠ASMR', icon: Headphones },
+    { id: 'dungeon', label: '地牢', icon: Castle },
+    { id: 'camp', label: '特训营', icon: Dumbbell },
+    { id: 'wardrobe', label: '衣橱日记', icon: Shirt },
+    { id: 'contract', label: '终身契约', icon: Scroll },
+  ];
+
   const getMentor = (id: string) => {
     return PRESET_PERSONAS.find((p) => p.id === id) || PRESET_PERSONAS[0];
   };
 
   return (
     <div className="max-w-md mx-auto px-3.5 py-4 pb-10 space-y-4">
-      {/* ================= 芭比蜕变实验室与进阶功能导航 (现代苹果流体毛边毛玻璃) ================= */}
-      <div className="frosted-feather-glass sticky top-0 z-20 flex gap-1.5 p-1.5 rounded-2xl overflow-x-auto scrollbar-none shadow-sm">
-        <button
-          onClick={() => setActiveSubTab('lab')}
-          className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1 ${
-            activeSubTab === 'lab'
-              ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm font-black'
-              : 'text-slate-600 hover:text-pink-600 hover:bg-white/60'
-          }`}
-        >
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>芭比实验室</span>
-        </button>
-        <button
-          onClick={() => setActiveSubTab('pavlov')}
-          className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1 ${
-            activeSubTab === 'pavlov'
-              ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm font-black'
-              : 'text-slate-600 hover:text-pink-600 hover:bg-white/60'
-          }`}
-        >
-          <Brain className="w-3.5 h-3.5" />
-          <span>神经刻印</span>
-        </button>
-        <button
-          onClick={() => setActiveSubTab('yolo')}
-          className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1 ${
-            activeSubTab === 'yolo'
-              ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm font-black'
-              : 'text-slate-600 hover:text-pink-600 hover:bg-white/60'
-          }`}
-        >
-          <span className="text-sm">👁️</span>
-          <span>全视之眼</span>
-        </button>
-        <button
-          onClick={() => setActiveSubTab('asmr')}
-          className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1 ${
-            activeSubTab === 'asmr'
-              ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm font-black'
-              : 'text-slate-600 hover:text-pink-600 hover:bg-white/60'
-          }`}
-        >
-          <Headphones className="w-3.5 h-3.5" />
-          <span>催眠ASMR</span>
-        </button>
-        <button
-          onClick={() => setActiveSubTab('dungeon')}
-          className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1 ${
-            activeSubTab === 'dungeon'
-              ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm font-black'
-              : 'text-slate-600 hover:text-pink-600 hover:bg-white/60'
-          }`}
-        >
-          <Castle className="w-3.5 h-3.5" />
-          <span>地牢</span>
-        </button>
-        <button
-          onClick={() => setActiveSubTab('camp')}
-          className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1 ${
-            activeSubTab === 'camp'
-              ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm font-black'
-              : 'text-slate-600 hover:text-pink-600 hover:bg-white/60'
-          }`}
-        >
-          <span>🏋️ 特训营</span>
-        </button>
-        <button
-          onClick={() => setActiveSubTab('wardrobe')}
-          className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1 ${
-            activeSubTab === 'wardrobe'
-              ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm font-black'
-              : 'text-slate-600 hover:text-pink-600 hover:bg-white/60'
-          }`}
-        >
-          <Shirt className="w-3.5 h-3.5" />
-          <span>衣橱日记</span>
-        </button>
-        <button
-          onClick={() => setActiveSubTab('contract')}
-          className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-1 ${
-            activeSubTab === 'contract'
-              ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm font-black'
-              : 'text-slate-600 hover:text-pink-600 hover:bg-white/60'
-          }`}
-        >
-          <Scroll className="w-3.5 h-3.5" />
-          <span>终身契约</span>
-        </button>
+      <div className="sticky top-0 z-20 -mx-3.5 -mt-4 subnav-bar px-3 py-2">
+        <SegmentedTabs
+          ariaLabel="重塑分区"
+          items={femboySubTabs}
+          value={activeSubTab}
+          onChange={setActiveSubTab}
+        />
       </div>
 
       {/* ================= 视图按 Tab 条件渲染 ================= */}
