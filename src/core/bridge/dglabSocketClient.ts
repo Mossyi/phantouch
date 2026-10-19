@@ -20,6 +20,9 @@ export class DGLabSocketClient {
   private status: DGLabSocketStatus = 'disconnected';
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private callbacks: DGLabSocketCallbacks = {};
+  private onServerAssignedId: ((assignedId: string) => void) | null = null;
+  /** 等待服务端下发 clientId 的时长；超时则沿用本地生成的 ID（兼容按路径识别的自建服务端）。 */
+  static ID_ASSIGN_WAIT_MS = 1500;
 
   constructor(callbacks?: DGLabSocketCallbacks) {
     if (callbacks) this.callbacks = callbacks;
@@ -84,16 +87,31 @@ export class DGLabSocketClient {
         const fullWsUrl = `${this.wsUrl}/${this.clientId}`;
         this.ws = new WebSocket(fullWsUrl);
 
-        this.ws.onopen = () => {
-          this.updateStatus('waiting_pair', '已连接服务器，等待 DG-LAB App 扫码绑定...');
-          this.startHeartbeat();
-          if (!isSettled) {
+        const currentWs = this.ws;
+        // 官方服务端会忽略连接路径，连上后自己分配 clientId 并通过
+        // { type: 'bind', message: 'targetId' } 告知；二维码和后续所有消息都必须用这个 ID，
+        // 否则 APP 扫码后绑定的是一个不存在的终端（401），所有指令也会被判为非法来源。
+        // 少数自建服务端沿用路径里的 ID 且不下发分配消息，因此等待片刻后回退到本地 ID。
+        let assignTimer: ReturnType<typeof setTimeout> | null = null;
+        const settleWithQr = () => {
+          if (assignTimer) clearTimeout(assignTimer);
+          assignTimer = null;
+          if (!isSettled && this.ws === currentWs) {
             isSettled = true;
             resolve(this.getPairingQrUrl());
           }
         };
+        this.onServerAssignedId = (assignedId: string) => {
+          if (this.ws !== currentWs || isSettled) return;
+          this.clientId = assignedId;
+          settleWithQr();
+        };
 
-        const currentWs = this.ws;
+        this.ws.onopen = () => {
+          this.updateStatus('waiting_pair', '已连接服务器，等待 DG-LAB App 扫码绑定...');
+          this.startHeartbeat();
+          assignTimer = setTimeout(settleWithQr, DGLabSocketClient.ID_ASSIGN_WAIT_MS);
+        };
 
         this.ws.onmessage = async (event) => {
           if (this.ws !== currentWs) return;
@@ -151,6 +169,9 @@ export class DGLabSocketClient {
 
     switch (parsed.type) {
       case 'bind':
+        if (parsed.message === 'targetId' && parsed.clientId && !this.targetId) {
+          this.onServerAssignedId?.(parsed.clientId);
+        }
         if (parsed.message === '200') {
           // 配对成功: 服务端返回的消息中，对端的 clientId 为对方 App ID，而 targetId 为我方 ID
           const peerId = (parsed.clientId && parsed.clientId !== this.clientId) 
@@ -236,7 +257,8 @@ export class DGLabSocketClient {
   }
 
   /**
-   * 下发波形脉冲队列到 DG-LAB App (以 16 字符 HEX 帧列表)
+   * 下发波形脉冲队列到 DG-LAB App (以 16 字符 HEX 帧列表)。
+   * 服务端会在 timeSec 秒内每秒重复推送一次同一组帧，持续输出应由调用方按 1 秒分块循环下发。
    */
   async sendPulse(channel: 'A' | 'B' | 'AB', pulses: string[], timeSec: number = 5): Promise<void> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.targetId) return;
@@ -276,6 +298,7 @@ export class DGLabSocketClient {
   }
 
   disconnect() {
+    this.onServerAssignedId = null;
     this.stopHeartbeat();
     if (this.ws) {
       try {

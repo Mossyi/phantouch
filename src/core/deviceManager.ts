@@ -117,6 +117,18 @@ export class DeviceManager {
   private coyoteStreamTimer: any = null;
   private coyoteStreamStep: number = 0;
   private isCoyoteStreamingBusy: boolean = false;
+  /**
+   * DG-LAB 扫码模式的波形推流。郊狼只在 APP 波形队列里有数据时放电：
+   * 只下发强度（控制滑块、AI 的 set_ems_strength、视觉惩罚等）设备毫无输出。
+   * 这里与 BLE 推流一致，按通道每次补 1 秒波形，并把 APP 端缓冲控制在约 1.6 秒内，
+   * 停止时配合 clear 指令即可立刻断流。
+   */
+  private dglabStreamTimer: ReturnType<typeof setInterval> | null = null;
+  private dglabStreamStep: Record<'A' | 'B', number> = { A: 0, B: 0 };
+  private dglabQueuedUntil: Record<'A' | 'B', number> = { A: 0, B: 0 };
+  private isDglabStreamingBusy = false;
+  private static readonly DGLAB_CHUNK_FRAMES = 10;
+  private static readonly DGLAB_REFILL_AHEAD_MS = 600;
 
   private currentMode: ConnectionMode = 'simulator';
   private safetyConfig: SafetyConfig = {
@@ -536,7 +548,7 @@ export class DeviceManager {
     const packet = ver === 'coyote_v2'
       ? CoyoteV2Protocol.buildStopPacket()
       : ver === 'coyote_v3'
-        ? CoyoteV3Protocol.buildStopPacket(0)
+        ? CoyoteV3Protocol.buildStopPacket(this.nextCoyoteSeq())
         : ver === 'v1'
           ? YCYEMSProtocol.buildV1StopPacket()
           : YCYEMSProtocol.buildStopPacket();
@@ -818,9 +830,11 @@ export class DeviceManager {
         const packet = CoyoteV3Protocol.buildB0Packet({
           strengthA: strA,
           strengthB: strB,
-          modeA: 3, // 绝对设置：每帧都重新确认强度值，确保与硬件物理按键同步
+          modeA: 3, // 绝对设置：每帧都重新确认强度值，丢包后也能自愈
           modeB: 3,
-          seq: this.nextCoyoteSeq(),
+          // 序列号 0：推流帧不请求 B1 回报。官方协议要求带序列号改强度后须等对应 B1，
+          // 每 100ms 一个新序列号会让迟到的旧 B1 把强度来回改写（见 handleBleNotify）。
+          seq: 0,
           waveFreqA: strA > 0 ? sliceA.freq : [10, 10, 10, 10],
           waveIntensityA: strA > 0 ? sliceA.intensity : [0, 0, 0, 0],
           waveFreqB: strB > 0 ? sliceB.freq : [10, 10, 10, 10],
@@ -832,6 +846,63 @@ export class DeviceManager {
       console.warn('Coyote 波形流式推送异常:', err);
     } finally {
       this.isCoyoteStreamingBusy = false;
+    }
+  }
+
+  private startDglabStreamLoop() {
+    if (this.dglabStreamTimer) return;
+    this.dglabStreamTimer = setInterval(() => {
+      void this.tickDglabStream();
+    }, 250);
+  }
+
+  private stopDglabStreamLoop() {
+    if (this.dglabStreamTimer) {
+      clearInterval(this.dglabStreamTimer);
+      this.dglabStreamTimer = null;
+    }
+    this.resetDglabChannel('A');
+    this.resetDglabChannel('B');
+    this.isDglabStreamingBusy = false;
+  }
+
+  private resetDglabChannel(channel: 'A' | 'B') {
+    this.dglabStreamStep[channel] = 0;
+    this.dglabQueuedUntil[channel] = 0;
+  }
+
+  private async tickDglabStream() {
+    if (this.safetyConfig.emergencyLock || this.currentMode !== 'dglab' || !this.dglabClient.isConnected()) {
+      this.stopDglabStreamLoop();
+      return;
+    }
+    if (this.currentState.ems.strengthA <= 0 && this.currentState.ems.strengthB <= 0) {
+      this.stopDglabStreamLoop();
+      return;
+    }
+    if (this.isDglabStreamingBusy) return;
+    this.isDglabStreamingBusy = true;
+    try {
+      const now = Date.now();
+      for (const channel of ['A', 'B'] as const) {
+        const strength = channel === 'A' ? this.currentState.ems.strengthA : this.currentState.ems.strengthB;
+        if (strength <= 0) continue;
+        if (this.dglabQueuedUntil[channel] - now > DeviceManager.DGLAB_REFILL_AHEAD_MS) continue;
+        const wave = (channel === 'A' ? this.currentState.ems.activeWaveA : this.currentState.ems.activeWaveB) || 'breathe';
+        const start = this.dglabStreamStep[channel];
+        const frames = Array.from(
+          { length: DeviceManager.DGLAB_CHUNK_FRAMES },
+          (_, offset) => CoyoteWaveformConverter.getDGLabFrame(wave, start + offset),
+        );
+        this.dglabStreamStep[channel] = start + DeviceManager.DGLAB_CHUNK_FRAMES;
+        this.dglabQueuedUntil[channel] = Math.max(now, this.dglabQueuedUntil[channel]) + DeviceManager.DGLAB_CHUNK_FRAMES * 100;
+        // time = 1：服务端只推送一次，避免同一块波形被每秒重复入队。
+        await this.dglabClient.sendPulse(channel, frames, 1);
+      }
+    } catch (err) {
+      console.warn('DG-LAB 波形推流异常:', err);
+    } finally {
+      this.isDglabStreamingBusy = false;
     }
   }
 
@@ -1043,6 +1114,20 @@ export class DeviceManager {
       } else if (emsVer === 'coyote_v3') {
         const parsed = CoyoteV3Protocol.parseNotifyPacket(bytes);
         if (parsed.type === 'strength') {
+          // 迟到的旧 B1（序列号非 0 且不是最近一次改强度指令）描述的是已被覆盖的强度。
+          // 若照单全收，推流帧会把它重新发给设备，输出在新旧强度之间来回跳动，
+          // 停止后立刻重新开始时还可能被旧的 0 回报整个关掉。这类回报只做超限检查，不回写状态。
+          if (parsed.seq !== undefined && parsed.seq !== 0 && parsed.seq !== this.coyoteSeq) {
+            const staleOverA = (parsed.strengthA ?? 0) > this.safetyConfig.maxEmsStrengthA
+              && !this.isEmsStaleReport('A', parsed.strengthA ?? 0);
+            const staleOverB = (parsed.strengthB ?? 0) > this.safetyConfig.maxEmsStrengthB
+              && !this.isEmsStaleReport('B', parsed.strengthB ?? 0);
+            if ((staleOverA || staleOverB) && !this.safetyConfig.emergencyLock) {
+              this.currentState.connectionStatus = 'error';
+              void this.latchEmergencyStop();
+            }
+            return;
+          }
           // 安全限制：V3 回报也必须经过上限校验与急停锁逻辑 (与 YCY/V2 分支一致)
           if (parsed.strengthA !== undefined) {
             if (parsed.strengthA > 0) {
@@ -1261,8 +1346,20 @@ export class DeviceManager {
       try {
         if (channel === 'A' || channel === 'AB') await this.dglabClient.setStrength(1, valA);
         if (channel === 'B' || channel === 'AB') await this.dglabClient.setStrength(2, valB);
-        if (valA <= 0 && (channel === 'A' || channel === 'AB')) await this.dglabClient.clearWave(1);
-        if (valB <= 0 && (channel === 'B' || channel === 'AB')) await this.dglabClient.clearWave(2);
+        if (valA <= 0 && (channel === 'A' || channel === 'AB')) {
+          await this.dglabClient.clearWave(1);
+          this.resetDglabChannel('A');
+        }
+        if (valB <= 0 && (channel === 'B' || channel === 'AB')) {
+          await this.dglabClient.clearWave(2);
+          this.resetDglabChannel('B');
+        }
+        if (this.currentState.ems.strengthA > 0 || this.currentState.ems.strengthB > 0) {
+          this.startDglabStreamLoop();
+          await this.tickDglabStream();
+        } else {
+          this.stopDglabStreamLoop();
+        }
       } catch (e) {
         await this.latchEmergencyStop();
         throw new Error(`DG-LAB Socket 数据下发失败: ${e instanceof Error ? e.message : String(e)}`);
@@ -1397,39 +1494,31 @@ export class DeviceManager {
         throw new Error(`BLE 波形下发失败: ${e instanceof Error ? e.message : String(e)}`);
       }
     } else if (this.currentMode === 'dglab') {
+      // 校验通道安全上限：若目标通道上限为 0，拒绝输出
+      const limitA = this.safetyConfig.maxEmsStrengthA;
+      const limitB = this.safetyConfig.maxEmsStrengthB;
+      if ((channel === 'A' && limitA <= 0) || (channel === 'B' && limitB <= 0) || (channel === 'AB' && limitA <= 0 && limitB <= 0)) {
+        const message = channel === 'AB' ? '双通道安全上限均为 0，已拒绝放电' : `通道 ${channel} 安全上限为 0，已拒绝放电`;
+        this.reportOutputRefusal('no_usable_channel', message);
+        return message;
+      }
       try {
-        // 校验通道安全上限：若目标通道上限为 0，拒绝输出
-        const limitA = this.safetyConfig.maxEmsStrengthA;
-        const limitB = this.safetyConfig.maxEmsStrengthB;
-        if (channel === 'A' && limitA <= 0) {
-          const message = '通道 A 安全上限为 0，已拒绝放电';
-          this.reportOutputRefusal('no_usable_channel', message);
-          return message;
+        // 切换波形：清掉 APP 里尚未播放的旧波形，让新波形立即接上（推流循环负责持续补帧）。
+        if (channel === 'A' || channel === 'AB') {
+          await this.dglabClient.clearWave(1);
+          this.resetDglabChannel('A');
         }
-        if (channel === 'B' && limitB <= 0) {
-          const message = '通道 B 安全上限为 0，已拒绝放电';
-          this.reportOutputRefusal('no_usable_channel', message);
-          return message;
+        if (channel === 'B' || channel === 'AB') {
+          await this.dglabClient.clearWave(2);
+          this.resetDglabChannel('B');
         }
-        if (channel === 'AB' && limitA <= 0 && limitB <= 0) {
-          const message = '双通道安全上限均为 0，已拒绝放电';
-          this.reportOutputRefusal('no_usable_channel', message);
-          return message;
+        if (this.currentState.ems.strengthA > 0 || this.currentState.ems.strengthB > 0) {
+          this.startDglabStreamLoop();
+          await this.tickDglabStream();
         }
-
-        const effectiveChannel = (channel === 'AB' && limitA <= 0)
-          ? 'B'
-          : (channel === 'AB' && limitB <= 0)
-            ? 'A'
-            : channel;
-
-        const effectiveDuration = Math.max(1, Math.min(30, durationSec || 5));
-        const pulses = CoyoteWaveformConverter.convertToDGLabPulses(canonicalWaveId, effectiveDuration);
-        if (pulses.length > 0) {
-          await this.dglabClient.sendPulse(effectiveChannel, pulses, effectiveDuration);
-        }
-      } catch (err) {
-        console.warn('DG-LAB 波形下发失败:', err);
+      } catch (error) {
+        await this.latchEmergencyStop();
+        throw new Error(`DG-LAB 波形下发失败: ${error instanceof Error ? error.message : String(error)}`);
       }
     } else if (this.currentMode === 'bridge') {
       try {
@@ -1895,6 +1984,7 @@ export class DeviceManager {
     const stoppedMode = this.currentMode;
     const staleWrites = this.invalidateQueuedHardwareWrites();
     this.stopCoyoteStreamLoop();
+    this.stopDglabStreamLoop();
     this.clearEmsOperations();
     this.clearToyOperations();
     this.clearEnemaOperations();
@@ -1931,7 +2021,7 @@ export class DeviceManager {
           if (ver === 'coyote_v2') {
             attempts.push(this.bleManagers.ems.sendPacket(CoyoteV2Protocol.buildStopPacket()));
           } else if (ver === 'coyote_v3') {
-            attempts.push(this.bleManagers.ems.sendPacket(CoyoteV3Protocol.buildStopPacket(0)));
+            attempts.push(this.bleManagers.ems.sendPacket(CoyoteV3Protocol.buildStopPacket(this.nextCoyoteSeq())));
           } else if (ver === 'v1') {
             attempts.push(this.bleManagers.ems.sendPacket(YCYEMSProtocol.buildV1StopPacket()));
           } else {

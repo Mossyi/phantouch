@@ -676,8 +676,12 @@ export class BLEManager {
       throw new Error('BLE 写入特征不可用，设备可能尚未连接或已断开');
     }
 
-    if (typeof charToWrite.writeValueWithoutResponse === 'function') {
+    // writeValueWithoutResponse 在 Chrome 里总是存在，但特征未声明该属性时会直接拒绝
+    // （郊狼 V2/V3 的写特征都只有 Write），所以必须按特征属性选择写入方式。
+    if (charToWrite.properties?.writeWithoutResponse && typeof charToWrite.writeValueWithoutResponse === 'function') {
       await charToWrite.writeValueWithoutResponse(bytes);
+    } else if (typeof charToWrite.writeValueWithResponse === 'function') {
+      await charToWrite.writeValueWithResponse(bytes);
     } else {
       await charToWrite.writeValue(bytes);
     }

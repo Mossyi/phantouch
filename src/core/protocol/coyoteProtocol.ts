@@ -348,6 +348,22 @@ export class CoyoteV3Protocol {
 
 // ================= Coyote 波形与通用波形转换器 =================
 
+/**
+ * 取波形数据在 [from, to)（周期内的比例位置）区间里的峰值。
+ * 硬件每 100ms（V3 为 25ms）只能接收一个幅度值，若只取区间起点的单个采样，
+ * 比采样间隔更窄的尖峰会被整个跳过 —— 例如「旋风涌动」在 V2 上 40 帧里有 38 帧是 0，几乎感觉不到。
+ */
+function peakInWindow(data: number[], from: number, to: number): number {
+  const start = Math.min(data.length - 1, Math.max(0, Math.floor(from * data.length)));
+  const end = Math.min(data.length, Math.max(start + 1, Math.ceil(to * data.length)));
+  let peak = 0;
+  for (let i = start; i < end; i++) {
+    const value = data[i];
+    if (Number.isFinite(value) && value > peak) peak = value;
+  }
+  return peak;
+}
+
 export class CoyoteWaveformConverter {
   /**
    * 获取指定波形在 step 序号处的 V2 参数 [x, y, z]
@@ -363,9 +379,7 @@ export class CoyoteWaveformConverter {
     const data = wave.data;
     const totalSteps = Math.max(1, Math.round((wave.durationMs || 3000) / 100));
     const stepInCycle = stepIndex % totalSteps;
-    const progress = stepInCycle / totalSteps;
-    const dataIndex = Math.min(data.length - 1, Math.floor(progress * data.length));
-    const amp = Math.max(0, Math.min(100, data[dataIndex] ?? 0));
+    const amp = Math.max(0, Math.min(100, peakInWindow(data, stepInCycle / totalSteps, (stepInCycle + 1) / totalSteps)));
 
     // z 轴为振幅乘数 (0-31)
     const z = Math.max(0, Math.min(31, Math.round((amp / 100) * 31)));
@@ -421,9 +435,9 @@ export class CoyoteWaveformConverter {
     const intensities: number[] = [];
 
     for (let sub = 0; sub < 4; sub++) {
-      const subProgress = (stepInCycle + sub / 4) / totalSteps;
-      const dataIndex = Math.min(data.length - 1, Math.floor(subProgress * data.length));
-      const amp = Math.max(0, Math.min(100, Math.round(data[dataIndex] ?? 0)));
+      const from = (stepInCycle + sub / 4) / totalSteps;
+      const to = (stepInCycle + (sub + 1) / 4) / totalSteps;
+      const amp = Math.max(0, Math.min(100, Math.round(peakInWindow(data, from, to))));
       intensities.push(amp);
     }
 
@@ -442,19 +456,26 @@ export class CoyoteWaveformConverter {
     const frames: string[] = [];
 
     for (let i = 0; i < total100msSteps; i++) {
-      const slice = this.getV3Slice(waveId, i);
-      const hexFreq = slice.freq
-        .map((f) => Math.min(240, Math.max(10, f)).toString(16).padStart(2, '0'))
-        .join('')
-        .toUpperCase();
-      const hexInt = slice.intensity
-        .map((v) => Math.min(100, Math.max(0, v)).toString(16).padStart(2, '0'))
-        .join('')
-        .toUpperCase();
-      frames.push(`${hexFreq}${hexInt}`);
+      frames.push(this.getDGLabFrame(waveId, i));
     }
 
     return frames;
+  }
+
+  /**
+   * 单个 100ms 的 DG-LAB HEX 波形帧（4 字节频率 + 4 字节强度）
+   */
+  static getDGLabFrame(waveId: string, stepIndex: number): string {
+    const slice = this.getV3Slice(waveId, stepIndex);
+    const hexFreq = slice.freq
+      .map((f) => Math.min(240, Math.max(10, f)).toString(16).padStart(2, '0'))
+      .join('')
+      .toUpperCase();
+    const hexInt = slice.intensity
+      .map((v) => Math.min(100, Math.max(0, v)).toString(16).padStart(2, '0'))
+      .join('')
+      .toUpperCase();
+    return `${hexFreq}${hexInt}`;
   }
 }
 
@@ -472,7 +493,10 @@ export class DGLabSocketProtocol {
   }
 
   /**
-   * 构建设置指定通道强度的 WebSocket 消息
+   * 构建「设置指定通道强度」消息（官方前端协议 type: 3）。
+   * 注意：第三方终端发给服务端的消息必须用 type 1/2/3/4/clientMsg，
+   * 由服务端转换成 APP 格式（strength-通道+模式+数值）再转发；
+   * 若直接发 type:'msg'，官方服务端会把它原样退回给发送方，APP 永远收不到。
    * @param channel 1 = A 通道, 2 = B 通道
    * @param strength 0 - 200
    */
@@ -484,17 +508,18 @@ export class DGLabSocketProtocol {
   ): string {
     const bounded = Math.max(0, Math.min(200, Math.round(strength)));
     return JSON.stringify({
-      type: 'msg',
+      type: 3,
       clientId,
       targetId,
       channel,
       strength: bounded,
-      message: `strength-${channel}+2+${bounded}`,
+      message: 'set channel',
     });
   }
 
   /**
-   * 构建相对调整强度的 WebSocket 消息
+   * 构建相对调整强度的消息。官方协议的增减（type 2 / type 1）每次固定 ±1，
+   * 因此这里按 value 生成对应条数的消息；mode 2 等同于设置为指定值。
    * @param mode 0 = 减少, 1 = 增加, 2 = 绝对设为指定值
    */
   static buildAdjustStrengthMessage(
@@ -503,30 +528,37 @@ export class DGLabSocketProtocol {
     channel: 1 | 2,
     mode: 0 | 1 | 2,
     value: number
-  ): string {
+  ): string[] {
     const bounded = Math.max(0, Math.min(200, Math.round(value)));
-    return JSON.stringify({
-      type: 'msg',
+    if (mode === 2) return [this.buildSetStrengthMessage(clientId, targetId, channel, bounded)];
+    const step = JSON.stringify({
+      type: mode === 1 ? 2 : 1,
       clientId,
       targetId,
-      message: `strength-${channel}+${mode}+${bounded}`,
+      channel,
+      message: 'set channel',
     });
+    return Array.from({ length: bounded }, () => step);
   }
 
   /**
-   * 构建清空通道波形队列消息
+   * 构建清空通道波形队列消息（官方前端协议 type: 4）。
+   * 服务端按 channel 字段决定清哪一路（缺省为 A），所以 channel 必须显式携带。
    */
   static buildClearWaveMessage(clientId: string, targetId: string, channel: 1 | 2): string {
     return JSON.stringify({
-      type: 'msg',
+      type: 4,
       clientId,
       targetId,
+      channel,
       message: `clear-${channel}`,
     });
   }
 
   /**
-   * 构建波形下发消息 (HEX 数组格式)
+   * 构建波形下发消息 (HEX 数组格式)。
+   * 服务端会在 timeSec 秒内每秒把同一组波形重复推给 APP 一次，所以 pulses 应只含约 1 秒的数据；
+   * APP 单条消息最多 100 帧，且整条 JSON 超过 1950 字符会被丢弃。
    */
   static buildPulseMessage(
     clientId: string,

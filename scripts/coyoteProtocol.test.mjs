@@ -162,27 +162,33 @@ test('DG-LAB Socket protocol: QR link format and message serialization/parsing',
   const qr = DGLabSocketProtocol.buildBindQrUrl('ws://192.168.1.100:5678', 'client-abc-123');
   assert.equal(qr, 'https://www.dungeon-lab.com/app-download.php#DGLAB-SOCKET#ws://192.168.1.100:5678/client-abc-123');
 
-  // 2. Set strength message
+  // 2. Set strength message：官方前端协议 type 3（type:'msg' 会被官方服务端退回发送方，APP 收不到）
   const strAJson = DGLabSocketProtocol.buildSetStrengthMessage('client-1', 'app-2', 1, 66);
   const strA = JSON.parse(strAJson);
-  assert.equal(strA.type, 'msg');
+  assert.equal(strA.type, 3);
   assert.equal(strA.clientId, 'client-1');
   assert.equal(strA.targetId, 'app-2');
-  assert.equal(strA.message, 'strength-1+2+66');
+  assert.equal(strA.channel, 1);
+  assert.equal(strA.strength, 66);
+  assert.ok(strA.message, '官方服务端要求 message 字段非空');
 
   const strBJson = DGLabSocketProtocol.buildSetStrengthMessage('client-1', 'app-2', 2, 99);
   const strB = JSON.parse(strBJson);
-  assert.equal(strB.message, 'strength-2+2+99');
+  assert.equal(strB.channel, 2);
+  assert.equal(strB.strength, 99);
 
-  // Adjust strength message
-  const adjJson = DGLabSocketProtocol.buildAdjustStrengthMessage('client-1', 'app-2', 1, 1, 5);
-  const adj = JSON.parse(adjJson);
-  assert.equal(adj.message, 'strength-1+1+5');
+  // Adjust strength message：官方增减每条固定 ±1
+  const adj = DGLabSocketProtocol.buildAdjustStrengthMessage('client-1', 'app-2', 1, 1, 5).map((m) => JSON.parse(m));
+  assert.equal(adj.length, 5);
+  assert.ok(adj.every((m) => m.type === 2 && m.channel === 1));
+  const adjSet = DGLabSocketProtocol.buildAdjustStrengthMessage('client-1', 'app-2', 2, 2, 40).map((m) => JSON.parse(m));
+  assert.deepEqual(adjSet.map((m) => [m.type, m.channel, m.strength]), [[3, 2, 40]]);
 
-  // 3. Clear wave message
-  const clrJson = DGLabSocketProtocol.buildClearWaveMessage('client-1', 'app-2', 1);
-  const clr = JSON.parse(clrJson);
-  assert.equal(clr.message, 'clear-1');
+  // 3. Clear wave message：type 4，且必须带 channel（服务端缺省清 A 通道）
+  const clr = JSON.parse(DGLabSocketProtocol.buildClearWaveMessage('client-1', 'app-2', 2));
+  assert.equal(clr.type, 4);
+  assert.equal(clr.channel, 2);
+  assert.equal(clr.message, 'clear-2');
 
   // 4. Message parsing
   const parsedBind = DGLabSocketProtocol.parseMessage(JSON.stringify({
