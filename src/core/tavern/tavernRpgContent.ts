@@ -7,8 +7,36 @@
  * - 美少女梦工场类养成：按天排日程，期满按属性给结局。
  */
 
+import { computeDetailedEnding, type RpgEndingContext } from './tavernRpgEndings';
+
+export * from './tavernRpgWeather';
+export * from './tavernRpgEndings';
+export * from './tavernRpgChains';
+
 export type RpgStatKey = 'obedience' | 'endurance' | 'shame' | 'devotion';
 export type RpgTraineeStats = Record<RpgStatKey, number>;
+
+export type RpgGameMode = 'normal' | 'hardcore' | 'reversal';
+export type RpgEndingRank = 'S' | 'A' | 'B' | 'C';
+
+export interface RpgCheck {
+  stat: RpgStatKey;
+  dc: number;
+}
+
+export interface RpgChoice {
+  text: string;
+  check?: RpgCheck;
+}
+
+export interface RpgEnding {
+  id?: string;
+  day: number;
+  title: string;
+  summary: string;
+  rank?: RpgEndingRank;
+  quote?: string;
+}
 
 export type RpgLocationKind =
   | 'bedroom' | 'home' | 'bath' | 'playroom' | 'shop' | 'work' | 'cafe' | 'outdoor' | 'special';
@@ -187,20 +215,8 @@ export const getTrait = (id: string) => RPG_TRAITS.find((trait) => trait.id === 
 
 // ─── 结局 ──────────────────────────────────────────────────────────────────────
 
-export const computeEnding = (stats: RpgTraineeStats, traits: string[]) => {
-  const stage = stageIndex(stats);
-  const best = [...STAT_KEYS].sort((a, b) => effectiveStat(b, stats[b]) - effectiveStat(a, stats[a]))[0];
-  if (stage >= 4) return { title: '完全托付', summary: '你已经把自己完全交给了调教者，契约更像是一句誓言。' };
-  if (stage <= 1) return { title: '未完成的契约', summary: '这段时间还不够，很多规矩还没学会。也许需要再来一次。' };
-  if (traits.includes('stubborn')) return { title: '难驯的那一个', summary: '你始终保留着一点倔强，而调教者似乎也乐在其中。' };
-  const byStat: Record<RpgStatKey, { title: string; summary: string }> = {
-    obedience: { title: '模范学徒', summary: '指令一出口你就照做，规矩已经刻进了习惯里。' },
-    endurance: { title: '坚韧的伙伴', summary: '再严格的课程你都撑了下来，调教者对你刮目相看。' },
-    shame: { title: '放下了矜持', summary: '曾经让你面红耳赤的事，现在已经可以坦然面对。' },
-    devotion: { title: '离不开的人', summary: '比起规矩，你更在意的是调教者本人。' },
-  };
-  return byStat[best];
-};
+export const computeEnding = (stats: RpgTraineeStats, traits: string[] = [], context?: RpgEndingContext) =>
+  computeDetailedEnding(stats, traits, context);
 
 // ─── 模板 ──────────────────────────────────────────────────────────────────────
 

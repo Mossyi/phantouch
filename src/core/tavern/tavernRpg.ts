@@ -41,6 +41,15 @@ import {
   type RpgTemplate,
   type RpgTraineeStats,
   type TemplateLocation,
+  RPG_WEATHER_META,
+  type RpgCheck,
+  type RpgChoice,
+  type RpgEnding,
+  findAvailableChainStep,
+  normalizeWeather,
+  rollWeather,
+  type RpgGameMode,
+  type RpgWeatherKey,
 } from './tavernRpgContent';
 
 export * from './tavernRpgContent';
@@ -93,15 +102,6 @@ export interface RpgRule {
   by: 'user' | 'trainer' | 'template';
 }
 
-export interface RpgCheck {
-  stat: RpgStatKey;
-  dc: number;
-}
-
-export interface RpgChoice {
-  text: string;
-  check?: RpgCheck;
-}
 
 export interface RpgLogEntry {
   at: number;
@@ -156,11 +156,6 @@ export interface RpgDailyReport {
   planTotal: number;
 }
 
-export interface RpgEnding {
-  day: number;
-  title: string;
-  summary: string;
-}
 
 export interface RpgCore {
   version: 4;
@@ -205,6 +200,14 @@ export interface RpgCore {
   today: RpgDayTally;
   reports: RpgDailyReport[];
   ending: RpgEnding | null;
+  /** 今日天气：clear / rain / snow / fog */
+  weather: RpgWeatherKey;
+  /** 奇遇支线进度：chainId -> step */
+  eventChains: Record<string, number>;
+  /** 游戏模式：普通 / 硬核 / 身份反转 */
+  gameMode: 'normal' | 'hardcore' | 'reversal';
+  /** 累计续约次数 */
+  renewCount: number;
   /** 需要 AI 在下一轮回应的剧情事件（阶段提升、获得特质、期满……），回复后清空 */
   pendingEvents: string[];
   choices: RpgChoice[];
@@ -575,6 +578,10 @@ const freshCore = () => {
     plan: [] as RpgPlanSlot[],
     reports: [] as RpgDailyReport[],
     ending: null,
+    weather: 'clear' as RpgWeatherKey,
+    eventChains: {} as Record<string, number>,
+    gameMode: 'normal' as const,
+    renewCount: 0,
     pendingEvents: [] as string[],
     choices: [] as RpgChoice[],
     turn: 0,
@@ -583,34 +590,56 @@ const freshCore = () => {
   };
 };
 
+export interface RpgCustomConfig {
+  worldName?: string;
+  premise?: string;
+  startName?: string;
+  dayLimit?: number;
+  gameMode?: 'normal' | 'hardcore' | 'reversal';
+  inheritedTraits?: string[];
+  inheritedPoints?: number;
+}
+
 /** 从模板开局：内置模板和 AI 生成的世界都走这里 */
 export const createRpgStateFromTemplate = (
   template: RpgTemplate,
   names: { char: string; user: string },
   extras: { courses?: RpgCourse[]; events?: RpgLocationEvent[] } = {},
+  custom?: RpgCustomConfig
 ): TavernRpgState => {
   const common = freshCore();
   const customCourses = extras.courses ?? [];
   const idByKey = new Map(template.locations.map((loc) => [loc.key, `${template.id}_${loc.key}`]));
   const homeId = idByKey.get(template.home) ?? `${template.id}_${template.locations[0].key}`;
+  const gameMode = custom?.gameMode === 'hardcore' || custom?.gameMode === 'reversal' ? custom.gameMode : 'normal';
+  const stamina = gameMode === 'hardcore' ? 80 : 100;
+  const inheritedTraits = Array.isArray(custom?.inheritedTraits) ? custom.inheritedTraits.filter((id) => getTrait(id)) : [];
+  const startPoints = (template.points ?? 20) + Math.max(0, toInt(custom?.inheritedPoints, 0));
+  const worldName = cleanText(custom?.worldName, 16) || template.name;
+  const premise = cleanText(custom?.premise, 400) || expandNames(template.premise, names);
+  const dayLimit = custom?.dayLimit !== undefined ? clamp(toInt(custom.dayLimit, template.dayLimit), 0, 3650) : template.dayLimit;
+
   const state = revealAround<TavernRpgState>({
     ...common,
     customCourses,
     customEvents: extras.events ?? [],
     templateId: template.id,
-    worldName: template.name,
-    premise: expandNames(template.premise, names),
+    worldName,
+    premise,
+    gameMode,
+    stamina,
+    traits: inheritedTraits,
     locations: template.locations.map((loc) => makeLocation(idByKey.get(loc.key)!, loc, names)),
     edges: template.edges.map(([a, b]) => [idByKey.get(a)!, idByKey.get(b)!] as [string, string]),
     currentId: homeId,
     homeId,
-    points: template.points,
+    points: startPoints,
     rules: template.rules.map((text) => ({ text: expandNames(text, names), violations: 0, by: 'template' as const })),
     inventory: template.inventory.map((item) => ({ ...item })),
     quests: template.goals.map(goalQuest),
-    dayLimit: template.dayLimit,
-    today: freshTally(common.trainee, template.points),
-    log: [{ at: Date.now(), text: `开始：${template.name}`, tone: 'info' }],
+    dayLimit,
+    today: freshTally(common.trainee, startPoints),
+    log: [{ at: Date.now(), text: `开始：${worldName}${gameMode !== 'normal' ? `（${gameMode === 'hardcore' ? '硬核模式' : '身份反转模式'}）` : ''}`, tone: 'info' }],
   }, homeId);
   return { ...state, plan: buildDailyPlan(state) };
 };
@@ -618,20 +647,31 @@ export const createRpgStateFromTemplate = (
 export const createRpgState = (
   templateId: string,
   names: { char: string; user: string },
-  custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number },
+  custom?: RpgCustomConfig
 ): TavernRpgState => {
   const template = RPG_TEMPLATES.find((item) => item.id === templateId);
-  if (template) return createRpgStateFromTemplate(template, names);
+  if (template) return createRpgStateFromTemplate(template, names, {}, custom);
   const common = freshCore();
   const homeId = newId('loc');
   const shopId = newId('loc');
   const roomId = newId('loc');
   const homeName = cleanText(custom?.startName, 12) || '住处';
+  const gameMode = custom?.gameMode === 'hardcore' || custom?.gameMode === 'reversal' ? custom.gameMode : 'normal';
+  const stamina = gameMode === 'hardcore' ? 80 : 100;
+  const inheritedTraits = Array.isArray(custom?.inheritedTraits) ? custom.inheritedTraits.filter((id) => getTrait(id)) : [];
+  const startPoints = 20 + Math.max(0, toInt(custom?.inheritedPoints, 0));
+  const worldName = cleanText(custom?.worldName, 16) || '训练日常';
+  const premise = cleanText(custom?.premise, 400) || `${names.user || '你'}自愿接受${names.char || '调教者'}的训练，每天的安排由${names.char || '调教者'}决定。`;
+  const dayLimit = clamp(toInt(custom?.dayLimit, 0), 0, 3650);
+
   const state = revealAround<TavernRpgState>({
     ...common,
     templateId: 'custom',
-    worldName: cleanText(custom?.worldName, 16) || '训练日常',
-    premise: cleanText(custom?.premise, 400) || `${names.user || '你'}自愿接受${names.char || '调教者'}的训练，每天的安排由${names.char || '调教者'}决定。`,
+    worldName,
+    premise,
+    gameMode,
+    stamina,
+    traits: inheritedTraits,
     locations: [
       makeLocation(homeId, { name: homeName, kind: 'bedroom', x: 0, y: 0, description: '可以在这里休息到第二天。', services: ['rest'] }, names),
       makeLocation(roomId, { name: '训练室', kind: 'playroom', x: 0, y: -1, description: '进行课程的地方。' }, names),
@@ -640,13 +680,13 @@ export const createRpgState = (
     edges: [[homeId, shopId], [homeId, roomId]],
     currentId: homeId,
     homeId,
-    points: 20,
+    points: startPoints,
     rules: [],
     inventory: [],
     quests: [goalQuest({ title: '学会规矩', stat: 'obedience', op: 'gte', value: 40, reward: 40 }), goalQuest({ title: '交出信任', stat: 'devotion', op: 'gte', value: 50, reward: 60 })],
-    dayLimit: clamp(toInt(custom?.dayLimit, 0), 0, 365),
-    today: freshTally(common.trainee, 20),
-    log: [{ at: Date.now(), text: `开始：${homeName}`, tone: 'info' }],
+    dayLimit,
+    today: freshTally(common.trainee, startPoints),
+    log: [{ at: Date.now(), text: `开始：${homeName}${gameMode !== 'normal' ? `（${gameMode === 'hardcore' ? '硬核模式' : '身份反转模式'}）` : ''}`, tone: 'info' }],
   }, homeId);
   return { ...state, plan: buildDailyPlan(state) };
 };
@@ -712,11 +752,58 @@ export const allLocationEvents = (state: RpgCore): RpgLocationEvent[] => [...RPG
 export const rollLocationEvent = (state: TavernRpgState, random: () => number = Math.random): { state: TavernRpgState; event: RpgLocationEvent | null } => {
   const here = getLocation(state, state.currentId);
   if (!here || state.eventDays?.[here.id] === state.day) return { state, event: null };
+
+    // 1. 必须先通过基础事件概率
   if (random() >= EVENT_CHANCE) return { state, event: null };
   const candidates = allLocationEvents(state).filter((event) => event.kinds.includes(here.kind)
     && (!event.periods?.length || event.periods.includes(state.period))
     && !(state.eventsSeen?.[event.id] !== undefined && state.day - state.eventsSeen[event.id] < EVENT_COOLDOWN_DAYS));
   if (!candidates.length) return { state, event: null };
+
+  // 2. 检查是否有支线奇遇事件链
+  const chainStep = findAvailableChainStep(
+    here.kind,
+    state.weather ?? 'clear',
+    state.eventChains ?? {},
+    state.trainee,
+    state.stress,
+    state.today?.violations ?? 0,
+    state.day
+  );
+  if (chainStep && random() < 0.6) {
+    const choices: RpgChoice[] = chainStep.choices.map((choice) => ({
+      text: choice.text,
+      check: choice.check ? { ...choice.check } : undefined,
+    }));
+    const nextChains = { ...(state.eventChains ?? {}), [chainStep.chainId]: chainStep.nextStep };
+    let nextTrainee = { ...state.trainee };
+    if (chainStep.gain) {
+      for (const [k, v] of Object.entries(chainStep.gain)) {
+        const key = k as RpgStatKey;
+        if (v) nextTrainee[key] = clamp(nextTrainee[key] + v, 0, 100);
+      }
+    }
+    const nextStress = clamp(state.stress + (chainStep.stressDelta ?? 0), 0, 100);
+    const next: TavernRpgState = {
+      ...state,
+      trainee: nextTrainee,
+      stress: nextStress,
+      eventChains: nextChains,
+      eventDays: { ...(state.eventDays ?? {}), [here.id]: state.day },
+      eventChoices: choices,
+      pendingEvents: [...state.pendingEvents, `奇遇支线「${chainStep.title}」：${chainStep.text}请据此展开这一幕，并在 choices 里原样给出这些回应：${choices.map((choice) => choice.text).join(' / ')}。`.slice(-6)],
+    };
+    const syntheticEvent: RpgLocationEvent = {
+      id: `${chainStep.chainId}_${chainStep.step}`,
+      title: chainStep.title,
+      text: chainStep.text,
+      kinds: chainStep.kinds,
+      choices: chainStep.choices,
+    };
+    return { state: appendRpgLog(next, `奇遇支线：${chainStep.title}`, 'info'), event: syntheticEvent };
+  }
+
+  // 3. 普通地点事件
   const event = candidates[Math.min(candidates.length - 1, Math.floor(random() * candidates.length))];
   const choices: RpgChoice[] = event.choices.map((choice) => ({ text: choice.text, check: choice.check ? { ...choice.check } : undefined }));
   const next: TavernRpgState = {
@@ -855,9 +942,15 @@ export const doWork = (state: TavernRpgState, random: () => number = Math.random
   const here = getLocation(state, state.currentId);
   if (!here?.services.includes('work') || here.pay <= 0) return { state, error: '这里没有差事可做。' };
   if (!isLocationOpen(here, state.period) || state.period >= 3) return { state, error: '这个时段不用做差事了，先去休息吧。' };
+  if (state.weather === 'rain' && here.kind === 'outdoor') {
+    return { state, error: '暴雨倾盆，户外差事已暂停，请在室内休息或做室内差事。' };
+  }
   if (state.stamina < WORK_STAMINA_COST) return { state, error: '体力不够了，先休息。' };
-  const next = afterTimeAdvance(appendRpgLog({ ...state, points: state.points + here.pay, stamina: state.stamina - WORK_STAMINA_COST, period: state.period + 1, timeLocked: true }, `在${here.name}做差事（+${here.pay} 积分）`, 'good'), random);
-  return { state: next, message: `🧭 差事：在${here.name}忙了一个时段（体力 -${WORK_STAMINA_COST}），等你检查，做好了能得 ${here.pay} 积分。现在是${RPG_PERIOD_LABELS[next.period]}` };
+  const bonusMultiplier = state.weather === 'clear' ? 1.2 : 1;
+  const pay = Math.ceil(here.pay * bonusMultiplier);
+  const bonusNote = state.weather === 'clear' ? '（晴朗收益 +20%）' : '';
+  const next = afterTimeAdvance(appendRpgLog({ ...state, points: state.points + pay, stamina: state.stamina - WORK_STAMINA_COST, period: state.period + 1, timeLocked: true }, `在${here.name}做差事${bonusNote}（+${pay} 积分）`, 'good'), random);
+  return { state: next, message: `🧭 差事：在${here.name}忙了一个时段（体力 -${WORK_STAMINA_COST}）${bonusNote}，等你检查，做好了能得 ${pay} 积分。现在是${RPG_PERIOD_LABELS[next.period]}` };
 };
 
 /** 进行一门课程：系统掷骰并结算所有数值，AI 只描写过程和反应 */
@@ -899,9 +992,17 @@ export const runCourse = (
     trainee[key] = clamp(before + delta, 0, 100);
     if (trainee[key] !== before) changes.push(`${RPG_STAT_LABELS[key]} ${formatSigned(trainee[key] - before)}`);
   }
+  // 暴雨天气室内居所/训练室温存效果加深（依恋额外 +1）
+  if (state.weather === 'rain' && success && (course.kinds.includes('home') || course.kinds.includes('playroom'))) {
+    const beforeDev = trainee.devotion;
+    trainee.devotion = clamp(beforeDev + 1, 0, 100);
+    if (trainee.devotion !== beforeDev) changes.push('暴雨温存 依恋 +1');
+  }
   const points = success ? course.points : 0;
   const stamina = clamp(state.stamina - course.stamina, 0, 100);
-  const stress = clamp(state.stress + course.stress, 0, 100);
+  // 大雪天气温浴与安抚额外减压
+  const snowRelief = (state.weather === 'snow' && (course.id === 'aftercare' || course.id === 'bath')) ? -5 : 0;
+  const stress = clamp(state.stress + course.stress + snowRelief, 0, 100);
   if (points) changes.push(`积分 +${points}`);
   if (stamina !== state.stamina) changes.push(`体力 ${formatSigned(stamina - state.stamina)}`);
   if (stress !== state.stress) changes.push(`压力 ${formatSigned(stress - state.stress)}`);
@@ -977,7 +1078,7 @@ export const restUntilMorning = (state: TavernRpgState, random: () => number = M
 
   if (next.dayLimit > 0 && finished >= next.dayLimit && !next.ending) {
     const ending = computeEnding(next.trainee, next.traits);
-    next = appendRpgLog({ ...next, ending: { day: finished, ...ending } }, `契约期满：${ending.title}`, 'good');
+    next = appendRpgLog({ ...next, ending: { ...ending, day: finished } }, `契约期满：${ending.title}`, 'good');
     next = { ...next, pendingEvents: [...next.pendingEvents.slice(-5), `约定的 ${next.dayLimit} 天到了。结局评价：「${ending.title}」——${ending.summary} 请让${'{{char}}'}回顾这段训练，并问${'{{user}}'}是否愿意续约。`] };
   }
 
@@ -1069,6 +1170,7 @@ export const buildRpgPrompt = (state: RpgCore, names: { char: string; user: stri
   const activeQuests = state.quests.filter((quest) => quest.status === 'active');
   const inventory = state.inventory.map((item) => (item.qty > 1 ? `${item.name}×${item.qty}` : item.name)).join('、') || '空';
   const dayText = state.dayLimit ? `第 ${state.day} 天（共 ${state.dayLimit} 天）` : `第 ${state.day} 天`;
+  const weatherMeta = RPG_WEATHER_META[state.weather ?? 'clear'];
   const services = current?.services.length ? `（可${current.services.map((service) => RPG_SERVICE_LABELS[service]).join('、')}）` : '';
   const stats = STAT_KEYS.map((key) => `${RPG_STAT_LABELS[key]} ${state.trainee[key]}（${LEVEL_NAMES[statLevel(key, state.trainee[key])]}）`).join('　');
   const traits = state.traits.map((id) => getTrait(id)?.name).filter(Boolean).join('、');
@@ -1086,7 +1188,7 @@ export const buildRpgPrompt = (state: RpgCore, names: { char: string; user: stri
   const lines = [
     '【训练日程 · 当前状态（由系统维护，以此为准）】',
     `设定：${state.worldName} —— ${state.premise}`,
-    `时间：${dayText} · ${RPG_PERIOD_LABELS[state.period] ?? '清晨'}`,
+    `时间：${dayText} · ${RPG_PERIOD_LABELS[state.period] ?? '清晨'} · 天气：${weatherMeta.icon} ${weatherMeta.label}（${weatherMeta.promptHint}）`,
     current ? `所在地点：${current.name}${services} —— ${current.description}` : '',
     `相邻可去：${reachable.map((loc) => `${loc.name}${isLocationOpen(loc, state.period) ? '' : '（此时不开放）'}`).join('、') || '（暂无，可在剧情中发现新地点）'}`,
     `${user}（被调教者）的训练阶段：${STAGES[state.stage]?.name ?? ''}　训练属性：${stats}${traits ? `　特质：${traits}` : ''}`,
@@ -1102,8 +1204,12 @@ export const buildRpgPrompt = (state: RpgCore, names: { char: string; user: stri
     state.pendingEvents.length ? `【本轮需要回应的事件】\n${state.pendingEvents.map((event) => `- ${fill(event)}`).join('\n')}` : '',
   ].filter(Boolean);
 
+  const rule1 = state.gameMode === 'reversal'
+    ? `1. 身份反转模式：你扮演的${char}是被调教者/学员，对${user}言听计从并积极完成${user}安排的训练与日常；${user}是主导一切的调教者/导师。只描写${char}作为学员的言行、羞涩、反思与顺从，不要替${user}行动。`
+    : `1. 角色关系：你扮演的${char}是调教者，主导每天的日程和课程，根据地点、时段和课表给${user}下达指令、检查表现、给予奖励或惩罚；${user}是被调教的一方。只描写${char}的言行和环境，不要替${user}行动、说话或描写${user}的内心。`;
+
   const rulesText = `【训练规则】
-1. 角色关系：你扮演的${char}是调教者，主导每天的日程和课程，根据地点、时段和课表给${user}下达指令、检查表现、给予奖励或惩罚；${user}是被调教的一方。只描写${char}的言行和环境，不要替${user}行动、说话或描写${user}的内心。
+${rule1}
 2. 用户消息以「🧭」开头的是系统已经完成的动作（前往、课程、兑换、差事、休息、使用物品、开始）；「🎲 检定」是系统掷骰的结果；「系统已结算」后面的数值已经生效。请直接按结果描写${char}的反应和评价，不得改写成败，也不要在标签里重复给这些数值；课程、差事、休息已经推进过时间，这一轮不要再写 time。
 3. 只能移动到「相邻可去」且开放的地点。自由互动会消耗${user}的体力：口头规矩 0-5，日常练习 5-15，强度较高的训练 15-30。
 4. 训练属性随表现缓慢变化（每项每轮 -3 到 +3，特别好或特别差最多 ±8）：服从=听从指令、耐受=能坚持多久、羞耻=越低越放得开、依恋=对${char}的信赖。做得好可以奖励积分（每轮最多 +30）。
@@ -1621,6 +1727,10 @@ export const normalizeRpgState = (value: unknown): TavernRpgState | null => {
     today: raw.today && typeof raw.today === 'object' ? { ...raw.today, startTrainee: normalizeStats(raw.today.startTrainee, trainee) } : freshTally(trainee, points),
     reports: Array.isArray(raw.reports) ? raw.reports.slice(-MAX_REPORTS) : [],
     ending: raw.ending && typeof raw.ending === 'object' ? raw.ending : null,
+    weather: normalizeWeather(raw.weather),
+    eventChains: numberRecord(raw.eventChains),
+    gameMode: raw.gameMode === 'hardcore' || raw.gameMode === 'reversal' ? raw.gameMode : 'normal',
+    renewCount: Math.max(0, toInt(raw.renewCount, 0)),
     pendingEvents: Array.isArray(raw.pendingEvents) ? raw.pendingEvents.slice(-6) : [],
     inventory: Array.isArray(raw.inventory) ? raw.inventory : [],
     quests: Array.isArray(raw.quests) ? raw.quests : [],

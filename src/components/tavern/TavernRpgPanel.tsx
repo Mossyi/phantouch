@@ -2,9 +2,10 @@ import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppStore } from '../../store/useAppStore';
 import {
-  BatteryLow, BedDouble, CalendarDays, Telescope, Wand2, Megaphone, Save, FolderOpen, Trash2, History, CheckCircle2, Circle, Dices, Footprints, Gift, Gavel, HeartPulse, ImagePlus, Loader2, Lock,
-  Map as MapIcon, MessageCircleHeart, NotebookText, Plus, RefreshCw, ScrollText, Settings2, Star, Trophy, UserRound, Wrench, X, Zap,
+  Award, BatteryLow, BedDouble, BookOpen, CalendarDays, Telescope, Wand2, Megaphone, Save, FolderOpen, Trash2, History, CheckCircle2, Circle, Dices, Footprints, Gift, Gavel, HeartPulse, ImagePlus, Loader2, Lock,
+  Map as MapIcon, MessageCircleHeart, NotebookText, Plus, RefreshCw, RotateCcw, ScrollText, Settings2, Sparkles, Star, Trophy, UserRound, Wrench, X, Zap,
 } from 'lucide-react';
+import { RpgCertificateModal } from './RpgCertificateModal';
 import { RPG_ICON_CREDIT, RPG_ICON_PATHS } from '../../core/tavern/rpgIcons';
 import type { TavernCharacterExpressions, TavernEmotionKey } from '../../core/tavern/tavernTypes';
 import { KIND_ICONS, PERIOD_ICONS, RpgIcon, STAGE_ICONS, courseIcon, itemIcon, traitIcon } from './RpgIcon';
@@ -43,6 +44,14 @@ import {
   type RpgStatKey,
   type RpgTraineeStats,
   type TavernRpgState,
+  RPG_WEATHER_META,
+  RPG_ENDINGS_CATALOG,
+  getUnlockedEndings,
+  recordUnlockedEnding,
+  type RpgCustomConfig,
+  type RpgEnding,
+  type RpgWeatherKey,
+  type RpgGameMode,
 } from '../../core/tavern/tavernRpg';
 
 export type RpgSystemAction =
@@ -201,7 +210,7 @@ export const TavernRpgChoices: React.FC<{
           <button key={choice.text} type="button" disabled={disabled} onClick={() => onPick(choice)} className={`${chip} border-pink-200 bg-white/95 text-slate-700 hover:border-pink-300 hover:text-pink-600`}>
             {choice.check ? <Dices className="h-3 w-3 text-violet-500" /> : <MessageCircleHeart className="h-3 w-3 text-pink-500" />}
             <span>{choice.text}</span>
-            {choice.check && <span className="font-medium text-violet-600">{RPG_CHECK_LABELS[choice.check.stat]}{signed(mod)} / {choice.check.dc}</span>}
+            {choice.check && <span className="font-medium text-violet-600">{RPG_CHECK_LABELS[choice.check.stat as RpgStatKey]}{signed(mod)} / {choice.check.dc}</span>}
           </button>
         );
       })}
@@ -311,7 +320,7 @@ const RpgMap: React.FC<{ state: TavernRpgState; art: Record<string, string>; sel
 
 // ─── 开局 ──────────────────────────────────────────────────────────────────────
 
-type CustomSetup = { worldName?: string; premise?: string; startName?: string; dayLimit?: number };
+type CustomSetup = RpgCustomConfig;
 
 const AI_THEME_IDEAS = ['魅魔的城堡', '海边度假别墅', '魔法学院宿舍', '赛博公寓', '温泉旅馆', '王宫侍从'];
 
@@ -355,7 +364,7 @@ const WorldPreview: React.FC<{ world: GeneratedWorld; charName: string; userName
 const RpgSetup: React.FC<{
   charName: string;
   userName: string;
-  onStart: (templateId: string, custom?: CustomSetup) => void;
+  onStart: (templateId: string, custom?: RpgCustomConfig) => void;
   onGenerateWorld: (input: WorldGenInput) => Promise<GeneratedWorld>;
   onStartGenerated: (world: GeneratedWorld) => void;
 }> = ({ charName, userName, onStart, onGenerateWorld, onStartGenerated }) => {
@@ -506,7 +515,7 @@ const ReportCard: React.FC<{ report: RpgDailyReport; portrait?: RpgPortrait }> =
 
 // ─── 面板 ──────────────────────────────────────────────────────────────────────
 
-export type RpgPanelTab = 'map' | 'today' | 'status' | 'rules' | 'log' | 'settings';
+export type RpgPanelTab = 'map' | 'today' | 'status' | 'chronicle' | 'gallery' | 'rules' | 'log' | 'settings';
 
 export interface TavernRpgPanelProps {
   state: TavernRpgState | null;
@@ -554,6 +563,18 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   const [slotName, setSlotName] = useState('');
   const [slotError, setSlotError] = useState('');
   const [confirmLoad, setConfirmLoad] = useState<string | null>(null);
+  const [viewCertificateEnding, setViewCertificateEnding] = useState<RpgEnding | null>(null);
+  const [showNewGamePlusModal, setShowNewGamePlusModal] = useState(false);
+  const [ngpInheritedTrait, setNgpInheritedTrait] = useState<string>('');
+  const [ngpGameMode, setNgpGameMode] = useState<'normal' | 'hardcore' | 'reversal'>('normal');
+  const [unlockedEndings, setUnlockedEndings] = useState<string[]>(() => getUnlockedEndings(charName));
+
+  React.useEffect(() => {
+    if (state?.ending?.id) {
+      const updated = recordUnlockedEnding(charName, state.ending.id);
+      setUnlockedEndings(updated);
+    }
+  }, [state?.ending, charName]);
   const selected = state ? getLocation(state, selectedId) ?? getLocation(state, state.currentId) : null;
   const reachableIds = useMemo(() => new Set(state ? getReachableLocations(state).map((loc) => loc.id) : []), [state]);
 
@@ -572,6 +593,8 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
     { id: 'map', label: '地图', icon: MapIcon },
     { id: 'today', label: '今日', icon: CalendarDays },
     { id: 'status', label: '状态', icon: UserRound },
+    { id: 'chronicle', label: '手账', icon: BookOpen },
+    { id: 'gallery', label: '图鉴', icon: Award },
     { id: 'rules', label: '家规', icon: ScrollText },
     { id: 'log', label: '日志', icon: NotebookText },
     { id: 'settings', label: '设置', icon: Settings2 },
@@ -612,7 +635,16 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
           <div className="flex min-w-0 items-center gap-2.5">
             <TrainerPortrait portrait={portrait} mood={state && state.stress >= RPG_HIGH_STRESS ? 'sad' : 'neutral'} className="h-10 w-10" />
             <div className="min-w-0">
-            <h3 className="flex items-center gap-1.5 text-[13px] font-black text-slate-800"><CalendarDays className="h-4 w-4 text-pink-500" />{state ? state.worldName : '训练日程'}</h3>
+            <h3 className="flex items-center gap-1.5 text-[13px] font-black text-slate-800">
+              <CalendarDays className="h-4 w-4 text-pink-500" />
+              {state ? state.worldName : '训练日程'}
+              {state && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-pink-50 border border-pink-200/70 px-2 py-0.5 text-[9.5px] font-medium text-pink-800">
+                  <span>{RPG_WEATHER_META[state.weather ?? 'clear']?.icon}</span>
+                  <span>{RPG_WEATHER_META[state.weather ?? 'clear']?.label}</span>
+                </span>
+              )}
+            </h3>
             {state && <p className="text-[10px] text-slate-500">{dayLabel(state)} · {RPG_PERIOD_LABELS[state.period]} · {STAGES[state.stage]?.name} · 积分 {state.points}</p>}
             </div>
           </div>
@@ -735,6 +767,22 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
 
               {tab === 'today' && (
                 <>
+                  {state && (
+                    <div className="flex items-start gap-2.5 rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 to-indigo-50/40 p-3">
+                      <span className="text-2xl shrink-0 select-none">{RPG_WEATHER_META[state.weather ?? 'clear']?.icon}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-black text-slate-800">今日天气 · {RPG_WEATHER_META[state.weather ?? 'clear']?.label}</span>
+                          {state.gameMode !== 'normal' && (
+                            <span className="rounded-full bg-violet-100 text-violet-800 px-1.5 py-0.5 text-[9px] font-bold">
+                              {state.gameMode === 'hardcore' ? '⚡ 硬核模式' : '🔄 身份反转模式'}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-600 mt-0.5 leading-relaxed">{RPG_WEATHER_META[state.weather ?? 'clear']?.description}</p>
+                      </div>
+                    </div>
+                  )}
                   {summon && summon.target && (
                     <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3">
                       <TrainerPortrait portrait={portrait} mood="smug" className="h-11 w-11" />
@@ -867,6 +915,152 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                     ) : <p className="text-[11px] text-slate-500">空空如也，攒积分去兑换吧。</p>}
                   </div>
                 </>
+              )}
+
+              {tab === 'chronicle' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="flex items-center gap-1 text-[12px] font-black text-slate-800">
+                      <BookOpen className="h-3.5 w-3.5 text-pink-500" />
+                      训练历程回忆手账
+                    </p>
+                    {state.ending && (
+                      <button
+                        type="button"
+                        onClick={() => setViewCertificateEnding(state.ending)}
+                        className="flex items-center gap-1 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 px-2.5 py-1 text-[10.5px] font-black text-slate-950 shadow-sm"
+                      >
+                        <Award className="h-3.5 w-3.5" />
+                        查看结业证书
+                      </button>
+                    )}
+                  </div>
+                  {state.reports.length === 0 ? (
+                    <p className="text-[11px] text-slate-500 text-center py-6">还没有日报记录，第一天睡前休息后将生成你的首篇手账。</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {state.reports.slice().reverse().map((report) => (
+                        <div key={report.day} className="rounded-2xl border border-indigo-100 bg-white p-3 space-y-1.5 shadow-xs">
+                          <div className="flex items-center justify-between text-[11.5px] font-black">
+                            <span className="text-slate-800">第 {report.day} 天受训手账</span>
+                            <span className={report.points >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
+                              积分 {signed(report.points)}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1.5 text-center text-[10px] bg-indigo-50/40 p-2 rounded-xl text-slate-600">
+                            <div>
+                              <span className="block font-bold text-slate-800">{report.courses} 次</span>
+                              完成课程
+                            </div>
+                            <div>
+                              <span className="block font-bold text-slate-800">{report.passed}成 / {report.failed}败</span>
+                              检定成败
+                            </div>
+                            <div>
+                              <span className={`block font-bold ${report.violations ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                {report.violations ? `${report.violations} 次` : '全守规矩'}
+                              </span>
+                              家规记录
+                            </div>
+                          </div>
+                          {Object.keys(report.deltas).length > 0 && (
+                            <p className="text-[10px] text-violet-700 font-medium">
+                              {Object.entries(report.deltas).map(([key, value]) => `${RPG_STAT_LABELS[key as RpgStatKey]} ${signed(value!)}`).join('　')}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {tab === 'gallery' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="flex items-center gap-1 text-[12px] font-black text-slate-800">
+                        <Award className="h-3.5 w-3.5 text-amber-500" />
+                        全结局图鉴树
+                      </p>
+                      <p className="text-[9.5px] text-slate-500">已解锁 {unlockedEndings.length} / {RPG_ENDINGS_CATALOG.length} 个多分支结局</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewGamePlusModal(true)}
+                      className="flex items-center gap-1 rounded-xl border border-violet-200 bg-violet-50 px-2.5 py-1 text-[10.5px] font-black text-violet-700"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      二周目继承
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {RPG_ENDINGS_CATALOG.map((def) => {
+                      const isUnlocked = unlockedEndings.includes(def.id) || state.ending?.id === def.id;
+                      const rankStyle = {
+                        S: 'bg-amber-100 text-amber-900 border-amber-300',
+                        A: 'bg-purple-100 text-purple-900 border-purple-300',
+                        B: 'bg-blue-100 text-blue-900 border-blue-300',
+                        C: 'bg-slate-100 text-slate-900 border-slate-300',
+                      }[def.rank];
+
+                      return (
+                        <div
+                          key={def.id}
+                          className={`rounded-2xl border p-3 transition ${isUnlocked ? 'border-amber-200 bg-white' : 'border-slate-200/80 bg-slate-50/80'}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className={`px-1.5 py-0.5 rounded-md text-[9.5px] font-black border ${rankStyle}`}>
+                                {def.rank} 阶
+                              </span>
+                              <span className={`text-[12px] font-black truncate ${isUnlocked ? 'text-slate-800' : 'text-slate-400'}`}
+                              >
+                                {isUnlocked ? def.title : '？？？？？？'}
+                              </span>
+                            </div>
+                            {isUnlocked ? (
+                              <button
+                                type="button"
+                                onClick={() => setViewCertificateEnding({
+                                  id: def.id,
+                                  title: def.title,
+                                  summary: def.summary,
+                                  rank: def.rank,
+                                  quote: def.quote,
+                                  day: state.day,
+                                })}
+                                className="shrink-0 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-800 border border-amber-300/50 px-2 py-0.5 text-[10px] font-bold"
+                              >
+                                证书
+                              </button>
+                            ) : (
+                              <span className="flex items-center gap-1 text-[10px] text-slate-400">
+                                <Lock className="h-3 w-3" />
+                                未解锁
+                              </span>
+                            )}
+                          </div>
+                          {isUnlocked ? (
+                            <>
+                              <p className="mt-1.5 text-[10.5px] leading-relaxed text-slate-600">{def.summary}</p>
+                              {def.quote && (
+                                <p className="mt-1 text-[10px] italic text-amber-700 bg-amber-50/60 rounded-md px-2 py-1">
+                                  {def.quote}
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            <p className="mt-1 text-[10px] text-slate-500">
+                              线索：{def.conditionHint}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
 
               {tab === 'rules' && (
@@ -1064,5 +1258,135 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(body, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(
+    <>
+      {body}
+      {showNewGamePlusModal && state && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl border border-violet-200 bg-white p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h4 className="flex items-center gap-1.5 text-[13px] font-black text-slate-800">
+                <RotateCcw className="h-4 w-4 text-violet-600" />
+                二周目继承与全新起点 (New Game+)
+              </h4>
+              <button
+                type="button"
+                onClick={() => setShowNewGamePlusModal(false)}
+                className="rounded-full p-1 text-slate-400 hover:bg-slate-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-[11px]">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">继承一项已习得特质：</label>
+                <select
+                  value={ngpInheritedTrait}
+                  onChange={(e) => setNgpInheritedTrait(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-800 outline-none"
+                >
+                  <option value="">不继承任何特质</option>
+                  {state.traits.map((id) => {
+                    const trait = getTrait(id);
+                    return trait ? <option key={id} value={id}>{trait.name} ({trait.description})</option> : null;
+                  })}
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">积分继承奖励 (30%)：</label>
+                <p className="text-slate-600 bg-amber-50 border border-amber-200 rounded-xl p-2 font-mono">
+                  + {Math.floor(state.points * 0.3)} 积分作为周目启动资金
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">选择周目挑战模式：</label>
+                <div className="space-y-1.5">
+                  <label className="flex items-center gap-2 rounded-xl border p-2 cursor-pointer border-slate-200 hover:bg-slate-50">
+                    <input
+                      type="radio"
+                      name="ngpMode"
+                      value="normal"
+                      checked={ngpGameMode === 'normal'}
+                      onChange={() => setNgpGameMode('normal')}
+                      className="accent-violet-600"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-800">🌸 普通模式</span>
+                      <span className="block text-[9.5px] text-slate-500">100 体力上限，均衡轻松体验</span>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-2 rounded-xl border p-2 cursor-pointer border-slate-200 hover:bg-slate-50">
+                    <input
+                      type="radio"
+                      name="ngpMode"
+                      value="hardcore"
+                      checked={ngpGameMode === 'hardcore'}
+                      onChange={() => setNgpGameMode('hardcore')}
+                      className="accent-violet-600"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-800">⚡ 硬核模式</span>
+                      <span className="block text-[9.5px] text-slate-500">80 体力上限，规训更严格，通关可获 S 阶结局</span>
+                    </div>
+                  </label>
+                  <label className="flex items-center gap-2 rounded-xl border p-2 cursor-pointer border-slate-200 hover:bg-slate-50">
+                    <input
+                      type="radio"
+                      name="ngpMode"
+                      value="reversal"
+                      checked={ngpGameMode === 'reversal'}
+                      onChange={() => setNgpGameMode('reversal')}
+                      className="accent-violet-600"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-800">🔄 身份反转模式</span>
+                      <span className="block text-[9.5px] text-slate-500">身份倒转！你成为主导导师，AI 角色成为顺从学徒</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowNewGamePlusModal(false)}
+                className="flex-1 rounded-xl border border-slate-200 py-2 text-[11px] font-bold text-slate-600"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNewGamePlusModal(false);
+                  onStart(state.templateId, {
+                    inheritedTraits: ngpInheritedTrait ? [ngpInheritedTrait] : [],
+                    inheritedPoints: Math.floor(state.points * 0.3),
+                    gameMode: ngpGameMode,
+                  });
+                }}
+                className="flex-1 rounded-xl bg-violet-600 hover:bg-violet-500 text-white py-2 text-[11px] font-black shadow-md shadow-violet-500/20"
+              >
+                开启新周目
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewCertificateEnding && state && (
+        <RpgCertificateModal
+          ending={viewCertificateEnding}
+          state={state}
+          charName={charName}
+          userName={userName}
+          onClose={() => setViewCertificateEnding(null)}
+        />
+      )}
+    </>,
+    document.body
+  ) : null;
 };
