@@ -1,8 +1,11 @@
 export type STTResultCallback = (transcript: string, isFinal: boolean) => void;
 export type STTStateCallback = (isListening: boolean, error?: string, isProcessing?: boolean) => void;
 
+import type { SafetyConfig, STTEngineType } from '../../types';
+import { isPrivateNetworkHost } from '../apiBaseUrl';
+
 export interface STTOptions {
-  engine?: 'browser' | 'siliconflow' | 'volcengine';
+  engine?: STTEngineType;
   language?: string;
   siliconflowApiKey?: string;
   siliconflowModel?: string;
@@ -10,12 +13,73 @@ export interface STTOptions {
   volcengineAppId?: string;
   volcengineAccessKey?: string;
   volcengineResourceId?: string;
+  /** OpenAI 兼容识别：OpenAI / Groq / 本地 Whisper 服务等，/audio/transcriptions 接口 */
+  openaiBaseUrl?: string;
+  openaiApiKey?: string;
+  openaiModel?: string;
+  /** 检测到开始说话时回调一次（用于计算反应时间，不参与持久化） */
+  onSpeechStart?: () => void;
 }
+
+/** 从设置构建识别参数（伴侣、酒馆按键说话与语音通话共用） */
+export const buildSttOptions = (config: Partial<SafetyConfig>): STTOptions => ({
+  engine: config.sttEngine,
+  siliconflowApiKey: config.siliconflowSttApiKey,
+  siliconflowModel: config.siliconflowSttModel,
+  volcengineApiKey: config.volcengineSttApiKey,
+  volcengineAppId: config.volcengineSttAppId,
+  volcengineAccessKey: config.volcengineSttAccessKey,
+  volcengineResourceId: config.volcengineSttResourceId,
+  openaiBaseUrl: config.openaiSttBaseUrl,
+  openaiApiKey: config.openaiSttApiKey,
+  openaiModel: config.openaiSttModel,
+});
+
+/** 通话界面顶部显示的识别方式 */
+export const describeSttEngine = (options: STTOptions): string => {
+  switch (options.engine) {
+    case 'siliconflow':
+      return `硅基流动 · ${(options.siliconflowModel || 'FunAudioLLM/SenseVoiceSmall').split('/').pop()}`;
+    case 'volcengine':
+      return '豆包 · 极速识别';
+    case 'openai': {
+      let host = '自定义接口';
+      try { host = new URL(String(options.openaiBaseUrl)).hostname.replace(/^api\./, ''); } catch {}
+      return `${host} · ${options.openaiModel || ''}`.trim();
+    }
+    default:
+      return '浏览器识别';
+  }
+};
+
+/** 本地 / 局域网识别服务（自建 Whisper）可以不需要 Key */
+const isLocalSttBaseUrl = (baseUrl: string | undefined): boolean => {
+  try {
+    return Boolean(baseUrl) && isPrivateNetworkHost(new URL(String(baseUrl)).hostname);
+  } catch {
+    return false;
+  }
+};
+
+/** 识别参数缺少必需凭据时返回提示文案 */
+export const describeMissingSttCredentials = (options: STTOptions): string | null => {
+  if (options.engine === 'siliconflow' && !options.siliconflowApiKey?.trim()) return '请先在系统设置中填写硅基流动语音识别 Key';
+  if (options.engine === 'volcengine' && !options.volcengineApiKey?.trim()
+    && !(options.volcengineAppId?.trim() && options.volcengineAccessKey?.trim())) {
+    return '请先在系统设置中填写豆包语音识别凭据';
+  }
+  if (options.engine === 'openai') {
+    if (!options.openaiBaseUrl?.trim()) return '请先在系统设置中填写语音识别接口地址';
+    if (!options.openaiModel?.trim()) return '请先在系统设置中填写语音识别模型';
+    if (!options.openaiApiKey?.trim() && !isLocalSttBaseUrl(options.openaiBaseUrl)) return '请先在系统设置中填写语音识别 API Key';
+  }
+  return null;
+};
 
 const SILICONFLOW_STT_ENDPOINT = 'https://api.siliconflow.cn/v1/audio/transcriptions';
 const VOLCENGINE_STT_ENDPOINT = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash';
 
-const encodeWav = (chunks: Float32Array[], sampleRate: number): Blob => {
+export const encodeWav = (chunks: Float32Array[], sampleRate: number): Blob => {
   const sampleCount = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
   const buffer = new ArrayBuffer(44 + sampleCount * 2);
   const view = new DataView(buffer);
@@ -69,6 +133,8 @@ export class STTManager {
   private isListeningNow = false;
   private onResultCb: STTResultCallback | null = null;
   private onStateCb: STTStateCallback | null = null;
+  private onSpeechStartCb: (() => void) | null = null;
+  private speechStartReported = false;
   private recognitionGeneration = 0;
   private operationGeneration = 0;
   private requestController: AbortController | null = null;
@@ -105,6 +171,10 @@ export class STTManager {
       recognition.continuous = false;
       recognition.interimResults = true;
       recognition.lang = 'zh-CN';
+      recognition.onspeechstart = () => {
+        if (generation !== this.recognitionGeneration || this.recognition !== recognition) return;
+        this.reportSpeechStart();
+      };
       recognition.onstart = () => {
         if (generation !== this.recognitionGeneration || this.recognition !== recognition) return;
         this.isListeningNow = true;
@@ -119,6 +189,7 @@ export class STTManager {
           if (event.results[index].isFinal) finalTranscript += text;
           else interim += text;
         }
+        if (finalTranscript || interim) this.reportSpeechStart();
         if (finalTranscript) this.onResultCb?.(finalTranscript, true);
         else if (interim) this.onResultCb?.(interim, false);
       };
@@ -137,6 +208,12 @@ export class STTManager {
     }
   }
 
+  private reportSpeechStart() {
+    if (this.speechStartReported) return;
+    this.speechStartReported = true;
+    try { this.onSpeechStartCb?.(); } catch (error) { console.warn('开始说话回调异常:', error); }
+  }
+
   static isSupported(): boolean {
     return typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
   }
@@ -146,6 +223,8 @@ export class STTManager {
     const operationGeneration = ++this.operationGeneration;
     this.onResultCb = onResult;
     this.onStateCb = onState || null;
+    this.onSpeechStartCb = options.onSpeechStart || null;
+    this.speechStartReported = false;
     const engine = options.engine || 'browser';
     if (engine === 'browser') {
       await this.startBrowserListening(options.language || 'zh-CN', operationGeneration);
@@ -180,13 +259,9 @@ export class STTManager {
   }
 
   private async startCloudListening(options: STTOptions, operationGeneration: number) {
-    if (options.engine === 'siliconflow' && !options.siliconflowApiKey?.trim()) {
-      this.onStateCb?.(false, '请先在系统设置中填写硅基流动语音识别 Key');
-      return;
-    }
-    if (options.engine === 'volcengine' && !options.volcengineApiKey?.trim()
-      && !(options.volcengineAppId?.trim() && options.volcengineAccessKey?.trim())) {
-      this.onStateCb?.(false, '请先在系统设置中填写豆包语音识别凭据');
+    const missing = describeMissingSttCredentials(options);
+    if (missing) {
+      this.onStateCb?.(false, missing);
       return;
     }
     let localStream: MediaStream | null = null;
@@ -227,6 +302,7 @@ export class STTManager {
         let energy = 0;
         for (let index = 0; index < copy.length; index += 1) energy += copy[index] * copy[index];
         if (Math.sqrt(energy / copy.length) > 0.018) {
+          if (!this.heardVoice) this.reportSpeechStart();
           this.heardVoice = true;
           this.lastVoiceAt = Date.now();
         }
@@ -293,9 +369,7 @@ export class STTManager {
     this.requestController = controller;
     try {
       const wav = encodeWav(chunks, sampleRate);
-      const transcript = options.engine === 'volcengine'
-        ? await this.transcribeVolcengine(wav, options, controller.signal)
-        : await this.transcribeSiliconflow(wav, options, controller.signal);
+      const transcript = await this.transcribeAudio(wav, options, controller.signal);
       if (operationGeneration !== this.operationGeneration || controller.signal.aborted) return;
       if (!transcript) throw new Error('没有识别到清晰语音');
       resultCallback?.(transcript, true);
@@ -352,6 +426,34 @@ export class STTManager {
     if (!response.ok || (statusCode && statusCode !== '20000000')) {
       throw new Error(response.headers.get('x-api-message') || payload?.message || `火山语音识别失败 (${statusCode || response.status})`);
     }
+    return extractTranscript(payload);
+  }
+
+  /**
+   * 识别一段已录好的音频（通话模式自己做断句，只借用云端识别）。
+   */
+  async transcribeAudio(wav: Blob, options: STTOptions, signal: AbortSignal): Promise<string> {
+    const missing = describeMissingSttCredentials(options);
+    if (missing) throw new Error(missing);
+    if (options.engine === 'volcengine') return this.transcribeVolcengine(wav, options, signal);
+    if (options.engine === 'openai') return this.transcribeOpenAICompatible(wav, options, signal);
+    return this.transcribeSiliconflow(wav, options, signal);
+  }
+
+  /** OpenAI 兼容的 /audio/transcriptions（multipart：file + model + language） */
+  private async transcribeOpenAICompatible(wav: Blob, options: STTOptions, signal: AbortSignal): Promise<string> {
+    const base = String(options.openaiBaseUrl || '').trim().replace(/\/+$/, '');
+    const form = new FormData();
+    form.append('file', wav, 'voice-input.wav');
+    form.append('model', String(options.openaiModel || '').trim());
+    // 指定中文能减少 Whisper 系模型的语言误判，也略快一些
+    form.append('language', 'zh');
+    form.append('response_format', 'json');
+    const headers: Record<string, string> = {};
+    if (options.openaiApiKey?.trim()) headers.Authorization = `Bearer ${options.openaiApiKey.trim()}`;
+    const response = await fetch(`${base}/audio/transcriptions`, { method: 'POST', headers, body: form, signal });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error?.message || payload?.message || `语音识别失败 (${response.status})`);
     return extractTranscript(payload);
   }
 

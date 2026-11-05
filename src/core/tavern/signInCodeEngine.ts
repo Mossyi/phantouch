@@ -128,6 +128,7 @@ export class SignInCodeEngine {
       if ('siliconflowSttApiKey' in obj) obj.siliconflowSttApiKey = '';
       if ('volcengineSttApiKey' in obj) obj.volcengineSttApiKey = '';
       if ('volcengineSttAccessKey' in obj) obj.volcengineSttAccessKey = '';
+      if ('openaiSttApiKey' in obj) obj.openaiSttApiKey = '';
       if ('siliconflowTtsApiKey' in obj) obj.siliconflowTtsApiKey = '';
       return obj;
     }

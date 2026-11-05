@@ -39,10 +39,17 @@ import {
 } from '../../core/tavern/tavernEmotions';
 import { LLMClient } from '../../core/ai/llmClient';
 import { TTSManager } from '../../core/voice/ttsManager';
-import { STTManager } from '../../core/voice/sttManager';
+import { buildSttOptions, describeSttEngine, STTManager } from '../../core/voice/sttManager';
+import type { CallTurnHooks, VoiceCallDeps } from '../../core/voice/voiceCallSession';
+import { PhoneCallOverlay, type PhoneCallDirection, type PhoneCallSummary } from './PhoneCallOverlay';
+import { ObedienceDrillOverlay } from './ObedienceDrillOverlay';
+import { DRILL_DIFFICULTIES, type DrillSummary } from '../../core/discipline/obedienceDrill';
+import { DeviceManager } from '../../core/deviceManager';
+import { resolveEnabledEmsCeiling } from '../../core/safetyLimits';
 import {
   prepareTavernSpeechText,
   resolveTavernNarrationVoiceConfig,
+  resolveTavernVoiceConfig,
   shouldAutoPlayTavernVoice,
 } from '../../core/tavern/tavernVoice';
 import { useAppStore } from '../../store/useAppStore';
@@ -135,6 +142,9 @@ import {
   MessageSquarePlus,
   Mic,
   Pencil,
+  Phone,
+  PhoneIncoming,
+  Megaphone,
   Play,
   RefreshCw,
   RotateCcw,
@@ -148,7 +158,47 @@ import {
   Users,
   Volume2,
   X,
+  CalendarDays,
 } from 'lucide-react';
+import { TavernRpgChoices, TavernRpgHud, TavernRpgPanel, type RpgPanelTab, type RpgSystemAction } from './TavernRpgPanel';
+import { buildLocationArtPrompt, deleteRpgArt, fetchImageAsDataUrl, isRpgArtAutoEnabled, loadRpgArt, saveRpgArt, setRpgArtAutoEnabled } from '../../core/tavern/tavernRpgArt';
+import { deleteRpgSlot, listRpgSlots, loadRpgSlot, saveRpgSlot, slotLocationIds, type RpgSaveSlot } from '../../core/tavern/tavernRpgSlots';
+import { WORLD_GEN_SYSTEM, buildExploreRequest, buildWorldGenRequest, parseExploredLocations, parseGeneratedWorld, type GeneratedWorld, type WorldGenInput } from '../../core/tavern/tavernRpgWorldGen';
+import {
+  RPG_HIGH_STRESS,
+  RPG_PERIOD_LABELS,
+  STAGES,
+  addRule,
+  applyRpgUpdate,
+  buildRpgPrompt,
+  buyItem,
+  consumePardon,
+  createRpgState,
+  createRpgStateFromTemplate,
+  discoverLocations,
+  doWork,
+  evaluateProgress,
+  formatCheckResult,
+  getTrait,
+  isRpgModeEnabled,
+  itemUseAction,
+  loadRpgState,
+  parseRpgUpdate,
+  recordCheck,
+  rememberSnapshot,
+  removeRule,
+  renewContract,
+  restUntilMorning,
+  restoreSnapshot,
+  rollCheck,
+  runCourse,
+  saveRpgState,
+  travelTo,
+  type RpgActionResult,
+  type RpgCheckResult,
+  type RpgChoice,
+  type TavernRpgState,
+} from '../../core/tavern/tavernRpg';
 
 interface Props {
   activeCard: TavernCharacterCard;
@@ -308,6 +358,15 @@ const buildInitialGreetingMessage = (card: TavernCharacterCard, userName: string
   };
 };
 
+/** 语音通话期间追加给模型的说话方式约束：回复会被逐句直接念出来 */
+const PHONE_CALL_PROMPT = `【语音通话模式】你正在和对方用手机语音通话，你输出的每个字都会被直接念给对方听。
+- 只输出你在电话里说出口的话：不要写括号里的动作、神态、旁白、心理描写，不要用 Markdown、列表或表情符号。
+- 像真人打电话一样口语化、自然，可以有语气词、停顿和简短的反应（用逗号、省略号表现节奏）。
+- 每次回复简短，一般一到三句；对方要求你多讲时再展开。
+- 保持你的人设、口吻与你们之间的关系；隐藏的状态标签照常输出在末尾。`;
+
+const formatCallDuration = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+
 export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter }) => {
   const store = TavernStore.getInstance();
   const lorebookEngine = HardwareLorebookEngine.getInstance();
@@ -348,6 +407,21 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [isOOCMode, setIsOOCMode] = useState(false);
   const [isSeseBoosted, setIsSeseBoosted] = useState(false); // 🔥 狂暴瑟瑟增强模式
   const [isLoading, setIsLoading] = useState(false);
+  // 语音通话
+  const [phoneCall, setPhoneCall] = useState<PhoneCallDirection | null>(null);
+  const [showCallMenu, setShowCallMenu] = useState(false);
+  const [drillOpen, setDrillOpen] = useState(false);
+  const [scheduledCallAt, setScheduledCallAt] = useState<number | null>(null);
+  const scheduledCallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const voiceCallActiveRef = useRef(false);
+  /** 当前这一轮是否由通话发起：流式文本回调给通话、回复不再自动整段朗读 */
+  const voiceTurnRef = useRef<{ hooks: CallTurnHooks; reply: string | null; error?: string } | null>(null);
+  const isLoadingRef = useRef(false);
+  const handleSendRef = useRef<((forcedPrompt?: string, forcedOoc?: boolean) => Promise<void>) | null>(null);
+  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
+  useEffect(() => () => {
+    if (scheduledCallTimerRef.current) clearTimeout(scheduledCallTimerRef.current);
+  }, []);
   const [streamingReply, setStreamingReply] = useState('');
   const [showSpriteWidget, setShowSpriteWidget] = useState<boolean>(() => {
     try {
@@ -412,6 +486,33 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   // === RPG 属性状态 HUD 与多模态识图 ===
   const [characterStats, setCharacterStats] = useState<TavernCharacterStats>(() => loadCharacterStats(activeCard.id));
   const characterStatsRef = useRef<TavernCharacterStats>(characterStats);
+  const [rpgState, setRpgState] = useState<TavernRpgState | null>(() => loadRpgState(activeCard.id));
+  const rpgStateRef = useRef<TavernRpgState | null>(rpgState);
+  const [rpgPanelTab, setRpgPanelTab] = useState<RpgPanelTab | null>(null);
+  // 日程模式在酒馆设置里开关，默认关闭；关闭时不显示入口、不注入提示词，进度保留
+  const [rpgEnabled] = useState(isRpgModeEnabled);
+  // 地点插画：{ 地点 id: dataURL }，存在 IndexedDB
+  const [rpgArt, setRpgArt] = useState<Record<string, string>>({});
+  const [rpgArtLoaded, setRpgArtLoaded] = useState(false);
+  const [rpgArtBusyId, setRpgArtBusyId] = useState<string | null>(null);
+  const [rpgArtAuto, setRpgArtAuto] = useState(isRpgArtAutoEnabled);
+  const rpgArtControllerRef = useRef<AbortController | null>(null);
+  const rpgWorldControllerRef = useRef<AbortController | null>(null);
+  const [rpgExploring, setRpgExploring] = useState(false);
+  const [rpgSlots, setRpgSlots] = useState<RpgSaveSlot[]>(() => listRpgSlots(activeCard.id));
+  useEffect(() => {
+    let cancelled = false;
+    void loadRpgArt(activeCard.id).then((art) => {
+      if (cancelled) return;
+      setRpgArt(art);
+      setRpgArtLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+      rpgArtControllerRef.current?.abort();
+      rpgWorldControllerRef.current?.abort();
+    };
+  }, [activeCard.id]);
   useEffect(() => {
     characterStatsRef.current = characterStats;
   }, [characterStats]);
@@ -1431,6 +1532,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     signal: AbortSignal,
     promptOverride?: string | null,
     continuationGuidance?: string | null,
+    extras?: { systemAddon?: string; onRawReply?: (rawReply: string) => void },
   ): Promise<string> => {
     const tavernModelConfig = store.getTavernModelConfig();
     const currentGenerationConfig = store.getGenerationConfig();
@@ -1449,7 +1551,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const currentSpeakerStats = speaker.id === activeCard.id
       ? characterStatsRef.current
       : loadCharacterStats(speaker.id);
-    const systemPrompt = `${baseScenePrompt}\n\n${buildStatusPromptInstruction(currentSpeakerStats)}`;
+    const systemPrompt = [baseScenePrompt, extras?.systemAddon, buildStatusPromptInstruction(currentSpeakerStats)].filter(Boolean).join('\n\n');
     if (tavernModelConfig.provider === 'dzmm') {
       const requestHistory = buildBudgetedHistory(transformedHistory, [
         systemPrompt,
@@ -1478,9 +1580,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       const lastUserMsg = history.slice().reverse().find((m) => m.role === 'user')?.content || '';
       const lastAssistantMsg = history.slice().reverse().find((m) => m.role === 'assistant' && m.speakerCardId === speaker.id)?.content || '';
       const speakerPrefixRegex = new RegExp(`^(?:\\{\\{char\\}\\}|${speaker.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|角色|AI|Assistant)\\s*[:：]\\s*`, 'i');
-      let strippedReply = reply.replace(speakerPrefixRegex, '').trim();
-      const cleanReply = sanitizeTavernVisibleContent(strippedReply, false, lastUserMsg);
-      const statusParsed = parseAndApplyStatusUpdate(cleanReply, currentSpeakerStats, lastUserMsg);
+      let strippedReply = stripThinkingArtifacts(reply, false).replace(speakerPrefixRegex, '').trim();
+      extras?.onRawReply?.(strippedReply);
+      // 先解析隐藏标签再清洗，否则清洗会把标签删掉
+      const statusParsed = parseAndApplyStatusUpdate(strippedReply, currentSpeakerStats, lastUserMsg);
       if (statusParsed.updated) {
         if (speaker.id === activeCard.id) {
           setCharacterStats(statusParsed.nextStats);
@@ -1521,9 +1624,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       })) as any, [], systemPrompt, signal);
     const lastUserMsg = history.slice().reverse().find((m) => m.role === 'user')?.content || '';
     const speakerPrefixRegex = new RegExp(`^(?:\\{\\{char\\}\\}|${speaker.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|角色|AI|Assistant)\\s*[:：]\\s*`, 'i');
-    let strippedReply = result.reply.replace(speakerPrefixRegex, '').trim();
-    const cleanReply = sanitizeTavernVisibleContent(strippedReply, false, lastUserMsg);
-    const statusParsed = parseAndApplyStatusUpdate(cleanReply, currentSpeakerStats, lastUserMsg);
+    let strippedReply = stripThinkingArtifacts(result.reply, false).replace(speakerPrefixRegex, '').trim();
+    extras?.onRawReply?.(strippedReply);
+    const statusParsed = parseAndApplyStatusUpdate(strippedReply, currentSpeakerStats, lastUserMsg);
     if (statusParsed.updated) {
       if (speaker.id === activeCard.id) {
         setCharacterStats(statusParsed.nextStats);
@@ -1641,8 +1744,24 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     setRegeneratingMessageId(message.id);
     userScrolledUpRef.current = false;
     const speaker = getMessageSpeaker(message);
+    // 日程模式：只有最后一条回复能重新结算状态——先回到这条回复之前的状态，再按新回复重新结算
+    const isLatestReply = !messages.slice(targetIndex + 1).some((candidate) => candidate.role === 'assistant');
+    const rpgBefore = rpgEnabled && !isGroupScene && isLatestReply && rpgStateRef.current ? restoreSnapshot(rpgStateRef.current, message.id) : null;
     try {
-      const reply = (await generateSafeSceneReply(speaker, messages.slice(0, targetIndex), groupParticipants.length > 1 ? groupParticipants : [speaker], controller.signal)).trim();
+      const reply = (await generateSafeSceneReply(
+        speaker,
+        messages.slice(0, targetIndex),
+        groupParticipants.length > 1 ? groupParticipants : [speaker],
+        controller.signal,
+        undefined,
+        undefined,
+        rpgBefore ? {
+          systemAddon: buildRpgPrompt(rpgBefore, rpgNames()),
+          onRawReply: (rawReply) => {
+            if (!controller.signal.aborted) commitRpgTurn(rpgBefore, rawReply, message.id);
+          },
+        } : undefined,
+      )).trim();
       if (controller.signal.aborted || !reply) return;
       setMessages((current) => {
         const next = current.map((candidate) => {
@@ -1943,6 +2062,274 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     }, 550);
   };
 
+  // ─── 训练日程 ────────────────────────────────────────────────────────────────
+  const rpgActive = rpgEnabled && !isGroupScene && Boolean(rpgState);
+  const rpgSaveWarnedRef = useRef(false);
+  const updateRpgState = (next: TavernRpgState | null) => {
+    rpgStateRef.current = next;
+    setRpgState(next);
+    const saved = saveRpgState(activeCard.id, next);
+    if (!saved && !rpgSaveWarnedRef.current) {
+      rpgSaveWarnedRef.current = true;
+      showFeatureNotice('⚠️ 本地存储满了，训练进度没能保存。请删掉一些存档或聊天存档');
+    } else if (saved) {
+      rpgSaveWarnedRef.current = false;
+    }
+  };
+  // 卡名常带头衔（「莉莉丝 · 深渊魅魔导师」），日程里只用短名
+  const rpgCharName = activeCard.name.split(/\s*[·・|｜]\s*/)[0] || activeCard.name;
+  const rpgNames = () => ({ char: rpgCharName, user: store.getTavernModelConfig().userName || '旅人' });
+  const rpgEmsCeiling = resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200);
+
+  /** 应用一轮 AI 给出的训练变化，并提示目标、特质、阶段等进展 */
+  const commitRpgTurn = (before: TavernRpgState, rawReply: string, messageId: string) => {
+    const applied = applyRpgUpdate(rememberSnapshot(before, messageId), parseRpgUpdate(rawReply));
+    updateRpgState(applied.state);
+    const { progress } = applied;
+    const highlights = [
+      ...(progress.stageUp ? [`⬆️ 阶段「${STAGES[progress.state.stage]?.name}」`] : []),
+      ...progress.newTraits.map((id) => `🏅 特质「${getTrait(id)?.name}」`),
+      ...progress.completed.map((quest) => `🎯 达成「${quest.title}」${quest.reward ? ` +${quest.reward}` : ''}`),
+      ...applied.notes.filter((entry) => entry.tone !== 'warn').map((entry) => entry.text),
+    ].slice(0, 3);
+    if (highlights.length) showFeatureNotice(highlights.join(' · '));
+  };
+
+  /**
+   * 检定结果落地：失败时有免罚券自动用掉；可选的硬件奖惩立即执行。
+   * 电击仍受全局安全上限与急停约束，压力偏高时强度减半。
+   */
+  const settleRpgCheck = (state: TavernRpgState, result: RpgCheckResult): { state: TavernRpgState; note: string } => {
+    let next = state;
+    let note = '';
+    let pardoned = false;
+    if (!result.success) {
+      const pardon = consumePardon(next);
+      next = pardon.state;
+      pardoned = pardon.used;
+      if (pardoned) note = '（用了免罚券）';
+    }
+    const manager = DeviceManager.getInstance();
+    const baseLevel = Math.min(state.hardware.punishLevel, rpgEmsCeiling);
+    const level = state.stress >= RPG_HIGH_STRESS ? Math.ceil(baseLevel / 2) : baseLevel;
+    if (!result.success && !pardoned && state.hardware.punishOnFail && level > 0) {
+      void manager.setEmsStrength('AB', level, state.hardware.punishSeconds).catch(() => undefined);
+    } else if (result.success && state.hardware.rewardOnSuccess) {
+      void manager.setToyMotor(8, 4, 0).then(() => manager.scheduleOutputStop('toy', 2)).catch(() => undefined);
+    }
+    return { state: next, note };
+  };
+
+  const startRpg = (templateId: string, custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number }) => {
+    const next = createRpgState(templateId, rpgNames(), custom);
+    updateRpgState(next);
+    setRpgPanelTab(null);
+    const home = next.locations.find((location) => location.id === next.homeId)?.name ?? '住处';
+    void handleSendRef.current?.(`🧭 开始：${next.worldName} · 第 1 天清晨 · ${home}`, false);
+  };
+
+  /** 移动、课程、兑换、差事、休息、使用物品、续约：系统先结算，再把结果作为一条消息发给 AI 描写 */
+  const runRpgAction = (action: RpgSystemAction) => {
+    const current = rpgStateRef.current;
+    if (!current || isLoading) return;
+    let result: RpgActionResult;
+    switch (action.type) {
+      case 'travel': result = travelTo(current, action.locationId); break;
+      case 'course': result = runCourse(current, action.courseId); break;
+      case 'buy': result = buyItem(current, action.item); break;
+      case 'work': result = doWork(current); break;
+      case 'rest': result = restUntilMorning(current); break;
+      case 'use': result = itemUseAction(current, action.item); break;
+      case 'renew': result = { state: renewContract(current), message: '🧭 续约：我愿意再签 30 天' }; break;
+    }
+    if (result.error) {
+      showFeatureNotice(result.error);
+      return;
+    }
+    let next = result.state;
+    let message = result.message;
+    if (result.check) {
+      const settled = settleRpgCheck(next, result.check);
+      next = settled.state;
+      if (settled.note && message) message = message.replace(/(🎲[^\n]*)/, `$1${settled.note}`);
+    }
+    updateRpgState(next);
+    if (message) void handleSendRef.current?.(message, false);
+  };
+
+  /** 用户的回应选项：带检定的先掷骰（用户的训练属性和特质做修正） */
+  const pickRpgChoice = (choice: RpgChoice) => {
+    const current = rpgStateRef.current;
+    if (!current || isLoading) return;
+    let text = choice.text;
+    if (choice.check) {
+      const result = rollCheck(current, choice.check);
+      const recorded = evaluateProgress(recordCheck(current, result)).state;
+      const settled = settleRpgCheck(recorded, result);
+      text = `${choice.text}\n${formatCheckResult(result)}${settled.note}`;
+      updateRpgState(settled.state);
+    }
+    void handleSendRef.current?.(text, false);
+  };
+
+  /** 用生图模型给地点画一张插画（只画场景，不画人物），压缩后存进 IndexedDB */
+  const generateRpgArt = async (locationId: string, silent = false) => {
+    const current = rpgStateRef.current;
+    const location = current?.locations.find((entry) => entry.id === locationId);
+    if (!current || !location || rpgArtControllerRef.current) return;
+    const controller = new AbortController();
+    rpgArtControllerRef.current = controller;
+    const cardId = activeCard.id;
+    setRpgArtBusyId(locationId);
+    if (!silent) showFeatureNotice(`正在给「${location.name}」画插画…`);
+    try {
+      const imageUrl = await generateWithConfiguredImageModel(buildLocationArtPrompt(location, current.worldName, current.period), controller.signal);
+      const local = await fetchImageAsDataUrl(imageUrl);
+      const stored = await compressImageForSession(local, 320_000).catch(() => local);
+      if (controller.signal.aborted || activeCardIdRef.current !== cardId) return;
+      await saveRpgArt(cardId, locationId, stored);
+      setRpgArt((art) => ({ ...art, [locationId]: stored }));
+      showFeatureNotice(stored.startsWith('data:image/')
+        ? `「${location.name}」的插画画好了`
+        : `「${location.name}」的插画画好了，但只拿到了图片链接（可能会过期），过期后点「重画」即可`);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      showFeatureNotice(error instanceof Error ? `插画生成失败：${error.message}` : '插画生成失败');
+    } finally {
+      if (rpgArtControllerRef.current === controller) rpgArtControllerRef.current = null;
+      setRpgArtBusyId(null);
+    }
+  };
+
+  // 打开自动插画时，进入还没有插画的地点就画一张
+  const rpgCurrentLocationId = rpgActive ? rpgState?.currentId : undefined;
+  useEffect(() => {
+    if (!rpgCurrentLocationId || !rpgArtAuto || !rpgArtLoaded || rpgArt[rpgCurrentLocationId] || rpgArtControllerRef.current) return;
+    void generateRpgArt(rpgCurrentLocationId, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rpgCurrentLocationId, rpgArtAuto, rpgArtLoaded]);
+
+  /** 让文字模型按主题生成整个世界（地点、连线、家规、专属课程），由引擎校验修补后给用户预览 */
+  const generateRpgWorld = async (input: WorldGenInput): Promise<GeneratedWorld> => {
+    rpgWorldControllerRef.current?.abort();
+    const controller = new AbortController();
+    rpgWorldControllerRef.current = controller;
+    try {
+      const request = buildWorldGenRequest(input, rpgNames(), { description: activeCard.description, personality: activeCard.personality, scenario: activeCard.scenario });
+      const raw = await runTavernTextModel(WORLD_GEN_SYSTEM, request, controller.signal, 'rpg_world');
+      const world = parseGeneratedWorld(raw, input);
+      if (!world) throw new Error('AI 返回的内容没法解析成世界，请重试，或者换一个更擅长输出 JSON 的模型');
+      return world;
+    } finally {
+      if (rpgWorldControllerRef.current === controller) rpgWorldControllerRef.current = null;
+    }
+  };
+
+  const startGeneratedRpg = (world: GeneratedWorld) => {
+    const next = createRpgStateFromTemplate(world.template, rpgNames(), { courses: world.courses, events: world.events });
+    updateRpgState(next);
+    setRpgPanelTab(null);
+    const home = next.locations.find((location) => location.id === next.homeId)?.name ?? '住处';
+    void handleSendRef.current?.(`🧭 开始：${next.worldName} · 第 1 天清晨 · ${home}`, false);
+  };
+
+  /** 让 AI 在当前位置附近设计 1-2 个新地点，加到地图上 */
+  const exploreRpg = async () => {
+    const current = rpgStateRef.current;
+    if (!current || rpgExploring) return;
+    rpgWorldControllerRef.current?.abort();
+    const controller = new AbortController();
+    rpgWorldControllerRef.current = controller;
+    setRpgExploring(true);
+    try {
+      const raw = await runTavernTextModel(WORLD_GEN_SYSTEM, buildExploreRequest(current, rpgNames()), controller.signal, 'rpg_explore');
+      const latest = rpgStateRef.current;
+      if (controller.signal.aborted || !latest) return;
+      const result = discoverLocations(latest, parseExploredLocations(raw), 2);
+      if (!result.added.length) {
+        showFeatureNotice('这次没有探索到新地点，可以再试一次');
+        return;
+      }
+      let next = result.state;
+      for (const entry of result.notes) next = { ...next, log: [...next.log, entry].slice(-50) };
+      updateRpgState(next);
+      showFeatureNotice(`🔭 发现了 ${result.added.map((location) => `「${location.name}」`).join('、')}`);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      showFeatureNotice(error instanceof Error ? `探索失败：${error.message}` : '探索失败');
+    } finally {
+      if (rpgWorldControllerRef.current === controller) rpgWorldControllerRef.current = null;
+      setRpgExploring(false);
+    }
+  };
+
+  // ─── 存档槽 ───
+  /** 自动存一份当前进度；失败时返回错误，调用方必须中止（否则会丢进度） */
+  const autoSaveCurrentRpg = (): string | undefined => {
+    const current = rpgStateRef.current;
+    if (!current) return undefined;
+    const result = saveRpgSlot(activeCard.id, current, `${current.worldName} · 第${current.day}天`, true);
+    setRpgSlots(result.slots);
+    return result.error;
+  };
+
+  const saveRpgToSlot = (name: string) => {
+    const current = rpgStateRef.current;
+    if (!current) return '还没有开始训练。';
+    const result = saveRpgSlot(activeCard.id, current, name, false);
+    setRpgSlots(result.slots);
+    if (!result.error) showFeatureNotice('已存档');
+    return result.error;
+  };
+
+  const loadRpgFromSlot = (slotId: string) => {
+    const loaded = loadRpgSlot(activeCard.id, slotId);
+    if (!loaded || isLoading) return;
+    const error = autoSaveCurrentRpg();
+    if (error) {
+      showFeatureNotice(`当前进度没能自动存档，已取消读档：${error}`);
+      return;
+    }
+    updateRpgState(loaded);
+    setRpgPanelTab(null);
+    const here = loaded.locations.find((location) => location.id === loaded.currentId)?.name ?? '住处';
+    void handleSendRef.current?.(`🧭 读档：回到「${loaded.worldName}」第 ${loaded.day} 天${RPG_PERIOD_LABELS[loaded.period]}，在${here}`, false);
+  };
+
+  const startNewRpgRun = () => {
+    const error = autoSaveCurrentRpg();
+    if (error) {
+      showFeatureNotice(`当前进度没能自动存档，已取消：${error}`);
+      return;
+    }
+    updateRpgState(null);
+    showFeatureNotice('当前进度已自动存档，可以开始新的一局了');
+  };
+
+  /** 结束训练：清掉当前进度；只删存档里用不到的地点插画 */
+  const endRpgRun = () => {
+    const current = rpgStateRef.current;
+    updateRpgState(null);
+    setRpgPanelTab(null);
+    rpgArtControllerRef.current?.abort();
+    if (current) {
+      const keep = slotLocationIds(activeCard.id);
+      const removable = current.locations.filter((location) => !keep.has(location.id)).map((location) => location.id);
+      setRpgArt((art) => Object.fromEntries(Object.entries(art).filter(([id]) => !removable.includes(id))));
+      for (const id of removable) void deleteRpgArt(activeCard.id, id);
+    }
+    showFeatureNotice('训练已结束，聊天记录保留');
+  };
+
+  const addRpgRule = (text: string) => {
+    const current = rpgStateRef.current;
+    if (!current) return '还没有开始训练。';
+    const result = addRule(current, text, 'user');
+    if (result.error) return result.error;
+    updateRpgState(result.state);
+    return undefined;
+  };
+
   const handleSend = async (forcedPrompt?: string, forcedOoc?: boolean) => {
     if (isGroupScene) {
       await handleGroupSend(forcedPrompt, forcedOoc);
@@ -2044,6 +2431,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         currentGenerationConfig,
       );
       const statusInstruction = buildStatusPromptInstruction(characterStatsRef.current);
+      const rpgTurnState = !isOOC && rpgEnabled ? rpgStateRef.current : null;
+      const rpgPrompt = rpgTurnState ? buildRpgPrompt(rpgTurnState, { char: rpgCharName, user: userName }) : '';
       const systemPrompt = resolveTavernDebugSystemPrompt(automaticSystemPrompt, promptOverride).prompt;
       const promptWithLorebook = lorebookInjected
         ? `${systemPrompt}\n\n【实时硬件世界书激活设定】\n${lorebookInjected}`
@@ -2051,7 +2440,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       const promptWithAction = aiActionRequest
         ? `${promptWithLorebook}\n\n${aiActionRequest.instruction}`
         : promptWithLorebook;
-      const fullSystemPrompt = `${promptWithAction}\n\n${statusInstruction}`;
+      const fullSystemPrompt = [promptWithAction, voiceCallActiveRef.current ? PHONE_CALL_PROMPT : '', rpgPrompt, statusInstruction].filter(Boolean).join('\n\n');
 
       const isContinueInstruction = /^[（(]?\s*继续\s*[)）]?$/.test(rawText.trim());
       const lastAssistantMsg = messages.slice().reverse().find((m) => m.role === 'assistant') || null;
@@ -2089,7 +2478,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         }, currentGenerationConfig);
         const dzmmBaseSystemPrompt = promptOverride
           ? fullSystemPrompt
-          : [dzmmAutomaticPrompt, lorebookInjected, aiActionRequest?.instruction, statusInstruction].filter(Boolean).join('\n\n');
+          : [dzmmAutomaticPrompt, lorebookInjected, aiActionRequest?.instruction, voiceCallActiveRef.current ? PHONE_CALL_PROMPT : '', rpgPrompt, statusInstruction].filter(Boolean).join('\n\n');
         const dzmmSystemPrompt = continuationGuidance
           ? `${dzmmBaseSystemPrompt}\n\n${continuationGuidance}`
           : dzmmBaseSystemPrompt;
@@ -2126,6 +2515,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               'assistant_output',
             ).text;
             throttledUpdateStreamingReply(visibleText);
+            voiceTurnRef.current?.hooks.onVisibleText(visibleText);
           },
         });
       } else {
@@ -2174,6 +2564,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               'assistant_output',
             ).text;
             throttledUpdateStreamingReply(visibleText);
+            voiceTurnRef.current?.hooks.onVisibleText(visibleText);
           },
         );
         reply = result.reply;
@@ -2182,9 +2573,14 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       resetStreamingReply();
 
       const parsedAiActions = parseLorebookAiActionDecisions(reply, aiActionRequest);
-      const cleanRawReply = sanitizeTavernVisibleContent(parsedAiActions.cleanedReply || '（角色暂时没有说话。）', false, rawText);
-      reply = cleanRawReply || '（角色暂时没有说话。）';
-      const parsedStatus = parseAndApplyStatusUpdate(reply, characterStatsRef.current, rawText);
+      // 隐藏标签必须在清洗之前解析：清洗会把 STATUS / RPG 标签一起删掉
+      // 推理模型的思考过程里可能出现示例标签，先去掉思考内容再解析
+      const rawModelReply = stripThinkingArtifacts(parsedAiActions.cleanedReply || '', false) || '（角色暂时没有说话。）';
+      const assistantMessageId = createMessageId('msg');
+      const parsedStatus = parseAndApplyStatusUpdate(rawModelReply, characterStatsRef.current, rawText);
+      if (rpgTurnState && rpgStateRef.current) {
+        commitRpgTurn(rpgStateRef.current, rawModelReply, assistantMessageId);
+      }
       if (parsedStatus.updated) {
         setCharacterStats(parsedStatus.nextStats);
         characterStatsRef.current = parsedStatus.nextStats;
@@ -2289,7 +2685,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       const completedMessages: ChatMsg[] = [
         ...nextMessages,
         {
-          id: createMessageId('msg'),
+          id: assistantMessageId,
           role: 'assistant',
           content: reply,
           isSeseBoosted,
@@ -2303,7 +2699,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       maybeAutoUpdateMemory(completedMessages);
 
       // 5. 完整朗读回复。不能只抽取引号，否则前置叙述会被错误跳过。
-      autoSpeakTavernReplies([{ text: reply, speaker: activeCard }]);
+      if (voiceTurnRef.current) {
+        // 通话中由通话会话逐句朗读，这里只把最终回复交回去
+        voiceTurnRef.current.reply = reply;
+      } else {
+        autoSpeakTavernReplies([{ text: reply, speaker: activeCard }]);
+      }
     } catch (e: any) {
       if (e?.name === 'AbortError') {
         const partialReply = sanitizeTavernVisibleContent(streamingReplyRef.current, false).trim();
@@ -2322,6 +2723,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         }
         return;
       }
+      if (voiceTurnRef.current) voiceTurnRef.current.error = String(e?.message || e || '生成失败').slice(0, 200);
       const isMultimodalIssue = Boolean(userMsg?.images && userMsg.images.length > 0);
       const errorDetail = isMultimodalIssue
         ? `（酒馆连接异常: ${e.message}。提示：若当前使用的不是多模态模型无法识别图片，已支持自动降级或点击该消息图片右上角红叉移除附件，即可顺畅文字聊天；若需图片识别请在【官网/迁移】切换为视觉模型）`
@@ -2356,6 +2758,131 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     }
   };
 
+  handleSendRef.current = handleSend;
+
+  const waitForTavernIdle = async (timeoutMs = 8_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (isLoadingRef.current && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+
+  const createPhoneCallDeps = (): VoiceCallDeps => ({
+    sendTurn: async (text, hooks) => {
+      const turn: { hooks: CallTurnHooks; reply: string | null; error?: string } = { hooks, reply: null };
+      voiceTurnRef.current = turn;
+      try {
+        await handleSendRef.current?.(text, false);
+        if (turn.error) throw new Error(`酒馆连接异常：${turn.error}`);
+        return turn.reply;
+      } finally {
+        if (voiceTurnRef.current === turn) voiceTurnRef.current = null;
+      }
+    },
+    interruptTurn: () => requestControllerRef.current?.abort(),
+    waitUntilReady: () => waitForTavernIdle(),
+    prepareSpeech: (text) => {
+      const speech = prepareTavernSpeechText(applyTavernTextRules(text, loadTavernTextRules(), 'tts').text);
+      // 不保留括号旁白：电话里只读说出口的话
+      const voice = resolveTavernVoiceConfig(activeCard.voiceSettings, safetyConfig.ttsEngine) || { gender: 'female' as const, rate: 1, pitch: 1 };
+      return TTSManager.getInstance().prepare(speech, voice);
+    },
+    stopSpeech: () => TTSManager.getInstance().stop(),
+    sttOptions: buildSttOptions(safetyConfig),
+    turnTiming: safetyConfig.voiceCallTurnTiming,
+  });
+
+  const startPhoneCall = (direction: PhoneCallDirection) => {
+    setShowCallMenu(false);
+    if (isGroupScene) {
+      showFeatureNotice('多人酒馆暂不支持语音通话，请先切回单人对话');
+      return;
+    }
+    if (phoneCall) return;
+    // 通话会占用麦克风与朗读：先停掉按键语音输入和正在进行的整段朗读
+    STTManager.getInstance().stopListening();
+    ttsSequenceRef.current += 1;
+    TTSManager.getInstance().stop();
+    TTSManager.getInstance().unlockAudioContext();
+    voiceCallActiveRef.current = true;
+    setPhoneCall(direction);
+  };
+
+  const scheduleIncomingCall = (minutes: number) => {
+    setShowCallMenu(false);
+    if (scheduledCallTimerRef.current) clearTimeout(scheduledCallTimerRef.current);
+    const delay = minutes * 60_000;
+    setScheduledCallAt(Date.now() + delay);
+    scheduledCallTimerRef.current = setTimeout(() => {
+      scheduledCallTimerRef.current = null;
+      setScheduledCallAt(null);
+      if (!voiceCallActiveRef.current) startPhoneCall('incoming');
+    }, delay);
+    showFeatureNotice(`${activeCard.name} 会在约 ${minutes} 分钟后给你打电话（请停留在酒馆页）`);
+  };
+
+  const cancelScheduledCall = () => {
+    if (scheduledCallTimerRef.current) clearTimeout(scheduledCallTimerRef.current);
+    scheduledCallTimerRef.current = null;
+    setScheduledCallAt(null);
+    setShowCallMenu(false);
+  };
+
+  const handlePhoneCallEnd = (summary: PhoneCallSummary) => {
+    setPhoneCall(null);
+    voiceCallActiveRef.current = false;
+    // 拨出后对方还没接就挂断：不留记录
+    if (!summary.connected && summary.direction === 'outgoing') return;
+    const note = summary.missed
+      ? `（📞 ${activeCard.name} 的未接来电）`
+      : summary.declined
+        ? `（📞 拒接了 ${activeCard.name} 的来电）`
+        : `（📞 语音通话结束 · 时长 ${formatCallDuration(summary.durationSec)}）`;
+    void (async () => {
+      // 等挂断时被中止的那一轮写完消息，再追加通话记录，避免被覆盖
+      await waitForTavernIdle();
+      setMessages((prev) => {
+        const next = [...prev, { id: createMessageId('msg_call'), role: 'assistant' as const, content: note }];
+        void store.saveSessionAsync(activeCard.id, next);
+        return next;
+      });
+    })();
+  };
+
+  const stopTtsPlayback = useCallback(() => TTSManager.getInstance().stop(), []);
+
+  const openObedienceDrill = () => {
+    setShowCallMenu(false);
+    if (phoneCall) return;
+    STTManager.getInstance().stopListening();
+    ttsSequenceRef.current += 1;
+    TTSManager.getInstance().stop();
+    TTSManager.getInstance().unlockAudioContext();
+    setDrillOpen(true);
+  };
+
+  const speakAsCharacter = (text: string) => {
+    const speech = prepareTavernSpeechText(applyTavernTextRules(text, loadTavernTextRules(), 'tts').text);
+    const voice = resolveTavernVoiceConfig(activeCard.voiceSettings, safetyConfig.ttsEngine) || { gender: 'female' as const, rate: 1, pitch: 1 };
+    return TTSManager.getInstance().prepare(speech, voice).play();
+  };
+
+  const handleDrillClose = (summary: DrillSummary | null) => {
+    setDrillOpen(false);
+    if (!summary) return;
+    const level = summary.difficulty === 'custom' ? '自定义' : DRILL_DIFFICULTIES[summary.difficulty].name;
+    const reaction = summary.averageResponseMs === null ? '' : ` · 平均反应 ${(summary.averageResponseMs / 1000).toFixed(1)} 秒`;
+    const note = `（🎙️ 语音服从训练 · ${level} · ${summary.rounds} 句通过 ${summary.passed} 句 · 平均准确率 ${summary.averageAccuracy}%${reaction}）`;
+    void (async () => {
+      await waitForTavernIdle();
+      setMessages((prev) => {
+        const next = [...prev, { id: createMessageId('msg_drill'), role: 'assistant' as const, content: note }];
+        void store.saveSessionAsync(activeCard.id, next);
+        return next;
+      });
+    })();
+  };
+
   const handleSpeak = (text: string, speakerCardId?: string) => {
     const speakerCard = speakerCardId
       ? availableCards.find((card) => card.id === speakerCardId) || activeCard
@@ -2387,15 +2914,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         setIsVoiceProcessing(processing === true);
         if (error) showFeatureNotice(error);
       },
-      {
-        engine: safetyConfig.sttEngine,
-        siliconflowApiKey: safetyConfig.siliconflowSttApiKey,
-        siliconflowModel: safetyConfig.siliconflowSttModel,
-        volcengineApiKey: safetyConfig.volcengineSttApiKey,
-        volcengineAppId: safetyConfig.volcengineSttAppId,
-        volcengineAccessKey: safetyConfig.volcengineSttAccessKey,
-        volcengineResourceId: safetyConfig.volcengineSttResourceId,
-      },
+      buildSttOptions(safetyConfig),
     );
   };
 
@@ -2415,6 +2934,67 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     }, 0);
   };
 
+  /** 用酒馆的文字模型做一次独立请求（不带聊天历史）：生图提示词、训练日程的世界生成和探索共用 */
+  const runTavernTextModel = async (systemPrompt: string, userPrompt: string, signal: AbortSignal, purpose: string): Promise<string> => {
+    const tavernModelConfig = store.getTavernModelConfig();
+    if (tavernModelConfig.provider === 'dzmm') {
+      return DZMMApiClient.chatWithCard({
+        apiToken: tavernModelConfig.apiKey,
+        model: tavernModelConfig.model,
+        userName: tavernModelConfig.userName,
+        card: { ...activeCard, id: `${activeCard.id}_${purpose}`, hardwareEnchanted: false },
+        messages: [{ role: 'user', content: userPrompt }],
+        systemPrompt,
+        signal,
+      });
+    }
+    const useCustomTextModel = tavernModelConfig.provider === 'custom';
+    const client = new LLMClient({
+      ...llmConfig,
+      apiKey: useCustomTextModel ? tavernModelConfig.apiKey : llmConfig.apiKey,
+      baseUrl: useCustomTextModel ? tavernModelConfig.baseUrl : llmConfig.baseUrl,
+      model: useCustomTextModel ? tavernModelConfig.model : llmConfig.model,
+      selectedPersonaId: 'custom',
+    }, { hardwareToolsEnabled: false });
+    const result = await client.sendMessage([{
+      id: `${purpose}_${Date.now()}`,
+      role: 'user',
+      content: userPrompt,
+      timestamp: Date.now(),
+    }], [], systemPrompt, signal);
+    return result.reply;
+  };
+
+  /** 用酒馆设置里的生图通道画一张图（对话生图和训练日程的地点插画共用） */
+  const generateWithConfiguredImageModel = (prompt: string, signal: AbortSignal, sourceImage?: string) => {
+    const imageConfig = store.getTavernImageModelConfig();
+    const useCustomImageApi = imageConfig.provider === 'custom';
+    const useVolcenginePlanImageApi = imageConfig.provider === 'volcengine_plan';
+    const useLocalSdImageApi = imageConfig.provider === 'local_sd';
+    const useDedicatedImageApi = useCustomImageApi || imageConfig.provider === 'siliconflow' || useLocalSdImageApi;
+    return generateTavernAiImage({
+      baseUrl: useDedicatedImageApi || useVolcenginePlanImageApi ? imageConfig.baseUrl : llmConfig.baseUrl,
+      apiKey: resolveTavernImageApiKey(imageConfig.provider, imageConfig.apiKey, llmConfig.baseUrl, llmConfig.apiKey),
+      model: imageConfig.model,
+      imageSize: imageConfig.imageSize,
+      numInferenceSteps: imageConfig.numInferenceSteps,
+      seed: imageConfig.seed,
+      negativePrompt: imageConfig.negativePrompt,
+      localSdBackend: imageConfig.localSdBackend,
+      sdSampler: imageConfig.sdSampler,
+      sdScheduler: imageConfig.sdScheduler,
+      sdCfgScale: imageConfig.sdCfgScale,
+      sdWidth: imageConfig.sdWidth,
+      sdHeight: imageConfig.sdHeight,
+      ...(useVolcenginePlanImageApi
+        ? { provider: 'volcengine_plan' as const }
+        : useLocalSdImageApi ? { provider: 'local_sd' as const } : {}),
+      sourceImage,
+      prompt,
+      signal,
+    });
+  };
+
   const generateAiImageForMessage = async (sourceMessage: ChatMsg) => {
     if (aiImageGeneratingId) return;
     aiImageControllerRef.current?.abort();
@@ -2423,44 +3003,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const requestCardId = activeCard.id;
     setAiImageGeneratingId(sourceMessage.id);
     try {
-      const tavernModelConfig = store.getTavernModelConfig();
-      const imageConfig = store.getTavernImageModelConfig();
-      const useCustomImageApi = imageConfig.provider === 'custom';
-      const useVolcenginePlanImageApi = imageConfig.provider === 'volcengine_plan';
-      const useLocalSdImageApi = imageConfig.provider === 'local_sd';
-      const useDedicatedImageApi = useCustomImageApi || imageConfig.provider === 'siliconflow' || useLocalSdImageApi;
       const promptRequest = buildTavernImagePromptRequest(activeCard, messages, sourceMessage.id);
       let positivePrompt = createFallbackTavernImagePrompt(activeCard, messages, sourceMessage.id);
       try {
         showFeatureNotice('正在让文字模型从当前对话提炼正向生图词…');
-        let rawPrompt = '';
-        if (tavernModelConfig.provider === 'dzmm') {
-          rawPrompt = await DZMMApiClient.chatWithCard({
-            apiToken: tavernModelConfig.apiKey,
-            model: tavernModelConfig.model,
-            userName: tavernModelConfig.userName,
-            card: { ...activeCard, id: `${activeCard.id}_image_prompt`, hardwareEnchanted: false },
-            messages: [{ role: 'user', content: promptRequest }],
-            systemPrompt: TAVERN_IMAGE_PROMPT_SYSTEM,
-            signal: controller.signal,
-          });
-        } else {
-          const useCustomTextModel = tavernModelConfig.provider === 'custom';
-          const client = new LLMClient({
-            ...llmConfig,
-            apiKey: useCustomTextModel ? tavernModelConfig.apiKey : llmConfig.apiKey,
-            baseUrl: useCustomTextModel ? tavernModelConfig.baseUrl : llmConfig.baseUrl,
-            model: useCustomTextModel ? tavernModelConfig.model : llmConfig.model,
-            selectedPersonaId: 'custom',
-          }, { hardwareToolsEnabled: false });
-          const result = await client.sendMessage([{
-            id: `image_prompt_${Date.now()}`,
-            role: 'user',
-            content: promptRequest,
-            timestamp: Date.now(),
-          }], [], TAVERN_IMAGE_PROMPT_SYSTEM, controller.signal);
-          rawPrompt = result.reply;
-        }
+        const rawPrompt = await runTavernTextModel(TAVERN_IMAGE_PROMPT_SYSTEM, promptRequest, controller.signal, 'image_prompt');
         const extractedPrompt = parseTavernPositiveImagePrompt(rawPrompt);
         if (!extractedPrompt) throw new Error('文字模型没有返回有效正向提示词');
         positivePrompt = extractedPrompt;
@@ -2473,27 +3020,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         activeCard.avatar,
         ...(activeCard.galleryImages || []),
       ].find((value) => typeof value === 'string' && /^(?:https:|data:image\/)/i.test(value.trim()));
-      const imageUrl = await generateTavernAiImage({
-        baseUrl: useDedicatedImageApi || useVolcenginePlanImageApi ? imageConfig.baseUrl : llmConfig.baseUrl,
-        apiKey: resolveTavernImageApiKey(imageConfig.provider, imageConfig.apiKey, llmConfig.baseUrl, llmConfig.apiKey),
-        model: imageConfig.model,
-        imageSize: imageConfig.imageSize,
-        numInferenceSteps: imageConfig.numInferenceSteps,
-        seed: imageConfig.seed,
-        negativePrompt: imageConfig.negativePrompt,
-        localSdBackend: imageConfig.localSdBackend,
-        sdSampler: imageConfig.sdSampler,
-        sdScheduler: imageConfig.sdScheduler,
-        sdCfgScale: imageConfig.sdCfgScale,
-        sdWidth: imageConfig.sdWidth,
-        sdHeight: imageConfig.sdHeight,
-        ...(useVolcenginePlanImageApi
-          ? { provider: 'volcengine_plan' as const }
-          : useLocalSdImageApi ? { provider: 'local_sd' as const } : {}),
-        sourceImage,
-        prompt: positivePrompt,
-        signal: controller.signal,
-      });
+      const imageUrl = await generateWithConfiguredImageModel(positivePrompt, controller.signal, sourceImage);
       if (controller.signal.aborted || activeCardIdRef.current !== requestCardId) return;
       const persistedImageUrl = await compressImageForSession(imageUrl).catch(() => imageUrl);
       const aiImageMsg: ChatMsg = {
@@ -2905,8 +3432,130 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           >
             <Mic className="h-3.5 w-3.5" />
           </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowCallMenu((value) => !value)}
+              aria-label="语音通话"
+              aria-expanded={showCallMenu}
+              title="语音通话"
+              className={`relative rounded-xl border p-1.5 text-[10px] transition-all shadow-xs liquid-btn ${scheduledCallAt ? 'border-emerald-300 bg-emerald-50 text-emerald-600' : 'border-white/80 bg-white/90 text-slate-500 hover:border-pink-200 hover:text-pink-600'}`}
+            >
+              <Phone className="h-3.5 w-3.5" />
+              {scheduledCallAt && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white" />}
+            </button>
+          </div>
         </div>
       </div>
+
+      {showCallMenu && (
+        <>
+          {/* 菜单必须放在聊天根节点：放在顶栏里会被下方状态栏与消息气泡的层级盖住 */}
+          <div className="absolute inset-0 z-40" onClick={() => setShowCallMenu(false)} aria-hidden="true" />
+          <div className="tavern-floating-panel absolute right-3 top-14 z-50 w-60 rounded-2xl border p-1.5 text-left">
+                <button type="button" onClick={() => startPhoneCall('outgoing')} className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left hover:bg-pink-50">
+                  <Phone className="h-4 w-4 text-emerald-600" />
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-bold text-slate-800">给 {activeCard.name} 打电话</span>
+                    <span className="block text-[11px] text-slate-500">实时语音对话，随时可以插话</span>
+                  </span>
+                </button>
+                {scheduledCallAt ? (
+                  <button type="button" onClick={cancelScheduledCall} className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left hover:bg-pink-50">
+                    <PhoneIncoming className="h-4 w-4 text-rose-500" />
+                    <span className="text-[13px] font-bold text-slate-800">取消预约来电</span>
+                  </button>
+                ) : (
+                  [1, 5].map((minutes) => (
+                    <button key={minutes} type="button" onClick={() => scheduleIncomingCall(minutes)} className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left hover:bg-pink-50">
+                      <PhoneIncoming className="h-4 w-4 text-pink-600" />
+                      <span className="text-[13px] font-bold text-slate-800">让 TA {minutes} 分钟后打给我</span>
+                    </button>
+                  ))
+                )}
+            <button type="button" onClick={openObedienceDrill} className="flex w-full items-center gap-2.5 rounded-xl border-t border-pink-50 px-3 py-2.5 text-left hover:bg-pink-50">
+              <Megaphone className="h-4 w-4 text-pink-600" />
+              <span className="min-w-0">
+                <span className="block text-[13px] font-bold text-slate-800">语音服从训练</span>
+                <span className="block text-[11px] text-slate-500">TA 说口令，你原话复述并计分</span>
+              </span>
+            </button>
+          </div>
+        </>
+      )}
+
+      {drillOpen && (
+        <ObedienceDrillOverlay
+          name={activeCard.name}
+          avatar={activeCard.avatar}
+          userName={store.getTavernModelConfig().userName || '我'}
+          sttOptions={buildSttOptions(safetyConfig)}
+          speak={speakAsCharacter}
+          stopSpeech={stopTtsPlayback}
+          emsCeiling={resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200)}
+          punish={async (level, seconds) => { await DeviceManager.getInstance().setEmsStrength('AB', level, seconds); }}
+          reward={async () => {
+            const manager = DeviceManager.getInstance();
+            await manager.setToyMotor(8, 4, 0);
+            manager.scheduleOutputStop('toy', 2);
+          }}
+          stopOutputs={() => {
+            const manager = DeviceManager.getInstance();
+            void manager.setEmsStrength('AB', 0).catch(() => undefined);
+            void manager.stopToy().catch(() => undefined);
+          }}
+          onEmergencyStop={() => void useAppStore.getState().triggerEmergencyStop()}
+          onClose={handleDrillClose}
+        />
+      )}
+
+      {rpgPanelTab && (
+        <TavernRpgPanel
+          state={isGroupScene ? null : rpgState}
+          portrait={{ avatar: activeCard.avatar, expressions: activeCard.expressions }}
+          art={rpgArt}
+          artBusyId={rpgArtBusyId}
+          artAuto={rpgArtAuto}
+          onGenerateArt={(locationId) => void generateRpgArt(locationId)}
+          onToggleArtAuto={(enabled) => { setRpgArtAuto(enabled); setRpgArtAutoEnabled(enabled); }}
+          onGenerateWorld={generateRpgWorld}
+          onStartGenerated={startGeneratedRpg}
+          onExplore={() => void exploreRpg()}
+          exploring={rpgExploring}
+          slots={rpgSlots}
+          onSaveSlot={saveRpgToSlot}
+          onLoadSlot={loadRpgFromSlot}
+          onDeleteSlot={(slotId) => setRpgSlots(deleteRpgSlot(activeCard.id, slotId))}
+          onNewRun={startNewRpgRun}
+          charName={rpgCharName}
+          userName={store.getTavernModelConfig().userName || '你'}
+          busy={isLoading}
+          emsCeiling={rpgEmsCeiling}
+          initialTab={rpgPanelTab}
+          onStart={startRpg}
+          onAction={runRpgAction}
+          onAddRule={addRpgRule}
+          onRemoveRule={(index) => { if (rpgStateRef.current) updateRpgState(removeRule(rpgStateRef.current, index)); }}
+          onEnd={endRpgRun}
+          onUpdateHardware={(hardware) => { if (rpgStateRef.current) updateRpgState({ ...rpgStateRef.current, hardware }); }}
+          onClose={() => setRpgPanelTab(null)}
+        />
+      )}
+
+      {phoneCall && (
+        <PhoneCallOverlay
+          name={activeCard.name}
+          avatar={activeCard.avatar}
+          direction={phoneCall}
+          createDeps={createPhoneCallDeps}
+          openingLine={phoneCall === 'outgoing'
+            ? '（📞 我给你打了语音电话，你刚刚接起）'
+            : '（📞 你给我打了语音电话，我刚刚接起。请你先开口，说说为什么打来）'}
+          sttLabel={`实时语音 · ${describeSttEngine(buildSttOptions(safetyConfig))}`}
+          onEnd={handlePhoneCallEnd}
+          onEmergencyStop={() => void useAppStore.getState().triggerEmergencyStop()}
+        />
+      )}
 
       {/* 世界书触发浮动通知 */}
       {lorebookToast && (
@@ -2928,6 +3577,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         onUpdateStats={handleUpdateStats}
         onResetStats={handleResetStats}
       />
+      {rpgActive && rpgState && <TavernRpgHud state={rpgState} art={rpgArt[rpgState.currentId]} onOpen={() => setRpgPanelTab('today')} />}
 
       {/* 消息展示区域（相对定位，容纳消息流与浮动立绘） */}
       <div className="relative z-10 flex-1 min-h-0 flex flex-col">
@@ -3102,6 +3752,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
             {isOOCMode && <button onClick={() => setIsOOCMode(false)} className="flex shrink-0 items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[9px] font-bold text-sky-700 shadow-xs">OOC 模式 <X className="h-2.5 w-2.5" /></button>}
           </div>}
 
+          {rpgActive && rpgState && (
+            <TavernRpgChoices state={rpgState} disabled={isLoading} onPick={pickRpgChoice} onAction={runRpgAction} onOpenShop={() => setRpgPanelTab('map')} />
+          )}
+
           {/* 待发送图片缩略图 */}
           {attachedImages.length > 0 && (
             <div className="flex items-center gap-2 px-1 py-1 overflow-x-auto">
@@ -3220,6 +3874,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               <span className="mt-1.5 block text-[9px] font-bold">上传图片</span>
             </button>
             <button onClick={() => { setIsSeseBoosted((value) => !value); setShowActionMenu(false); }} className={`rounded-2xl p-3 text-center border transition-all ${isSeseBoosted ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white border-rose-400 shadow-sm' : 'border-pink-100/90 bg-white text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 shadow-sm'}`}><Flame className={`mx-auto h-5 w-5 ${isSeseBoosted ? 'text-white' : 'text-rose-500'}`} /><span className="mt-1.5 block text-[9px] font-bold">瑟瑟增强</span></button>
+            {rpgEnabled && <button onClick={() => { setShowActionMenu(false); if (isGroupScene) { showFeatureNotice('多人场景暂不支持训练日程'); return; } setRpgPanelTab('map'); }} className={`rounded-2xl p-3 text-center border transition-all shadow-sm ${rpgState ? 'border-pink-300 bg-pink-50 text-pink-700' : 'border-pink-100/90 bg-white text-slate-700 hover:bg-pink-50/50 hover:border-pink-200'}`}><CalendarDays className="mx-auto h-5 w-5 text-pink-500" /><span className="mt-1.5 block text-[9px] font-bold">训练日程</span></button>}
             <button onClick={() => generateSceneCard()} className="rounded-2xl border border-pink-100/90 bg-white p-3 text-center text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 transition-all shadow-sm"><Camera className="mx-auto h-5 w-5 text-pink-500" /><span className="mt-1.5 block text-[9px] font-bold">生成图片</span></button>
             <button onClick={openCardExtraction} className="rounded-2xl border border-pink-100/90 bg-white p-3 text-center text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 transition-all shadow-sm"><IdCard className="mx-auto h-5 w-5 text-purple-500" /><span className="mt-1.5 block text-[9px] font-bold">生成角色卡</span></button>
             <button onClick={() => saveArchive('save')} className="rounded-2xl border border-pink-100/90 bg-white p-3 text-center text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 transition-all shadow-sm"><Save className="mx-auto h-5 w-5 text-amber-500" /><span className="mt-1.5 block text-[9px] font-bold">保存存档</span></button>

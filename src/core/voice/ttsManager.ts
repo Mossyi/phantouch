@@ -36,6 +36,13 @@ const isAndroidNativeApp = () => Capacitor.isNativePlatform() && Capacitor.getPl
 
 export type SpeakingStateListener = (isSpeaking: boolean, currentText: string | null) => void;
 
+export interface PreparedSpeech {
+  /** 清洗后实际会读出的文本 */
+  text: string;
+  play(): Promise<void>;
+  cancel(): void;
+}
+
 /**
  * 役次元 AI 伴侣高保真 TTS 语音合成中枢 (终极稳健多级容灾架构)
  * 支持：
@@ -235,9 +242,11 @@ export class TTSManager {
     globalRate?: number,
     globalPitch?: number,
     engineType?: TTSEngineType,
-    apiKey?: string
+    apiKey?: string,
+    options: { force?: boolean } = {},
   ): Promise<void> {
-    if (!this.defaults.enabled) return;
+    // 通话中角色必须出声，不受「语音反馈」开关影响
+    if (!this.defaults.enabled && !options.force) return;
     this.stopCurrentPlayback(false);
     const generation = this.playbackGeneration;
     if (isAndroidNativeApp()) {
@@ -350,18 +359,35 @@ export class TTSManager {
     gain: number = 0,
   ): Promise<boolean> {
     if (!apiKey) return false;
-
     const controller = new AbortController();
-    let canceled = false;
-    const cancelRequest = () => {
-      canceled = true;
-      controller.abort();
-    };
+    const cancelRequest = () => controller.abort();
     this.currentPlaybackCancel = cancelRequest;
-    const timeout = setTimeout(() => {
-      canceled = true;
-      controller.abort();
-    }, 30_000);
+    try {
+      const audioUrl = await this.fetchSiliconflowAudioUrl(text, config, apiKey, rate, gain, controller.signal);
+      if (!audioUrl) return false;
+      await this.playAudioBlobUrl(audioUrl);
+      return true;
+    } catch (error) {
+      console.warn('硅基流动 TTS 合成或播放失败:', error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      if (this.currentPlaybackCancel === cancelRequest) this.currentPlaybackCancel = null;
+    }
+  }
+
+  /** 只合成不播放：返回音频的 blob URL（调用方负责播放或 revoke），失败返回 null */
+  private async fetchSiliconflowAudioUrl(
+    text: string,
+    config: VoiceConfig | undefined,
+    apiKey: string,
+    rate: number,
+    gain: number,
+    signal: AbortSignal,
+  ): Promise<string | null> {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    const timeout = setTimeout(abort, 30_000);
     try {
       const model = normalizeSiliconflowTtsModel(this.defaults.siliconflowModel || DEFAULT_SILICONFLOW_TTS_MODEL);
       const selectedVoice = config?.siliconflowVoice
@@ -387,20 +413,18 @@ export class TTSManager {
           connectTimeout: 30_000,
           readTimeout: 30_000,
         });
-        if (canceled || nativeResponse.status < 200 || nativeResponse.status >= 300) {
+        if (controller.signal.aborted || nativeResponse.status < 200 || nativeResponse.status >= 300) {
           console.warn(`硅基流动 TTS 原生请求失败，HTTP ${nativeResponse.status}`);
-          return false;
+          return null;
         }
         const audioBytes = decodeBase64Audio(nativeResponse.data);
         if (!audioBytes) {
           console.warn('硅基流动 TTS 原生响应不是有效的 Base64 音频');
-          return false;
+          return null;
         }
         const audioCopy = new Uint8Array(audioBytes.byteLength);
         audioCopy.set(audioBytes);
-        const audioUrl = URL.createObjectURL(new Blob([audioCopy.buffer], { type: 'audio/mpeg' }));
-        await this.playAudioBlobUrl(audioUrl);
-        return true;
+        return URL.createObjectURL(new Blob([audioCopy.buffer], { type: 'audio/mpeg' }));
       }
 
       const res = await fetch('https://api.siliconflow.cn/v1/audio/speech', {
@@ -413,21 +437,21 @@ export class TTSManager {
         signal: controller.signal,
       });
 
-      if (!res.ok || canceled) return false;
+      if (!res.ok || controller.signal.aborted) return null;
       const declaredLength = Number(res.headers.get('content-length'));
-      if (Number.isFinite(declaredLength) && declaredLength > 20_000_000) return false;
+      if (Number.isFinite(declaredLength) && declaredLength > 20_000_000) return null;
 
       const blob = await res.blob();
-      if (canceled || blob.size > 20_000_000) return false;
-      const audioUrl = URL.createObjectURL(blob);
-      await this.playAudioBlobUrl(audioUrl);
-      return true;
+      if (controller.signal.aborted || blob.size > 20_000_000) return null;
+      return URL.createObjectURL(blob);
     } catch (error) {
-      console.warn('硅基流动 TTS 合成或播放失败:', error instanceof Error ? error.message : String(error));
-      return false;
+      if (!controller.signal.aborted) {
+        console.warn('硅基流动 TTS 合成失败:', error instanceof Error ? error.message : String(error));
+      }
+      return null;
     } finally {
       clearTimeout(timeout);
-      if (this.currentPlaybackCancel === cancelRequest) this.currentPlaybackCancel = null;
+      signal.removeEventListener('abort', abort);
     }
   }
 
@@ -440,12 +464,30 @@ export class TTSManager {
     gain: number,
   ): Promise<boolean> {
     const controller = new AbortController();
-    let canceled = false;
-    const cancelRequest = () => {
-      canceled = true;
-      controller.abort();
-    };
+    const cancelRequest = () => controller.abort();
     this.currentPlaybackCancel = cancelRequest;
+    try {
+      const audioUrl = await this.fetchVolcengineAudioUrl(text, config, apiKey, rate, pitch, gain, controller.signal);
+      if (!audioUrl) return false;
+      await this.playAudioBlobUrl(audioUrl);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      if (this.currentPlaybackCancel === cancelRequest) this.currentPlaybackCancel = null;
+    }
+  }
+
+  /** 只合成不播放：返回音频的 blob URL（调用方负责播放或 revoke），失败返回 null */
+  private async fetchVolcengineAudioUrl(
+    text: string,
+    config: VoiceConfig | undefined,
+    apiKey: string,
+    rate: number,
+    pitch: number,
+    gain: number,
+    signal: AbortSignal,
+  ): Promise<string | null> {
     const voice = config?.volcengineVoice
       || this.defaults.volcengineVoice
       || (config?.gender === 'male' ? 'zh_male_m191_uranus_bigtts' : VOLCENGINE_TTS_FEMALE_VOICE);
@@ -477,24 +519,20 @@ export class TTSManager {
             }),
           },
         }),
-        signal: controller.signal,
+        signal,
       }, {
         timeoutMs: 90_000,
         maxBytes: 20_000_000,
         timeoutMessage: '火山豆包 TTS 超过 90 秒未返回',
       });
-      if (!response.ok || canceled) return false;
+      if (!response.ok || signal.aborted) return null;
       const audioBytes = this.decodeVolcengineTtsAudio(responseText);
-      if (canceled || !audioBytes || audioBytes.byteLength === 0 || audioBytes.byteLength > 20_000_000) return false;
+      if (signal.aborted || !audioBytes || audioBytes.byteLength === 0 || audioBytes.byteLength > 20_000_000) return null;
       const audioCopy = new Uint8Array(audioBytes.byteLength);
       audioCopy.set(audioBytes);
-      const audioUrl = URL.createObjectURL(new Blob([audioCopy.buffer], { type: 'audio/mpeg' }));
-      await this.playAudioBlobUrl(audioUrl);
-      return true;
+      return URL.createObjectURL(new Blob([audioCopy.buffer], { type: 'audio/mpeg' }));
     } catch {
-      return false;
-    } finally {
-      if (this.currentPlaybackCancel === cancelRequest) this.currentPlaybackCancel = null;
+      return null;
     }
   }
 
@@ -787,6 +825,66 @@ export class TTSManager {
       audio.load();
       audio.play().catch((error) => finish(error));
     });
+  }
+
+  /**
+   * 预先合成一句话：云端引擎（硅基流动 / 火山豆包）立即开始请求音频，play() 时直接播放，
+   * 这样通话里上一句还在播时下一句已经合成好，句与句之间没有等待。
+   * 其他引擎没有可预取的音频，play() 时再按常规流程朗读。
+   * 通话中强制出声，不受「语音反馈」开关影响。
+   */
+  prepare(text: string, config?: VoiceConfig): PreparedSpeech {
+    const cleaned = this.cleanTextForSpeech(text, config?.preserveNarration === true);
+    const engine = this.defaults.engineType;
+    const controller = new AbortController();
+    const rate = this.defaults.rate;
+    const pitch = this.defaults.pitch;
+    const gain = Math.max(-10, Math.min(10, config?.gain ?? this.defaults.gain));
+    let audioUrl: Promise<string | null> | null = null;
+    if (cleaned && engine === 'siliconflow' && this.defaults.siliconflowApiKey) {
+      audioUrl = this.fetchSiliconflowAudioUrl(cleaned, config, this.defaults.siliconflowApiKey, rate, gain, controller.signal);
+    } else if (cleaned && engine === 'volcengine_tts' && this.defaults.volcengineApiKey) {
+      audioUrl = this.fetchVolcengineAudioUrl(cleaned, config, this.defaults.volcengineApiKey, rate, pitch, gain, controller.signal);
+    }
+    let canceled = false;
+    return {
+      text: cleaned,
+      cancel: () => {
+        canceled = true;
+        controller.abort();
+        void audioUrl?.then((url) => { if (url) URL.revokeObjectURL(url); });
+      },
+      play: async () => {
+        if (canceled || !cleaned) return;
+        const url = audioUrl ? await audioUrl : null;
+        if (canceled) {
+          if (url) URL.revokeObjectURL(url);
+          return;
+        }
+        if (!url) {
+          await this.speak(text, config, undefined, undefined, undefined, undefined, { force: true });
+          return;
+        }
+        this.stopCurrentPlayback(false);
+        const generation = this.playbackGeneration;
+        this.isSpeakingNow = true;
+        this.currentSpokenText = cleaned;
+        this.notify();
+        try {
+          await this.playAudioBlobUrl(url);
+        } catch {
+          if (generation === this.playbackGeneration) {
+            await this.speak(text, config, undefined, undefined, undefined, undefined, { force: true });
+          }
+        } finally {
+          if (generation === this.playbackGeneration) {
+            this.isSpeakingNow = false;
+            this.currentSpokenText = null;
+            this.notify();
+          }
+        }
+      },
+    };
   }
 
   stop() {

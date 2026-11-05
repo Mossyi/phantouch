@@ -75,7 +75,9 @@ export interface DeviceSystemState {
 
 // 安全限制与全局反馈设置
 export type TTSEngineType = 'siliconflow' | 'volcengine_tts' | 'edge_neural' | 'browser_native';
-export type STTEngineType = 'browser' | 'siliconflow' | 'volcengine';
+export type STTEngineType = 'browser' | 'siliconflow' | 'volcengine' | 'openai';
+/** 语音通话的断句等待：说完停顿多久算一句结束 */
+export type VoiceCallTurnTiming = 'fast' | 'standard' | 'patient';
 
 export interface TtsVoiceProfile {
   id: string;
@@ -111,6 +113,10 @@ export interface SafetyConfig {
   volcengineSttAppId?: string; // 旧版控制台 APP ID
   volcengineSttAccessKey?: string; // 旧版控制台 Access Token
   volcengineSttResourceId?: string;
+  openaiSttBaseUrl?: string; // OpenAI 兼容识别接口（OpenAI / Groq / 本地 Whisper 等）
+  openaiSttApiKey?: string;
+  openaiSttModel?: string;
+  voiceCallTurnTiming?: VoiceCallTurnTiming;
   ttsEngine: TTSEngineType; // 语音合成引擎: 硅基流动 / 火山豆包 / 微软Edge免费 / 浏览器原生
   siliconflowTtsApiKey?: string; // 硅基流动 TTS 专用 Key，不与 LLM 配置混用
   siliconflowTtsModel?: string; // 硅基流动可用模型

@@ -5,6 +5,7 @@ import { resolveEnabledEmsCeiling } from '../core/safetyLimits';
 import { EMSWaveEngine } from '../core/protocol/waveEngine';
 import { WaveVisualizer } from '../components/WaveVisualizer';
 import { MotorGauge } from '../components/MotorGauge';
+import { SegmentedTabs } from '../components/SegmentedTabs';
 import { Zap, Activity, Gauge, Flame, StopCircle, RefreshCw, Plus, Minus, ArrowUp, ArrowDown, Tv, ShieldCheck } from 'lucide-react';
 
 export const ControlView: React.FC = () => {
@@ -307,25 +308,16 @@ export const ControlView: React.FC = () => {
       )}
 
       {/* 顶部设备分类筛选 (Apple Liquid Pill Track) */}
-      <div className="liquid-pill-track grid grid-cols-3 gap-1 p-1">
-        {[
-          { id: 'ems', label: 'EMS' },
-          { id: 'toy', label: '马达' },
-          { id: 'enema', label: '水泵' },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveCategory(tab.id as 'ems' | 'toy' | 'enema')}
-            className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all active:scale-95 ${
-              activeCategory === tab.id
-                ? 'liquid-pill-active'
-                : 'text-slate-600 hover:text-pink-600 hover:bg-white/60'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <SegmentedTabs
+        ariaLabel="输出设备"
+        value={activeCategory}
+        onChange={setActiveCategory}
+        items={[
+          { id: 'ems', label: 'EMS 电击', icon: Zap },
+          { id: 'toy', label: isOpossum ? '负鼠震动' : '马达', icon: Activity },
+          { id: 'enema', label: '水泵', icon: Gauge },
+        ]}
+      />
 
       {/* ================= EMS 电击器控制区 ================= */}
       {activeCategory === 'ems' && (

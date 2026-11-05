@@ -3,6 +3,10 @@ import { SponsorPanel } from '../components/SponsorPanel';
 import { DataManagementPanel } from '../components/DataManagementPanel';
 import { ModelCapabilityPanel } from '../components/ModelCapabilityPanel';
 import { ModelProfilesPanel } from '../components/ModelProfilesPanel';
+import { ThemePicker } from '../components/ThemePicker';
+import { OpenAiSttFields, VoiceCallTimingSetting } from '../components/SttProviderSettings';
+import { SegmentedTabs } from '../components/SegmentedTabs';
+import { AudioLines, Heart, Settings2 } from 'lucide-react';
 import { BuildInfoPanel } from '../components/BuildInfoPanel';
 import { AppDiagnosticsPanel } from '../components/AppDiagnosticsPanel';
 import { TavernMessageContent } from '../components/tavern/TavernMessageContent';
@@ -194,6 +198,7 @@ export const SettingsView: React.FC = () => {
       siliconflowSttApiKey: _siliconflowSttApiKey,
       volcengineSttApiKey: _volcengineSttApiKey,
       volcengineSttAccessKey: _volcengineSttAccessKey,
+      openaiSttApiKey: _openaiSttApiKey,
       ...safeSafetyConfig
     } = useAppStore.getState().safetyConfig;
     const data = {
@@ -304,32 +309,25 @@ export const SettingsView: React.FC = () => {
 
   return (
     <div className="max-w-md mx-auto px-3.5 py-4 pb-10 space-y-4">
-      {/* 优雅的一体化子标签导航 (消除原本重复的巨型 SETTINGS 设置中心卡片) */}
-      <div className="frosted-feather-glass sticky top-0 z-20 flex items-center p-1 rounded-2xl shadow-xs">
-        {([
-          ['sponsor', '💖 赞助'],
-          ['ai', 'AI 人工智能'],
-          ['voice', '语音'],
-          ['general', '通用'],
-        ] as const).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setActiveSection(id)}
-            className={`flex-1 py-1.5 px-0.5 rounded-xl text-[10.5px] font-black transition text-center truncate ${
-              activeSection === id ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm font-black' : 'text-slate-600 hover:text-pink-600 hover:bg-white/60'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* 设置分区：与顶部导航同一套分段样式；不吸顶，避免滚动时盖住上方的「系统设置 / 设备连接 / 成就殿堂」 */}
+      <SegmentedTabs
+        ariaLabel="设置分区"
+        value={activeSection}
+        onChange={setActiveSection}
+        items={[
+          { id: 'sponsor', label: '赞助', icon: Heart },
+          { id: 'ai', label: 'AI 模型', icon: Sparkles },
+          { id: 'voice', label: '语音', icon: AudioLines },
+          { id: 'general', label: '通用', icon: Settings2 },
+        ]}
+      />
 
       {/* ================= 赞助支持页面 ================= */}
       {activeSection === 'sponsor' && <SponsorPanel onGoToAi={() => setActiveSection('ai')} />}
 
       {/* ================= 通用设置 ================= */}
       {/* 更新放在最前面：这是用户最需要第一时间看到的状态 */}
+      {activeSection === 'general' && <ThemePicker />}
       {activeSection === 'general' && <BuildInfoPanel />}
       {activeSection === 'general' && <DataManagementPanel />}
       {activeSection === 'general' && <AppDiagnosticsPanel />}
@@ -866,14 +864,15 @@ export const SettingsView: React.FC = () => {
         <div className="space-y-3 rounded-2xl border border-pink-200 bg-pink-50/40 p-3">
           <div className="flex items-center gap-2">
             <div className="rounded-lg border border-pink-200 bg-pink-50 p-1.5 text-pink-600"><Mic className="h-4 w-4" /></div>
-            <div><h3 className="text-sm font-bold text-slate-800">语音识别（STT）</h3><p className="text-[10px] text-slate-500">伴侣与酒馆共用；云端模式停顿约 1 秒后自动发送</p></div>
+            <div><h3 className="text-sm font-bold text-slate-800">语音识别（STT）</h3><p className="text-[10px] text-slate-500">伴侣、酒馆与语音通话共用；云端模式停顿后自动发送</p></div>
           </div>
 
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-2 gap-1.5">
             {[
-              { id: 'browser', label: '本机/浏览器', hint: '免 Key' },
-              { id: 'siliconflow', label: '硅基流动', hint: '准确快速' },
+              { id: 'browser', label: '本机/浏览器', hint: '免 Key，电脑 Chrome 推荐' },
+              { id: 'siliconflow', label: '硅基流动', hint: 'SenseVoice / TeleSpeech' },
               { id: 'volcengine', label: '火山豆包', hint: '极速版' },
+              { id: 'openai', label: 'OpenAI 兼容', hint: 'OpenAI / Groq / 本地 Whisper' },
             ].map((engine) => (
               <button key={engine.id} type="button" onClick={() => setSafetyConfig({ sttEngine: engine.id as any })} className={`rounded-xl border px-2 py-2 text-center transition-all ${safetyConfig.sttEngine === engine.id ? 'border-pink-300 bg-pink-50 text-pink-700 shadow-sm font-black' : 'border-pink-100 bg-white text-slate-600 hover:border-pink-200'}`}>
                 <span className="block text-[10px] font-bold">{engine.label}</span><span className="mt-0.5 block text-[8.5px] opacity-80">{engine.hint}</span>
@@ -914,7 +913,11 @@ export const SettingsView: React.FC = () => {
               <label className="block text-[9px] font-bold text-slate-600">资源 ID<input value={safetyConfig.volcengineSttResourceId || 'volc.bigasr.auc_turbo'} onChange={(event) => setSafetyConfig({ volcengineSttResourceId: event.target.value })} className="mt-1 w-full rounded-lg border border-pink-200 bg-pink-50/30 px-2.5 py-2 font-mono text-[9px] text-slate-800 outline-none focus:border-pink-400" /></label>
             </div>
           )}
+
+          {safetyConfig.sttEngine === 'openai' && <OpenAiSttFields config={safetyConfig} setConfig={setSafetyConfig} />}
         </div>
+
+        <VoiceCallTimingSetting config={safetyConfig} setConfig={setSafetyConfig} />
 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">

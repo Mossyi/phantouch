@@ -21,6 +21,7 @@ import { YCYIMBridgeClient } from './bridge/ycyImClient';
 import { DGLabSocketClient } from './bridge/dglabSocketClient';
 import { clampOutputToLimit, normalizeFiniteRange, normalizeSafetyLimit, randomIntegerWithinLimits, resolveEnabledEmsCeiling } from './safetyLimits';
 import { normalizeSiliconflowTtsModel, normalizeSiliconflowTtsVoice } from './voice/siliconflowTts';
+import { parseApiBaseUrl, parseLocalNetworkApiBaseUrl } from './apiBaseUrl';
 
 export type DeviceStateCallback = (state: DeviceSystemState) => void;
 export type EmergencyStopCallback = () => void;
@@ -166,6 +167,10 @@ export class DeviceManager {
     volcengineSttAppId: '',
     volcengineSttAccessKey: '',
     volcengineSttResourceId: 'volc.bigasr.auc_turbo',
+    openaiSttBaseUrl: 'https://api.openai.com/v1',
+    openaiSttApiKey: '',
+    openaiSttModel: 'gpt-4o-mini-transcribe',
+    voiceCallTurnTiming: 'standard',
     ttsEngine: 'siliconflow',
     siliconflowTtsApiKey: '',
     siliconflowTtsModel: 'FunAudioLLM/CosyVoice2-0.5B',
@@ -415,7 +420,7 @@ export class DeviceManager {
     next.voiceFeedback = next.voiceFeedback !== false;
     next.autoPlayVoice = next.autoPlayVoice !== false;
     next.handsFreeVoiceMode = next.handsFreeVoiceMode === true;
-    if (!['browser', 'siliconflow', 'volcengine'].includes(next.sttEngine)) {
+    if (!['browser', 'siliconflow', 'volcengine', 'openai'].includes(next.sttEngine)) {
       next.sttEngine = this.safetyConfig.sttEngine;
     }
     next.siliconflowSttApiKey = String(next.siliconflowSttApiKey || '').trim().slice(0, 1000);
@@ -426,6 +431,14 @@ export class DeviceManager {
     next.volcengineSttAppId = String(next.volcengineSttAppId || '').trim().slice(0, 200);
     next.volcengineSttAccessKey = String(next.volcengineSttAccessKey || '').trim().slice(0, 1000);
     next.volcengineSttResourceId = String(next.volcengineSttResourceId || '').trim().slice(0, 200) || 'volc.bigasr.auc_turbo';
+    // 只接受 HTTPS，或局域网内的 HTTP（本地 Whisper 服务）；非法地址回退上一次的有效值
+    const sttBaseUrl = parseApiBaseUrl(next.openaiSttBaseUrl) ?? parseLocalNetworkApiBaseUrl(next.openaiSttBaseUrl);
+    next.openaiSttBaseUrl = sttBaseUrl ?? (this.safetyConfig.openaiSttBaseUrl || 'https://api.openai.com/v1');
+    next.openaiSttApiKey = String(next.openaiSttApiKey || '').trim().slice(0, 1000);
+    next.openaiSttModel = String(next.openaiSttModel || '').trim().slice(0, 200) || 'gpt-4o-mini-transcribe';
+    if (!['fast', 'standard', 'patient'].includes(String(next.voiceCallTurnTiming))) {
+      next.voiceCallTurnTiming = 'standard';
+    }
     if (!['siliconflow', 'volcengine_tts', 'edge_neural', 'browser_native'].includes(next.ttsEngine)) {
       next.ttsEngine = this.safetyConfig.ttsEngine;
     }

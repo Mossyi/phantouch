@@ -43,6 +43,7 @@ import {
 } from '../../core/tavern/dzmmApiClient';
 import { fetchLocalSdResourceCatalog } from '../../core/tavern/tavernImageGenerator';
 import {
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronUp,
@@ -55,12 +56,14 @@ import {
   SlidersHorizontal,
   Sparkles,
 } from 'lucide-react';
+import { isRpgModeEnabled, setRpgModeEnabled } from '../../core/tavern/tavernRpg';
 
 type ActiveSection = 'model' | 'generation' | 'image' | 'backup';
 
 export const TavernApiTab: React.FC = () => {
   const store = TavernStore.getInstance();
   const [activeSection, setActiveSection] = useState<ActiveSection>('model');
+  const [rpgEnabled, setRpgEnabled] = useState(isRpgModeEnabled);
   const [config, setConfig] = useState<TavernModelConfig>(store.getTavernModelConfig());
   const [imageConfig, setImageConfig] = useState<TavernImageModelConfig>(store.getTavernImageModelConfig());
   const [generationConfig, setGenerationConfig] = useState<TavernGenerationConfig>(store.getGenerationConfig());
@@ -275,6 +278,25 @@ export const TavernApiTab: React.FC = () => {
 
   return (
     <div className="space-y-3.5 pb-8">
+      {/* 玩法开关：训练日程默认关闭 */}
+      <label className="flex items-center gap-3 rounded-3xl border border-pink-100/90 bg-white p-3.5 shadow-sm">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-pink-200 bg-pink-50 text-pink-600">
+          <CalendarDays className="h-5 w-5" />
+        </div>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-black text-slate-800">训练日程</span>
+          <span className="block text-[10.5px] leading-relaxed text-slate-500">由角色调教你的按天经营玩法：地图、你的体力和训练属性、积分兑换、目标。开启后在对谈的工具菜单里进入，关闭不会删除进度。</span>
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          aria-label="开启训练日程"
+          checked={rpgEnabled}
+          onChange={(event) => { setRpgEnabled(event.target.checked); setRpgModeEnabled(event.target.checked); }}
+          className="h-5 w-5 shrink-0 accent-pink-500"
+        />
+      </label>
+
       {/* 顶部现代化分段胶囊导航 */}
       <div className="grid grid-cols-4 gap-1 p-1 rounded-2xl bg-pink-50/60 border border-pink-100/80 backdrop-blur-md shadow-sm">
         {sections.map((sec) => {

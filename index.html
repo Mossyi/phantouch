@@ -18,6 +18,18 @@
     <title>幻触 Phantouch - AI 伴侣与感官智控中枢</title>
 
     <script>
+      // 在样式加载前应用已保存的界面主题，避免启动时闪一下默认配色（与 src/core/ui/theme.ts 保持一致）
+      (function() {
+        try {
+          var theme = JSON.parse(localStorage.getItem('ycy_ui_theme') || 'null');
+          if (theme === 'neon' || theme === 'minimal' || theme === 'aurora') {
+            document.documentElement.setAttribute('data-theme', theme);
+            if (theme === 'neon') document.documentElement.style.colorScheme = 'dark';
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <script>
       // 拦截老旧系统/Capacitor 在软键盘弹起时误将键盘高度注入 --safe-area-inset-bottom 的缺陷 (Capacitor Issue #8329)
       (function() {
         try {
