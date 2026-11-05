@@ -1,7 +1,7 @@
 {
   "version": "1.1.1",
-  "versionCode": 186,
-  "builtAt": "2026-11-05T06:17:27.147Z",
+  "versionCode": 188,
+  "builtAt": "2026-11-05T06:57:25.980Z",
   "notice": "幻触新版本发布，欢迎体验！",
   "changelog": [
     "**波形自动起振**：波形只决定形状、幅度来自强度；强度为 0 时郊狼 V2/V3 一个包都不会写（`sendEmsWave` 内部有 `if (strength > 0)` 守卫）。而模式工坊的波形按钮、悬浮窗锯齿波、AI 的 `send_ems_wave`、契约查岗与控射推进都**只调波形不设强度**，导致\"注入了波形却毫无感觉\"。现在 `sendEmsWave` 会在目标通道强度为 0 时按用户配置的「最小强度下限」自动起振，并在返回信息里说明；通道上限为 0 的通道不会被起振。",
@@ -27,6 +27,6 @@
   ],
   "apkUrl": "https://phantouch-updates.mossyi.workers.dev/app/Phantouch.apk",
   "backupUrl": "https://afdian.com/a/CyberK/plan",
-  "apkSha256": "04057b4fe716cab95194882725cd171701d745008911aa55eb45d75ff6ee8e39",
-  "apkSize": 10585621
+  "apkSha256": "33a11785b2b0f2e5c2c50fbb8d55337faf9945e9c5d475e37d38a7843b8fb0b3",
+  "apkSize": 10590721
 }

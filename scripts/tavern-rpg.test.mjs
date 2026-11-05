@@ -420,7 +420,8 @@ test('存档槽：最多 5 个，满了拒绝而不是悄悄覆盖；自动存�
     const loaded = slots.loadRpgSlot('card', result.slots.find((s) => s.name === '第一段').id);
     assert.equal(loaded.worldName, '契约训练');
     assert.ok(slots.slotLocationIds('card').has(loaded.currentId));
-    assert.equal(slots.deleteRpgSlot('card', result.slots[0].id).length, 4);
+    const currentSlots = slots.listRpgSlots('card');
+    assert.equal(slots.deleteRpgSlot('card', currentSlots[0].id).length, 4);
   } finally {
     delete globalThis.localStorage;
   }

@@ -67,6 +67,14 @@ export const stageIndex = (stats: RpgTraineeStats) => {
 
 // ─── 课程（era 的训练指令）──────────────────────────────────────────────────────
 
+export interface RpgSensorChallenge {
+  type: 'pressure' | 'heart_rate';
+  targetValue: number;
+  durationSeconds: number;
+  label: string;
+  instruction: string;
+}
+
 export interface RpgCourse {
   id: string;
   name: string;
@@ -86,6 +94,8 @@ export interface RpgCourse {
   unlock?: { stat: RpgStatKey; level: number };
   /** 放松类：压力过高时仍然可以进行 */
   relief?: boolean;
+  /** 具身硬件挑战：结合外设传感器或屏幕触控模拟 */
+  sensorChallenge?: RpgSensorChallenge;
 }
 
 export const RPG_COURSES: RpgCourse[] = [
@@ -97,6 +107,43 @@ export const RPG_COURSES: RpgCourse[] = [
   { id: 'blindfold', name: '眼罩感官训练', description: '戴上眼罩，只凭声音和触碰跟随指引', kinds: ['playroom', 'bedroom'], check: { stat: 'shame', dc: 13 }, stamina: 10, stress: 4, gain: { shame: -4, devotion: 2 }, points: 10, unlock: { stat: 'devotion', level: 1 } },
   { id: 'errand', name: '外出小任务', description: '在外面完成调教者交代的小任务', kinds: ['outdoor', 'cafe'], check: { stat: 'shame', dc: 14 }, stamina: 10, stress: 5, gain: { shame: -5, obedience: 2 }, points: 12, unlock: { stat: 'shame', level: 2 } },
   { id: 'hold', name: '耐力保持', description: '在规定时间内一直保持指定的状态', kinds: ['playroom'], check: { stat: 'endurance', dc: 15 }, stamina: 20, stress: 7, gain: { endurance: 6 }, points: 15, unlock: { stat: 'endurance', level: 2 } },
+  {
+    id: 'pelvic_endurance',
+    name: '括约肌耐力保持',
+    description: '使用灵猫/排便压力传感器或屏幕长按，保持核心夹紧耐力',
+    kinds: ['playroom', 'bedroom'],
+    check: { stat: 'endurance', dc: 13 },
+    stamina: 12,
+    stress: 4,
+    gain: { endurance: 5, obedience: 2 },
+    points: 12,
+    unlock: { stat: 'endurance', level: 1 },
+    sensorChallenge: {
+      type: 'pressure',
+      targetValue: 25,
+      durationSeconds: 10,
+      label: '括约肌压力维持',
+      instruction: '保持括约肌夹紧压力 >= 25 kPa（或长按屏幕发力按钮）持续 10 秒',
+    },
+  },
+  {
+    id: 'heart_calm',
+    name: '心率平复自律',
+    description: '在调教者的注视下深呼吸，控制心跳，保持镇定不破防',
+    kinds: ['home', 'playroom', 'bedroom'],
+    check: { stat: 'obedience', dc: 12 },
+    stamina: 6,
+    stress: -2,
+    gain: { obedience: 4, devotion: 2 },
+    points: 10,
+    sensorChallenge: {
+      type: 'heart_rate',
+      targetValue: 95,
+      durationSeconds: 10,
+      label: '心率平复自律',
+      instruction: '深呼吸调整呼吸节奏，将心率控制在 95 bpm 以下（或按住保持平稳呼吸）持续 10 秒',
+    },
+  },
   { id: 'trust', name: '信任练习', description: '闭上眼睛，把节奏完全交给调教者', kinds: ['playroom', 'bedroom'], check: { stat: 'devotion', dc: 15 }, stamina: 12, stress: 4, gain: { devotion: 5, shame: -2 }, points: 15, unlock: { stat: 'devotion', level: 2 } },
   { id: 'report', name: '晚间汇报', description: '向调教者汇报今天的表现和感受', kinds: ['bedroom', 'home'], check: { stat: 'devotion', dc: 9 }, stamina: 3, stress: -3, gain: { devotion: 3 }, points: 5 },
   { id: 'aftercare', name: '安抚时间', description: '被抱着、被夸奖，慢慢放松下来', kinds: ['bedroom', 'bath', 'home'], stamina: -5, stress: -20, gain: { devotion: 2 }, points: 0, relief: true },

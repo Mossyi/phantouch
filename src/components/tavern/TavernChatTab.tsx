@@ -161,6 +161,7 @@ import {
   CalendarDays,
 } from 'lucide-react';
 import { TavernRpgChoices, TavernRpgHud, TavernRpgPanel, type RpgPanelTab, type RpgSystemAction } from './TavernRpgPanel';
+import { RpgSensorChallengeModal } from './RpgSensorChallengeModal';
 import { buildLocationArtPrompt, deleteRpgArt, fetchImageAsDataUrl, isRpgArtAutoEnabled, loadRpgArt, saveRpgArt, setRpgArtAutoEnabled } from '../../core/tavern/tavernRpgArt';
 import { deleteRpgSlot, listRpgSlots, loadRpgSlot, saveRpgSlot, slotLocationIds, type RpgSaveSlot } from '../../core/tavern/tavernRpgSlots';
 import { WORLD_GEN_SYSTEM, buildExploreRequest, buildWorldGenRequest, parseExploredLocations, parseGeneratedWorld, type GeneratedWorld, type WorldGenInput } from '../../core/tavern/tavernRpgWorldGen';
@@ -173,11 +174,13 @@ import {
   buildRpgPrompt,
   buyItem,
   consumePardon,
+  countNewlyExpiredSummons,
   createRpgState,
   createRpgStateFromTemplate,
   discoverLocations,
   doWork,
   evaluateProgress,
+  findCourse,
   formatCheckResult,
   getTrait,
   isRpgModeEnabled,
@@ -198,6 +201,7 @@ import {
   type RpgActionResult,
   type RpgCheckResult,
   type RpgChoice,
+  type RpgSensorChallenge,
   type TavernRpgState,
 } from '../../core/tavern/tavernRpg';
 
@@ -490,6 +494,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [rpgState, setRpgState] = useState<TavernRpgState | null>(() => loadRpgState(activeCard.id));
   const rpgStateRef = useRef<TavernRpgState | null>(rpgState);
   const [rpgPanelTab, setRpgPanelTab] = useState<RpgPanelTab | null>(null);
+  const [activeSensorChallenge, setActiveSensorChallenge] = useState<{
+    courseId: string;
+    courseName: string;
+    challenge: RpgSensorChallenge;
+  } | null>(null);
   // 日程模式在酒馆设置里开关，默认关闭；关闭时不显示入口、不注入提示词，进度保留
   const [rpgEnabled, setRpgEnabled] = useState(isRpgModeEnabled);
   // 地点插画：{ 地点 id: dataURL }，存在 IndexedDB
@@ -2094,6 +2103,25 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       ...applied.notes.filter((entry) => entry.tone !== 'warn').map((entry) => entry.text),
     ].slice(0, 3);
     if (highlights.length) showFeatureNotice(highlights.join(' · '));
+
+    // 硬件联动：家规违规自动电击惩罚
+    const violationDiff = applied.state.today.violations - before.today.violations;
+    const manager = DeviceManager.getInstance();
+    const baseLevel = Math.min(applied.state.hardware.punishLevel, rpgEmsCeiling);
+    const level = applied.state.stress >= RPG_HIGH_STRESS ? Math.ceil(baseLevel / 2) : baseLevel;
+
+    if (violationDiff > 0 && applied.state.hardware.punishOnViolation && level > 0) {
+      const duration = Math.min(10, applied.state.hardware.punishSeconds * violationDiff);
+      void manager.setEmsStrength('AB', level, duration).catch(() => undefined);
+      showFeatureNotice(`⚡ 违反家规惩罚：EMS 电击 ${level} 级 (${duration}秒)`);
+    }
+
+    // 硬件联动：传唤逾期未到惩罚
+    const expiredCount = countNewlyExpiredSummons(before, applied.state);
+    if (expiredCount > 0 && applied.state.hardware.punishOnSummonOverdue && level > 0) {
+      void manager.setEmsStrength('AB', level, applied.state.hardware.punishSeconds).catch(() => undefined);
+      showFeatureNotice(`⚡ 传唤逾期未到惩罚：EMS 电击 ${level} 级 (${applied.state.hardware.punishSeconds}秒)`);
+    }
   };
 
   /**
@@ -2130,13 +2158,27 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   /** 移动、课程、兑换、差事、休息、使用物品、续约：系统先结算，再把结果作为一条消息发给 AI 描写 */
-  const runRpgAction = (action: RpgSystemAction) => {
+  const runRpgAction = (action: RpgSystemAction & { challengePassed?: boolean }) => {
     const current = rpgStateRef.current;
     if (!current || isLoading) return;
+
+    // 具身感应挑战拦截
+    if (action.type === 'course' && action.challengePassed === undefined) {
+      const course = findCourse(current, action.courseId);
+      if (course?.sensorChallenge && current.hardware.sensorChallengesEnabled) {
+        setActiveSensorChallenge({
+          courseId: course.id,
+          courseName: course.name,
+          challenge: course.sensorChallenge,
+        });
+        return;
+      }
+    }
+
     let result: RpgActionResult;
     switch (action.type) {
       case 'travel': result = travelTo(current, action.locationId); break;
-      case 'course': result = runCourse(current, action.courseId); break;
+      case 'course': result = runCourse(current, action.courseId, undefined, action.challengePassed !== undefined ? { challengePassed: action.challengePassed } : undefined); break;
       case 'buy': result = buyItem(current, action.item); break;
       case 'work': result = doWork(current); break;
       case 'rest': result = restUntilMorning(current); break;
@@ -2154,8 +2196,51 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       next = settled.state;
       if (settled.note && message) message = message.replace(/(🎲[^\n]*)/, `$1${settled.note}`);
     }
+
+    const manager = DeviceManager.getInstance();
+    const baseLevel = Math.min(next.hardware.punishLevel, rpgEmsCeiling);
+    const level = next.stress >= RPG_HIGH_STRESS ? Math.ceil(baseLevel / 2) : baseLevel;
+
+    // 硬件联动：传唤逾期未到惩罚
+    const expiredCount = countNewlyExpiredSummons(current, next);
+    if (expiredCount > 0 && next.hardware.punishOnSummonOverdue && level > 0) {
+      void manager.setEmsStrength('AB', level, next.hardware.punishSeconds).catch(() => undefined);
+      showFeatureNotice(`⚡ 传唤逾期未到惩罚：EMS 电击 ${level} 级 (${next.hardware.punishSeconds}秒)`);
+    }
+
+    // 硬件联动：外出差事/公共场合静默穿戴玩具微震
+    if (next.hardware.wearToyOnErrands) {
+      const isWork = action.type === 'work';
+      const isPublicTravel = action.type === 'travel' && (() => {
+        const targetLoc = next.locations.find((l) => l.id === action.locationId);
+        return targetLoc ? ['work', 'outdoor', 'cafe', 'special'].includes(targetLoc.kind) : false;
+      })();
+
+      if (isWork || isPublicTravel) {
+        const toyRate = Math.min(20, Math.max(2, (next.hardware.wearToyLevel || 2) * 3));
+        void manager.setToyMotor(toyRate, Math.ceil(toyRate / 2), 0)
+          .then(() => manager.scheduleOutputStop('toy', 8))
+          .catch(() => undefined);
+        showFeatureNotice(`📳 外出差事穿戴：玩具已启动静默微震 (${next.hardware.wearToyLevel} 档，持续 8 秒)`);
+      }
+    }
+
     updateRpgState(next);
     if (message) void handleSendRef.current?.(message, false);
+  };
+
+  const handleSensorChallengeComplete = (success: boolean) => {
+    if (!activeSensorChallenge) return;
+    const courseId = activeSensorChallenge.courseId;
+    setActiveSensorChallenge(null);
+    runRpgAction({ type: 'course', courseId, challengePassed: success });
+  };
+
+  const handleSensorChallengeCancel = () => {
+    if (!activeSensorChallenge) return;
+    const courseId = activeSensorChallenge.courseId;
+    setActiveSensorChallenge(null);
+    runRpgAction({ type: 'course', courseId });
   };
 
   /** 用户的回应选项：带检定的先掷骰（用户的训练属性和特质做修正） */
@@ -3546,6 +3631,15 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           onEnd={endRpgRun}
           onUpdateHardware={(hardware) => { if (rpgStateRef.current) updateRpgState({ ...rpgStateRef.current, hardware }); }}
           onClose={() => setRpgPanelTab(null)}
+        />
+      )}
+
+      {activeSensorChallenge && (
+        <RpgSensorChallengeModal
+          challenge={activeSensorChallenge.challenge}
+          courseName={activeSensorChallenge.courseName}
+          onComplete={handleSensorChallengeComplete}
+          onCancel={handleSensorChallengeCancel}
         />
       )}
 

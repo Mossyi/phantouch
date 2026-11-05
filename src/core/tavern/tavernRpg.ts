@@ -34,6 +34,7 @@ import {
   type RpgItemEffect,
   type RpgLocationEvent,
   type RpgLocationKind,
+  type RpgSensorChallenge,
   type RpgService,
   type RpgShopItem,
   type RpgStatKey,
@@ -115,6 +116,16 @@ export interface RpgHardwareSettings {
   punishSeconds: number;
   /** 检定成功时短暂震动奖励；默认关闭 */
   rewardOnSuccess: boolean;
+  /** 违反家规时自动电击惩罚；默认关闭 */
+  punishOnViolation: boolean;
+  /** 调教者传唤超时未到时电击惩罚；默认关闭 */
+  punishOnSummonOverdue: boolean;
+  /** 做差事或前往公共场合时穿戴玩具微震；默认关闭 */
+  wearToyOnErrands: boolean;
+  /** 穿戴玩具震动档位 1-5，默认 2 */
+  wearToyLevel: number;
+  /** 课程具身感应硬件挑战；默认开启 */
+  sensorChallengesEnabled: boolean;
 }
 
 export interface RpgPlanSlot {
@@ -304,7 +315,17 @@ const newId = (prefix: string) => `${prefix}_${Date.now().toString(36)}_${Math.r
 const expandNames = (text: string, names: { char: string; user: string }) =>
   text.replace(/\{\{char\}\}/g, names.char || '调教者').replace(/\{\{user\}\}/g, names.user || '你');
 
-const defaultHardware = (): RpgHardwareSettings => ({ punishOnFail: false, punishLevel: 15, punishSeconds: 2, rewardOnSuccess: false });
+const defaultHardware = (): RpgHardwareSettings => ({
+  punishOnFail: false,
+  punishLevel: 15,
+  punishSeconds: 2,
+  rewardOnSuccess: false,
+  punishOnViolation: false,
+  punishOnSummonOverdue: false,
+  wearToyOnErrands: false,
+  wearToyLevel: 2,
+  sensorChallengesEnabled: true,
+});
 const freshCounters = (): RpgCounters => ({ passes: zeroStats(), fails: zeroStats(), courses: 0, violations: 0, aftercare: 0, cleanDays: 0 });
 const freshTally = (trainee: RpgTraineeStats, points: number): RpgDayTally => ({ startTrainee: { ...trainee }, startPoints: points, passed: 0, failed: 0, violations: 0, courses: 0 });
 
@@ -657,6 +678,16 @@ export const formatCheckResult = (result: RpgCheckResult) => {
   return `🎲 ${RPG_CHECK_LABELS[result.stat]}检定：d20=${result.roll}${modText} = ${result.total} / 难度 ${result.dc} · ${verdict}`;
 };
 
+/** 判定具身感应挑战是否达成要求 */
+export const evaluateSensorChallenge = (challenge: RpgSensorChallenge, actualValue: number): boolean => {
+  if (challenge.type === 'pressure') {
+    return actualValue >= challenge.targetValue;
+  } else if (challenge.type === 'heart_rate') {
+    return actualValue > 0 && actualValue <= challenge.targetValue;
+  }
+  return false;
+};
+
 /** 记录一次检定：计入特质计数和当天统计，失败会增加压力 */
 export const recordCheck = (state: TavernRpgState, result: RpgCheckResult): TavernRpgState => {
   const counters = {
@@ -720,6 +751,21 @@ export const expireSummons = (state: TavernRpgState): TavernRpgState => {
     next = appendRpgLog(next, `没有按时到「${place}」报到（压力 +3）`, 'bad');
   }
   return next;
+};
+
+/** 计算从 before 到 after 状态中新过期的传唤任务数量 */
+export const countNewlyExpiredSummons = (before: TavernRpgState, after: TavernRpgState): number => {
+  const beforeActive = new Set(
+    before.quests.filter((q) => q.status === 'active' && q.deadline && q.target).map((q) => `${q.target}_${q.deadline?.day}_${q.deadline?.period}`)
+  );
+  let count = 0;
+  for (const q of after.quests) {
+    if (q.status === 'failed' && q.deadline && q.target) {
+      const key = `${q.target}_${q.deadline.day}_${q.deadline.period}`;
+      if (beforeActive.has(key)) count += 1;
+    }
+  }
+  return count;
 };
 
 /** 时间推进后，调教者可能传唤：在下一个时段结束前到某个地点报到 */
@@ -815,7 +861,12 @@ export const doWork = (state: TavernRpgState, random: () => number = Math.random
 };
 
 /** 进行一门课程：系统掷骰并结算所有数值，AI 只描写过程和反应 */
-export const runCourse = (input: TavernRpgState, courseId: string, random: () => number = Math.random): RpgActionResult => {
+export const runCourse = (
+  input: TavernRpgState,
+  courseId: string,
+  random: () => number = Math.random,
+  options?: { challengePassed?: boolean }
+): RpgActionResult => {
   const entry = getCoursesHere(input).find((item) => item.course.id === courseId);
   if (!entry) return { state: input, error: '这里不能进行这门课程。' };
   if (!entry.available) return { state: input, error: entry.reason };
@@ -825,7 +876,17 @@ export const runCourse = (input: TavernRpgState, courseId: string, random: () =>
   let success = true;
   if (course.check) {
     check = rollCheck(state, course.check, random);
-    success = check.success;
+    if (options?.challengePassed !== undefined) {
+      if (options.challengePassed) {
+        success = true;
+        check = { ...check, success: true, total: Math.max(check.total, check.dc) };
+      } else {
+        success = false;
+        check = { ...check, success: false };
+      }
+    } else {
+      success = check.success;
+    }
     state = recordCheck(state, check);
   }
   const trainee = { ...state.trainee };
@@ -863,6 +924,9 @@ export const runCourse = (input: TavernRpgState, courseId: string, random: () =>
   state = evaluateProgress(afterTimeAdvance(state, random)).state;
 
   const lines = [`🧭 课程：${course.name}（${course.description}）${slotIndex >= 0 ? '· 今日课表' : ''}`];
+  if (options?.challengePassed !== undefined) {
+    lines.push(options.challengePassed ? '📊 具身硬件挑战：达成目标！检定判定通过' : '📊 具身硬件挑战：未达标，检定判定失败');
+  }
   if (check) lines.push(formatCheckResult(check));
   lines.push(`系统已结算：${changes.join('、') || '无变化'}。现在是${RPG_PERIOD_LABELS[state.period]}`);
   return { state, message: lines.join('\n'), check };
@@ -1490,6 +1554,11 @@ const normalizeHardware = (value: unknown): RpgHardwareSettings => {
     punishLevel: clamp(toInt(raw.punishLevel, 15), 1, 200),
     punishSeconds: clamp(toInt(raw.punishSeconds, 2), 1, 5),
     rewardOnSuccess: raw.rewardOnSuccess === true,
+    punishOnViolation: raw.punishOnViolation === true,
+    punishOnSummonOverdue: raw.punishOnSummonOverdue === true,
+    wearToyOnErrands: raw.wearToyOnErrands === true,
+    wearToyLevel: clamp(toInt(raw.wearToyLevel, 2), 1, 5),
+    sensorChallengesEnabled: raw.sensorChallengesEnabled !== false,
   };
 };
 

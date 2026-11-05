@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useAppStore } from '../../store/useAppStore';
 import {
   BatteryLow, BedDouble, CalendarDays, Telescope, Wand2, Megaphone, Save, FolderOpen, Trash2, History, CheckCircle2, Circle, Dices, Footprints, Gift, Gavel, HeartPulse, ImagePlus, Loader2, Lock,
   Map as MapIcon, MessageCircleHeart, NotebookText, Plus, RefreshCw, ScrollText, Settings2, Star, Trophy, UserRound, Wrench, X, Zap,
@@ -543,6 +544,8 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   state, portrait, art, artBusyId, artAuto, onGenerateArt, onToggleArtAuto, onGenerateWorld, onStartGenerated, onExplore, exploring, slots, onSaveSlot, onLoadSlot, onDeleteSlot, onNewRun, onDisableMode,
   charName, userName, busy, emsCeiling, initialTab = 'map', onStart, onAction, onAddRule, onRemoveRule, onEnd, onUpdateHardware, onClose,
 }) => {
+  const deviceState = useAppStore((s) => s.deviceState);
+  const heartRateState = useAppStore((s) => s.heartRateState);
   const [tab, setTab] = useState<RpgPanelTab>(initialTab);
   const [selectedId, setSelectedId] = useState(state?.currentId ?? '');
   const [confirmEnd, setConfirmEnd] = useState(false);
@@ -581,8 +584,14 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   const courseButton = (entry: CourseAvailability) => (
     <div key={entry.course.id} className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${entry.available ? 'border-violet-100 bg-white' : 'border-slate-100 bg-slate-50'}`}>
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1 text-[11.5px] font-bold text-slate-800">
+        <span className="flex items-center gap-1 text-[11.5px] font-bold text-slate-800 flex-wrap">
           {entry.available ? <RpgIcon name={courseIcon(entry.course.id)} className="h-4 w-4 text-violet-500" /> : <Lock className="h-3 w-3 text-slate-400" />}{entry.course.name}
+          {entry.course.sensorChallenge && (
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-pink-100 px-1.5 py-0.5 text-[8.5px] font-bold text-pink-700">
+              <Zap className="h-2.5 w-2.5 text-pink-500" />
+              {entry.course.sensorChallenge.type === 'pressure' ? '括约肌压力挑战' : '心率自律挑战'}
+            </span>
+          )}
         </span>
         <span className="block text-[9.5px] text-slate-500">{entry.course.description}</span>
         <span className="block text-[9.5px] text-violet-600">
@@ -946,7 +955,25 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                     <button type="button" disabled={busy} onClick={onNewRun} className="w-full rounded-xl border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-bold text-violet-700 disabled:opacity-50">开始新的一局（当前进度自动存档）</button>
                   </div>
                   <div className="space-y-2.5 rounded-2xl border border-pink-100 bg-white p-3">
-                    <p className="flex items-center gap-1 text-[11px] font-black text-slate-800"><Gavel className="h-3.5 w-3.5 text-pink-500" />检定的硬件奖惩</p>
+                    <p className="flex items-center gap-1 text-[11px] font-black text-slate-800"><Gavel className="h-3.5 w-3.5 text-pink-500" />具身硬件与奖惩联动</p>
+
+                    {/* 外设状态栏 */}
+                    <div className="flex flex-wrap items-center gap-1.5 rounded-xl bg-pink-50/50 p-2 text-[10px]">
+                      <span className="font-bold text-slate-500">外设状态:</span>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-bold ${deviceState.devices.ems?.isConnected ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                        ⚡ EMS {deviceState.devices.ems?.isConnected ? '已连' : '未连'}
+                      </span>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-bold ${deviceState.devices.toy?.isConnected ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                        📳 玩具 {deviceState.devices.toy?.isConnected ? '已连' : '未连'}
+                      </span>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-bold ${(deviceState.devices.sensor?.isConnected || deviceState.devices.enema?.isConnected) ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                        📊 压力外设 {(deviceState.devices.sensor?.isConnected || deviceState.devices.enema?.isConnected) ? '已连' : '未连'}
+                      </span>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-bold ${heartRateState.isConnected ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                        ❤️ 心率带 {heartRateState.isConnected ? '已连' : '未连'}
+                      </span>
+                    </div>
+
                     <label className="flex items-center justify-between gap-3">
                       <span>
                         <span className="flex items-center gap-1 text-[11.5px] font-bold text-slate-800"><Zap className="h-3.5 w-3.5 text-pink-500" />失败时电击</span>
@@ -971,6 +998,43 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                         <span className="block text-[10px] text-slate-500">你做到时玩具轻震 2 秒</span>
                       </span>
                       <input type="checkbox" checked={state.hardware.rewardOnSuccess} onChange={(event) => onUpdateHardware({ ...state.hardware, rewardOnSuccess: event.target.checked })} className="h-4 w-4 accent-pink-500" />
+                    </label>
+
+                    <label className="flex items-center justify-between gap-3 border-t border-pink-50 pt-2.5">
+                      <span>
+                        <span className="flex items-center gap-1 text-[11.5px] font-bold text-slate-800"><Zap className="h-3.5 w-3.5 text-pink-500" />家规违规自动硬件惩罚</span>
+                        <span className="block text-[10px] text-slate-500">被 AI 判定违反家规时，自动执行电击惩罚</span>
+                      </span>
+                      <input type="checkbox" checked={state.hardware.punishOnViolation && emsCeiling > 0} disabled={emsCeiling <= 0} onChange={(event) => onUpdateHardware({ ...state.hardware, punishOnViolation: event.target.checked })} className="h-4 w-4 accent-pink-500" />
+                    </label>
+
+                    <label className="flex items-center justify-between gap-3 border-t border-pink-50 pt-2.5">
+                      <span>
+                        <span className="flex items-center gap-1 text-[11.5px] font-bold text-slate-800"><Zap className="h-3.5 w-3.5 text-pink-500" />传唤逾期未到电击惩罚</span>
+                        <span className="block text-[10px] text-slate-500">调教者传唤时限超时未赶到时，执行电击惩罚</span>
+                      </span>
+                      <input type="checkbox" checked={state.hardware.punishOnSummonOverdue && emsCeiling > 0} disabled={emsCeiling <= 0} onChange={(event) => onUpdateHardware({ ...state.hardware, punishOnSummonOverdue: event.target.checked })} className="h-4 w-4 accent-pink-500" />
+                    </label>
+
+                    <label className="flex items-center justify-between gap-3 border-t border-pink-50 pt-2.5">
+                      <span>
+                        <span className="text-[11.5px] font-bold text-slate-800">外出差事/公共场合静默穿戴玩具微震</span>
+                        <span className="block text-[10px] text-slate-500">进行差事或移动到户外/公共场所时微震穿戴持续 8 秒</span>
+                      </span>
+                      <input type="checkbox" checked={state.hardware.wearToyOnErrands} onChange={(event) => onUpdateHardware({ ...state.hardware, wearToyOnErrands: event.target.checked })} className="h-4 w-4 accent-pink-500" />
+                    </label>
+                    {state.hardware.wearToyOnErrands && (
+                      <label className="block text-[10px] font-bold text-slate-700">穿戴震动档位：{state.hardware.wearToyLevel} 档
+                        <input type="range" min={1} max={5} value={state.hardware.wearToyLevel} onChange={(event) => onUpdateHardware({ ...state.hardware, wearToyLevel: Number(event.target.value) })} className="mt-1 w-full accent-pink-500" />
+                      </label>
+                    )}
+
+                    <label className="flex items-center justify-between gap-3 border-t border-pink-50 pt-2.5">
+                      <span>
+                        <span className="text-[11.5px] font-bold text-slate-800">启用课程具身感应挑战</span>
+                        <span className="block text-[10px] text-slate-500">括约肌耐力/心率自律课程调起真实身体维持挑战（支持触控拟真）</span>
+                      </span>
+                      <input type="checkbox" checked={state.hardware.sensorChallengesEnabled} onChange={(event) => onUpdateHardware({ ...state.hardware, sensorChallengesEnabled: event.target.checked })} className="h-4 w-4 accent-pink-500" />
                     </label>
                   </div>
                   <label className="flex items-center justify-between gap-3 rounded-2xl border border-pink-100 bg-white p-3">

@@ -31,6 +31,8 @@ const COURSE_ICONS: Record<string, RpgIconName> = {
   blindfold: 'blindfold',
   errand: 'footsteps',
   hold: 'hourglass',
+  pelvic_endurance: 'body-balance',
+  heart_calm: 'hearts',
   trust: 'shaking-hands',
   report: 'notebook',
   aftercare: 'hearts',
