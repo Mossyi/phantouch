@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { readThemeColor } from '../core/ui/theme';
 import { useAppStore } from '../store/useAppStore';
 
 interface WaveVisualizerProps {
@@ -48,11 +49,11 @@ export const WaveVisualizer: React.FC<WaveVisualizerProps> = ({
       const midY = h / 2;
 
       // 填充高质感纯白示波器底色
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = readThemeColor('--chart-surface', '#ffffff');
       ctx.fillRect(0, 0, w, h);
 
       // 绘制微光网格背景（淡粉晶格）
-      ctx.strokeStyle = 'rgba(244, 114, 182, 0.12)';
+      ctx.strokeStyle = readThemeColor('--chart-grid', 'rgba(244, 114, 182, 0.12)');
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let x = 0; x < w; x += 20) {
@@ -66,7 +67,7 @@ export const WaveVisualizer: React.FC<WaveVisualizerProps> = ({
       ctx.stroke();
 
       // 中轴参考线
-      ctx.strokeStyle = 'rgba(244, 63, 142, 0.18)';
+      ctx.strokeStyle = readThemeColor('--chart-axis', 'rgba(244, 63, 142, 0.18)');
       ctx.beginPath();
       ctx.moveTo(0, midY);
       ctx.lineTo(w, midY);

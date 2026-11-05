@@ -3,6 +3,7 @@ import { SponsorPanel } from '../components/SponsorPanel';
 import { DataManagementPanel } from '../components/DataManagementPanel';
 import { ModelCapabilityPanel } from '../components/ModelCapabilityPanel';
 import { ModelProfilesPanel } from '../components/ModelProfilesPanel';
+import { ThemePicker } from '../components/ThemePicker';
 import { BuildInfoPanel } from '../components/BuildInfoPanel';
 import { AppDiagnosticsPanel } from '../components/AppDiagnosticsPanel';
 import { TavernMessageContent } from '../components/tavern/TavernMessageContent';
@@ -330,6 +331,7 @@ export const SettingsView: React.FC = () => {
 
       {/* ================= 通用设置 ================= */}
       {/* 更新放在最前面：这是用户最需要第一时间看到的状态 */}
+      {activeSection === 'general' && <ThemePicker />}
       {activeSection === 'general' && <BuildInfoPanel />}
       {activeSection === 'general' && <DataManagementPanel />}
       {activeSection === 'general' && <AppDiagnosticsPanel />}

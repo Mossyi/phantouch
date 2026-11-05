@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { notifyOtaReady, rollbackOta, isOtaSupported } from './core/updater/otaUpdater';
 import './index.css';
+import './styles/themes.css';
+import { applyUiTheme, getUiTheme } from './core/ui/theme';
 
 interface Props {
   children: ReactNode;
@@ -94,6 +96,9 @@ class GlobalErrorBoundary extends Component<Props, State> {
     return this.props.children;
   }
 }
+
+// 再应用一次已保存的主题（index.html 的内联脚本已提前设置，这里同步状态栏颜色等）
+applyUiTheme(getUiTheme());
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

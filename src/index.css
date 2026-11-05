@@ -48,6 +48,10 @@
     --shadow-lift: 0 2px 4px rgba(34, 26, 32, 0.04), 0 18px 40px -16px rgba(34, 26, 32, 0.22);
     --shadow-brand: 0 8px 20px -8px rgba(226, 69, 127, 0.55);
     --radius-card: 1.375rem;
+    /* canvas 图表（示波器等）读取的颜色，随主题切换 */
+    --chart-surface: #ffffff;
+    --chart-grid: rgba(244, 114, 182, 0.12);
+    --chart-axis: rgba(244, 63, 142, 0.18);
     --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   }
 

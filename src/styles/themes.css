@@ -1,0 +1,499 @@
+/* 可切换界面主题（设置 → 通用 → 界面主题）。
+ * 默认「玫瑰石英」写在 index.css；这里的规则只在 <html data-theme="..."> 时生效。
+ * 大量组件直接写了浅色工具类（bg-white、bg-pink-50 等），深色与玻璃主题需要按类名覆盖，因此使用 !important。
+ */
+
+/* ================= 午夜霓虹：深色、品红/紫霓虹点缀、半透明深色卡片 ================= */
+
+html[data-theme="neon"] {
+  --chart-surface: #150f1a;
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --chart-axis: rgba(255, 79, 163, 0.28);
+  --canvas: #0e0a12;
+  --surface: rgba(28, 21, 34, 0.92);
+  --surface-strong: #1a1420;
+  --surface-soft: #231a2b;
+  --surface-sunken: rgba(255, 255, 255, 0.06);
+  --line: rgba(255, 255, 255, 0.09);
+  --line-soft: rgba(255, 255, 255, 0.06);
+  --ink: #f5eef6;
+  --ink-secondary: #c9bccd;
+  --muted: #8f8297;
+  --brand: #ff4fa3;
+  --brand-strong: #ff6bb5;
+  --brand-soft: rgba(255, 79, 163, 0.14);
+  --brand-gradient: linear-gradient(135deg, #ff4fa3 0%, #c04dff 100%);
+  --action: #ff6bb5;
+  --success: #4ade80;
+  --info: #7dd3fc;
+  --shadow-soft: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 12px 30px -16px rgba(0, 0, 0, 0.8);
+  --shadow-lift: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 24px 50px -20px rgba(0, 0, 0, 0.9);
+  --shadow-brand: 0 0 24px -4px rgba(255, 79, 163, 0.6);
+  color-scheme: dark;
+}
+
+html[data-theme="neon"] body,
+html[data-theme="neon"] .app-backdrop {
+  background:
+    radial-gradient(80% 45% at 15% 0%, rgba(192, 77, 255, 0.22) 0%, transparent 60%),
+    radial-gradient(70% 40% at 100% 30%, rgba(255, 79, 163, 0.16) 0%, transparent 60%),
+    #0e0a12 !important;
+}
+
+html[data-theme="neon"] .app-header,
+html[data-theme="neon"] .subnav-bar,
+html[data-theme="neon"] .liquid-header { background: rgba(14, 10, 18, 0.82) !important; border-color: var(--line-soft) !important;
+}
+
+html[data-theme="neon"] .app-dock { background: rgba(26, 20, 32, 0.92) !important; border-color: rgba(255,255,255,0.08) !important; box-shadow: 0 20px 40px -10px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.05) !important;
+}
+
+html[data-theme="neon"] .dock-item[aria-current="page"] .dock-icon { box-shadow: 0 0 18px rgba(255, 79, 163, 0.7) !important;
+}
+
+html[data-theme="neon"] .status-capsule,
+html[data-theme="neon"] .icon-button { background: rgba(255,255,255,0.06) !important; border-color: rgba(255,255,255,0.1) !important; color: var(--ink);
+}
+
+html[data-theme="neon"] .segmented-track { background: rgba(255,255,255,0.06) !important;
+}
+
+html[data-theme="neon"] .segmented-item[aria-selected="true"] { background: rgba(255, 79, 163, 0.16) !important; color: #ff8cc6 !important; box-shadow: inset 0 0 0 1px rgba(255, 79, 163, 0.45), 0 0 16px -4px rgba(255,79,163,0.6) !important;
+}
+
+html[data-theme="neon"] .liquid-card,
+html[data-theme="neon"] .modern-card,
+html[data-theme="neon"] .bg-cyber-card,
+html[data-theme="neon"] .ui-card,
+html[data-theme="neon"] .frosted-feather-glass,
+html[data-theme="neon"] .liquid-glass,
+html[data-theme="neon"] .liquid-bubble-ai,
+html[data-theme="neon"] .tavern-floating-panel,
+html[data-theme="neon"] [class*="bg-white"],
+html[data-theme="neon"] .bg-slate-50,
+html[data-theme="neon"] [class*="bg-slate-50/"],
+html[data-theme="neon"] [class*="bg-slate-900"],
+html[data-theme="neon"] [class*="bg-slate-950"],
+html[data-theme="neon"] .bg-pink-50,
+html[data-theme="neon"] [class*="bg-pink-50/"],
+html[data-theme="neon"] .bg-rose-50,
+html[data-theme="neon"] [class*="bg-rose-50/"],
+html[data-theme="neon"] .from-pink-50,
+html[data-theme="neon"] [class*="from-pink-50/"],
+html[data-theme="neon"] [class*="from-white"] {
+  background: rgba(30, 23, 37, 0.85) !important;
+  background-image: none !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme="neon"] .liquid-card,
+html[data-theme="neon"] .modern-card,
+html[data-theme="neon"] .liquid-bubble-ai { box-shadow: var(--shadow-soft) !important;
+}
+
+html[data-theme="neon"] [class*="bg-pink-100"],
+html[data-theme="neon"] [class*="bg-slate-800"],
+html[data-theme="neon"] [class*="bg-slate-100"] { background: rgba(255, 79, 163, 0.12) !important;
+}
+
+html[data-theme="neon"] .bg-amber-50,
+html[data-theme="neon"] [class*="bg-amber-50/"],
+html[data-theme="neon"] [class*="bg-amber-100"] { background: rgba(251, 191, 36, 0.12) !important;
+}
+
+html[data-theme="neon"] .bg-emerald-50,
+html[data-theme="neon"] [class*="bg-emerald-50/"],
+html[data-theme="neon"] [class*="bg-emerald-100"] { background: rgba(74, 222, 128, 0.12) !important;
+}
+
+html[data-theme="neon"] .bg-cyan-50,
+html[data-theme="neon"] [class*="bg-cyan-50/"] { background: rgba(125, 211, 252, 0.1) !important;
+}
+
+html[data-theme="neon"] [class*="border-pink-"],
+html[data-theme="neon"] [class*="border-white"],
+html[data-theme="neon"] [class*="border-slate-"],
+html[data-theme="neon"] [class*="border-rose-1"],
+html[data-theme="neon"] [class*="border-rose-2"] { border-color: rgba(255, 255, 255, 0.09) !important;
+}
+
+html[data-theme="neon"] .liquid-chip { background: rgba(255,255,255,0.06) !important; border-color: rgba(255,255,255,0.1) !important;
+}
+
+html[data-theme="neon"] #root,
+html[data-theme="neon"] .text-slate-800,
+html[data-theme="neon"] .text-slate-900,
+html[data-theme="neon"] .text-slate-700,
+html[data-theme="neon"] [class*="text-pink-950"],
+html[data-theme="neon"] [class*="text-pink-900"],
+html[data-theme="neon"] [class*="text-[#"] { color: var(--ink) !important;
+}
+
+html[data-theme="neon"] [class*="text-pink-800"],
+html[data-theme="neon"] [class*="text-slate-600"],
+html[data-theme="neon"] .text-slate-500,
+html[data-theme="neon"] .text-slate-400 { color: var(--ink-secondary) !important;
+}
+
+html[data-theme="neon"] [class*="text-pink-700"],
+html[data-theme="neon"] [class*="text-pink-600"],
+html[data-theme="neon"] [class*="text-pink-500"],
+html[data-theme="neon"] [class*="text-rose-6"],
+html[data-theme="neon"] [class*="text-rose-7"] { color: #ff7dbd !important;
+}
+
+html[data-theme="neon"] [class*="text-amber-7"],
+html[data-theme="neon"] [class*="text-amber-8"] { color: #fcd34d !important;
+}
+
+html[data-theme="neon"] [class*="text-emerald-7"],
+html[data-theme="neon"] [class*="text-emerald-6"] { color: #6ee7a8 !important;
+}
+
+html[data-theme="neon"] input[type="text"],
+html[data-theme="neon"] input[type="password"],
+html[data-theme="neon"] input[type="number"],
+html[data-theme="neon"] input:not([type]),
+html[data-theme="neon"] textarea,
+html[data-theme="neon"] select,
+html[data-theme="neon"] .liquid-input {
+  background-color: rgba(255,255,255,0.05) !important;
+  border-color: rgba(255,255,255,0.1) !important;
+  color: var(--ink) !important;
+  color-scheme: dark !important;
+}
+
+html[data-theme="neon"] input[type="range"] { background: rgba(255,255,255,0.12) !important;
+}
+
+html[data-theme="neon"] input[type="range"]::-webkit-slider-thumb { background: #1a1420 !important; border-color: #ff4fa3 !important; box-shadow: 0 0 14px rgba(255,79,163,0.8) !important;
+}
+
+html[data-theme="neon"] .liquid-bubble-user,
+html[data-theme="neon"] .liquid-pill-active,
+html[data-theme="neon"] .ui-button,
+html[data-theme="neon"] button[class*="from-pink"],
+html[data-theme="neon"] [class*="from-pink-500"] {
+  background: var(--brand-gradient) !important;
+  box-shadow: 0 0 22px -6px rgba(255, 79, 163, 0.9) !important;
+}
+
+html[data-theme="neon"] .tavern-narrative-action { color: #c4a8ff !important;
+}
+
+html[data-theme="neon"] .tavern-narrative-dialogue { color: #ffd58a !important;
+}
+
+html[data-theme="neon"] .tavern-narrative-thought { color: #f0a8ff !important;
+}
+
+html[data-theme="neon"] .ui-card { --ink: #f5eef6; --ink-secondary: #c9bccd; --muted: #8f8297; color: var(--ink) !important;
+}
+
+html[data-theme="neon"] .ui-button-secondary { background: rgba(255,255,255,0.07) !important; color: var(--ink) !important; border-color: rgba(255,255,255,0.12) !important;
+}
+
+html[data-theme="neon"] .liquid-dock,
+html[data-theme="neon"] .liquid-bottom-bar { background: rgba(14, 10, 18, 0.9) !important; border-color: var(--line-soft) !important; box-shadow: none !important;
+}
+
+html[data-theme="neon"] .bg-sky-50,
+html[data-theme="neon"] [class*="bg-sky-50/"] { background: rgba(125, 211, 252, 0.12) !important;
+}
+
+html[data-theme="neon"] [class*="text-sky-7"] { color: #7dd3fc !important;
+}
+
+
+/* ================= 奶油极简：iOS 式浅色、白卡无描边、大圆角，粉色只给主按钮与选中态 ================= */
+
+html[data-theme="minimal"] {
+  --chart-surface: #ffffff;
+  --chart-grid: rgba(60, 50, 40, 0.06);
+  --chart-axis: rgba(244, 63, 99, 0.2);
+  --canvas: #f4f2ef;
+  --surface-strong: #ffffff;
+  --surface-soft: #f4f2ef;
+  --surface-sunken: rgba(60, 50, 40, 0.07);
+  --line: rgba(60, 50, 40, 0.08);
+  --line-soft: rgba(60, 50, 40, 0.06);
+  --ink: #1c1917;
+  --ink-secondary: #57534e;
+  --muted: #8a847d;
+  --brand: #ff5a7a;
+  --brand-strong: #f43f63;
+  --brand-soft: #ffe8ec;
+  --brand-gradient: linear-gradient(180deg, #ff6a86 0%, #ff4f72 100%);
+  --action: #f43f63;
+  --shadow-soft: 0 1px 2px rgba(28, 25, 23, 0.04), 0 6px 20px -8px rgba(28, 25, 23, 0.08);
+  --shadow-lift: 0 2px 6px rgba(28, 25, 23, 0.05), 0 16px 36px -14px rgba(28, 25, 23, 0.14);
+  --shadow-brand: 0 6px 16px -6px rgba(255, 79, 114, 0.5);
+  --radius-card: 1.5rem;
+}
+
+html[data-theme="minimal"] body,
+html[data-theme="minimal"] .app-backdrop { background: #f4f2ef !important;
+}
+
+html[data-theme="minimal"] .app-header,
+html[data-theme="minimal"] .subnav-bar,
+html[data-theme="minimal"] .liquid-header,
+html[data-theme="minimal"] .liquid-dock { background: rgba(244, 242, 239, 0.94) !important; border-color: transparent !important; box-shadow: none !important;
+}
+
+html[data-theme="minimal"] .status-capsule { background: transparent !important; border-color: transparent !important; box-shadow: none !important; padding-left: 0 !important;
+}
+
+html[data-theme="minimal"] .icon-button { background: #fff !important; border-color: transparent !important; box-shadow: var(--shadow-soft) !important;
+}
+
+html[data-theme="minimal"] .segmented-track { background: rgba(60, 50, 40, 0.08) !important; border-radius: 0.9rem !important;
+}
+
+html[data-theme="minimal"] .segmented-item { font-weight: 600 !important; color: #57534e !important;
+}
+
+html[data-theme="minimal"] .segmented-item[aria-selected="true"] { background: #fff !important; color: #1c1917 !important; box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 1px rgba(0,0,0,0.04) !important;
+}
+
+html[data-theme="minimal"] .segmented-item[aria-selected="true"] svg { color: var(--brand-strong);
+}
+
+html[data-theme="minimal"] .app-dock { background: rgba(255, 255, 255, 0.96) !important; border-color: transparent !important; box-shadow: 0 10px 30px -12px rgba(28,25,23,0.22) !important;
+}
+
+html[data-theme="minimal"] .dock-item[aria-current="page"] .dock-icon { background: transparent !important; color: var(--brand-strong) !important; box-shadow: none !important;
+}
+
+html[data-theme="minimal"] .dock-item[aria-current="page"] { color: var(--brand-strong) !important;
+}
+
+html[data-theme="minimal"] .dock-item[aria-current="page"]::after { content: ''; width: 4px; height: 4px; border-radius: 9999px; background: var(--brand-strong); margin-top: 1px;
+}
+
+html[data-theme="minimal"] .liquid-card,
+html[data-theme="minimal"] .modern-card,
+html[data-theme="minimal"] .bg-cyber-card,
+html[data-theme="minimal"] .ui-card,
+html[data-theme="minimal"] .frosted-feather-glass,
+html[data-theme="minimal"] .liquid-glass {
+  background: #fff !important;
+  border-color: transparent !important;
+  box-shadow: var(--shadow-soft) !important;
+  border-radius: 1.5rem !important;
+}
+
+html[data-theme="minimal"] .liquid-bubble-ai { background: #fff !important; border-color: transparent !important; box-shadow: var(--shadow-soft) !important;
+}
+
+html[data-theme="minimal"] .liquid-bubble-user { background: #1c1917 !important; box-shadow: none !important;
+}
+
+html[data-theme="minimal"] .bg-pink-50,
+html[data-theme="minimal"] [class*="bg-pink-50/"],
+html[data-theme="minimal"] .bg-rose-50,
+html[data-theme="minimal"] [class*="bg-rose-50/"],
+html[data-theme="minimal"] .from-pink-50,
+html[data-theme="minimal"] [class*="from-pink-50/"] { background: #f7f5f2 !important; background-image: none !important;
+}
+
+html[data-theme="minimal"] [class*="bg-pink-100"] { background: var(--brand-soft) !important;
+}
+
+html[data-theme="minimal"] [class*="border-pink-"],
+html[data-theme="minimal"] [class*="border-white"] { border-color: rgba(60, 50, 40, 0.07) !important;
+}
+
+html[data-theme="minimal"] .liquid-chip { background: #fff !important; border-color: transparent !important; box-shadow: var(--shadow-soft) !important;
+}
+
+html[data-theme="minimal"] [class*="text-pink-950"],
+html[data-theme="minimal"] [class*="text-pink-900"],
+html[data-theme="minimal"] [class*="text-pink-800"] { color: #1c1917 !important;
+}
+
+html[data-theme="minimal"] [class*="text-pink-800/"],
+html[data-theme="minimal"] [class*="text-pink-700/"] { color: #78716c !important;
+}
+
+html[data-theme="minimal"] [class*="text-pink-700"],
+html[data-theme="minimal"] [class*="text-pink-600"] { color: #f43f63 !important;
+}
+
+html[data-theme="minimal"] h1,
+html[data-theme="minimal"] h2,
+html[data-theme="minimal"] h3 { letter-spacing: -0.01em;
+}
+
+html[data-theme="minimal"] .liquid-pill-active,
+html[data-theme="minimal"] .ui-button,
+html[data-theme="minimal"] button[class*="from-pink"] { background: var(--brand-gradient) !important; box-shadow: var(--shadow-brand) !important;
+}
+
+html[data-theme="minimal"] input[type="range"] { background: rgba(60, 50, 40, 0.1) !important;
+}
+
+html[data-theme="minimal"] input[type="range"]::-webkit-slider-thumb { background: #fff !important; border: none !important; box-shadow: 0 2px 6px rgba(0,0,0,0.25), 0 0 0 0.5px rgba(0,0,0,0.06) !important;
+}
+
+html[data-theme="minimal"] input[type="text"],
+html[data-theme="minimal"] input[type="password"],
+html[data-theme="minimal"] input:not([type]),
+html[data-theme="minimal"] textarea,
+html[data-theme="minimal"] select,
+html[data-theme="minimal"] .liquid-input {
+  background-color: #fff !important; border-color: rgba(60, 50, 40, 0.1) !important; border-radius: 0.9rem !important;
+}
+
+/* ================= 极光玻璃：粉紫蓝极光渐变背景 + 毛玻璃卡片 + 紫粉渐变强调 ================= */
+
+html[data-theme="aurora"] {
+  --chart-surface: rgba(255, 255, 255, 0.55);
+  --chart-grid: rgba(147, 51, 234, 0.1);
+  --chart-axis: rgba(147, 51, 234, 0.25);
+  --canvas: #f3eefe;
+  --surface-strong: rgba(255, 255, 255, 0.62);
+  --surface-soft: rgba(255, 255, 255, 0.45);
+  --surface-sunken: rgba(255, 255, 255, 0.4);
+  --line: rgba(255, 255, 255, 0.7);
+  --line-soft: rgba(255, 255, 255, 0.55);
+  --ink: #2a1d3d;
+  --ink-secondary: #5b4b73;
+  --muted: #8676a0;
+  --brand: #a855f7;
+  --brand-strong: #9333ea;
+  --brand-soft: rgba(168, 85, 247, 0.12);
+  --brand-gradient: linear-gradient(120deg, #f472b6 0%, #a855f7 55%, #6366f1 100%);
+  --action: #9333ea;
+  --shadow-soft: 0 8px 32px -12px rgba(88, 50, 160, 0.25), inset 0 1px 0 rgba(255,255,255,0.8);
+  --shadow-lift: 0 18px 44px -16px rgba(88, 50, 160, 0.35), inset 0 1px 0 rgba(255,255,255,0.9);
+  --shadow-brand: 0 10px 24px -8px rgba(147, 51, 234, 0.55);
+  --radius-card: 1.75rem;
+}
+
+html[data-theme="aurora"] body,
+html[data-theme="aurora"] .app-backdrop {
+  background:
+    radial-gradient(60% 40% at 0% 0%, rgba(244, 114, 182, 0.55) 0%, transparent 70%),
+    radial-gradient(55% 45% at 100% 20%, rgba(129, 140, 248, 0.55) 0%, transparent 70%),
+    radial-gradient(60% 45% at 30% 80%, rgba(192, 132, 252, 0.45) 0%, transparent 70%),
+    radial-gradient(50% 40% at 100% 100%, rgba(56, 189, 248, 0.35) 0%, transparent 70%),
+    #f3eefe !important;
+}
+
+html[data-theme="aurora"] .app-header,
+html[data-theme="aurora"] .subnav-bar,
+html[data-theme="aurora"] .liquid-header,
+html[data-theme="aurora"] .liquid-dock {
+  background: rgba(255, 255, 255, 0.35) !important;
+  backdrop-filter: blur(24px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+  border-color: rgba(255, 255, 255, 0.6) !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="aurora"] .status-capsule,
+html[data-theme="aurora"] .icon-button { background: rgba(255,255,255,0.55) !important; border-color: rgba(255,255,255,0.8) !important;
+}
+
+html[data-theme="aurora"] .segmented-track { background: rgba(255,255,255,0.4) !important; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7);
+}
+
+html[data-theme="aurora"] .segmented-item[aria-selected="true"] { background: var(--brand-gradient) !important; color: #fff !important; box-shadow: var(--shadow-brand) !important;
+}
+
+html[data-theme="aurora"] .app-dock { background: rgba(255, 255, 255, 0.5) !important; backdrop-filter: blur(28px) saturate(200%) !important; border-color: rgba(255,255,255,0.8) !important;
+}
+
+html[data-theme="aurora"] .liquid-card,
+html[data-theme="aurora"] .modern-card,
+html[data-theme="aurora"] .bg-cyber-card,
+html[data-theme="aurora"] .ui-card,
+html[data-theme="aurora"] .frosted-feather-glass,
+html[data-theme="aurora"] .liquid-glass,
+html[data-theme="aurora"] .liquid-bubble-ai,
+html[data-theme="aurora"] .liquid-chip,
+html[data-theme="aurora"] [class*="bg-white"],
+html[data-theme="aurora"] .bg-slate-50,
+html[data-theme="aurora"] [class*="bg-slate-50/"],
+html[data-theme="aurora"] .bg-pink-50,
+html[data-theme="aurora"] [class*="bg-pink-50/"],
+html[data-theme="aurora"] .bg-rose-50,
+html[data-theme="aurora"] [class*="bg-rose-50/"],
+html[data-theme="aurora"] .from-pink-50,
+html[data-theme="aurora"] [class*="from-pink-50/"] {
+  background: rgba(255, 255, 255, 0.5) !important;
+  background-image: none !important;
+  backdrop-filter: blur(20px) saturate(170%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(170%) !important;
+  border-color: rgba(255, 255, 255, 0.75) !important;
+}
+
+html[data-theme="aurora"] .liquid-card,
+html[data-theme="aurora"] .modern-card,
+html[data-theme="aurora"] .ui-card,
+html[data-theme="aurora"] .liquid-bubble-ai { box-shadow: var(--shadow-soft) !important; border-radius: 1.75rem !important;
+}
+
+html[data-theme="aurora"] .liquid-bubble-user,
+html[data-theme="aurora"] .liquid-pill-active,
+html[data-theme="aurora"] .ui-button,
+html[data-theme="aurora"] button[class*="from-pink"] { background: var(--brand-gradient) !important; box-shadow: var(--shadow-brand) !important;
+}
+
+html[data-theme="aurora"] [class*="border-pink-"],
+html[data-theme="aurora"] [class*="border-slate-"] { border-color: rgba(255, 255, 255, 0.7) !important;
+}
+
+html[data-theme="aurora"] [class*="bg-pink-100"] { background: rgba(168, 85, 247, 0.14) !important;
+}
+
+html[data-theme="aurora"] [class*="text-pink-950"],
+html[data-theme="aurora"] [class*="text-pink-900"] { color: #2a1d3d !important;
+}
+
+html[data-theme="aurora"] [class*="text-pink-800"] { color: #5b4b73 !important;
+}
+
+html[data-theme="aurora"] [class*="text-pink-700"],
+html[data-theme="aurora"] [class*="text-pink-600"],
+html[data-theme="aurora"] [class*="text-pink-500"] { color: #9333ea !important;
+}
+
+html[data-theme="aurora"] input[type="text"],
+html[data-theme="aurora"] input[type="password"],
+html[data-theme="aurora"] input:not([type]),
+html[data-theme="aurora"] textarea,
+html[data-theme="aurora"] select,
+html[data-theme="aurora"] .liquid-input {
+  background-color: rgba(255, 255, 255, 0.6) !important; border-color: rgba(255, 255, 255, 0.85) !important;
+}
+
+html[data-theme="aurora"] input[type="range"] { background: rgba(255, 255, 255, 0.6) !important;
+}
+
+html[data-theme="aurora"] input[type="range"]::-webkit-slider-thumb { border-color: #a855f7 !important; box-shadow: 0 4px 12px rgba(147, 51, 234, 0.45) !important;
+}
+
+/* 系统要求降低透明度时，极光主题改用不透明卡片（也减轻低端机的毛玻璃渲染负担） */
+@media (prefers-reduced-transparency: reduce) {
+  html[data-theme="aurora"] .liquid-card,
+  html[data-theme="aurora"] .modern-card,
+  html[data-theme="aurora"] .ui-card,
+  html[data-theme="aurora"] .liquid-bubble-ai,
+  html[data-theme="aurora"] [class*="bg-white"] {
+    background: rgba(255, 255, 255, 0.92) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* 午夜霓虹：cyan 色阶在默认主题里被映射成深色文字，深色背景上需要改回亮色 */
+html[data-theme="neon"] [class*="text-cyan-7"],
+html[data-theme="neon"] [class*="text-cyan-8"],
+html[data-theme="neon"] [class*="text-cyan-9"] {
+  color: #7dd3fc !important;
+}
+html[data-theme="neon"] [class*="border-cyan-"] {
+  border-color: rgba(125, 211, 252, 0.35) !important;
+}
