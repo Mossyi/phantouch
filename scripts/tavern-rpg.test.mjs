@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
-/** 酒馆训练日程：用户是被调教者。地图、系统动作、训练属性检定、目标、免罚券、AI 标签解析与限幅、回滚、开关 */
+/** 酒馆训练日程：用户是被调教者。课程、特质、阶段、压力、家规、课表、日报、结局、营业时段、AI 标签解析与限幅、回滚 */
 
 const loadBundledModule = async (relativePath) => {
   const entryPoint = fileURLToPath(new URL(relativePath, import.meta.url));
@@ -15,140 +15,202 @@ const loadBundledModule = async (relativePath) => {
 const load = () => loadBundledModule('../src/core/tavern/tavernRpg.ts');
 const names = { char: '莉莉丝', user: '小猫' };
 const byName = (state, name) => state.locations.find((loc) => loc.name === name);
+const fixed = (value) => () => value;
+const goTo = (m, state, ...path) => path.reduce((s, name) => m.travelTo(s, byName(s, name).id).state, state);
 
-test('开局：用户从自己的卧室出发；训练属性属于用户；硬件奖惩默认关闭', async () => {
-  const { createRpgState, getReachableLocations, getLocation } = await load();
-  const state = createRpgState('contract', names);
-  assert.equal(getLocation(state, state.currentId).name, '卧室');
-  assert.deepEqual(getReachableLocations(state).map((loc) => loc.name).sort(), ['客厅', '浴室'].sort());
-  assert.deepEqual(state.trainee, { obedience: 10, endurance: 10, shame: 60, devotion: 10 });
-  assert.deepEqual([state.day, state.period, state.stamina, state.points], [1, 0, 100, 20]);
+test('开局：用户在自己的卧室；带家规、目标和今日课表；硬件奖惩默认关闭', async () => {
+  const m = await load();
+  const state = m.createRpgState('contract', names);
+  assert.equal(m.getLocation(state, state.currentId).name, '卧室');
+  assert.deepEqual(state.trainee, { obedience: 10, endurance: 10, shame: 70, devotion: 10 });
+  assert.deepEqual([state.stamina, state.stress, state.points, state.stage], [100, 0, 20, 0]);
+  assert.equal(state.rules.length, 3);
+  assert.ok(state.rules[0].text.includes('莉莉丝'));
+  assert.equal(state.plan.length, 4);
+  assert.equal(state.plan[3].courseId, 'report', '深夜安排晚间汇报');
+  assert.ok(state.plan.slice(0, 3).every((slot) => m.isCourseUnlocked(state, m.getCourse(slot.courseId))));
   assert.equal(state.hardware.punishOnFail, false);
   assert.equal(state.hardware.rewardOnSuccess, false);
-  assert.match(state.premise, /小猫自愿和莉莉丝签下/);
-  assert.ok(byName(state, '训练室').description.includes('莉莉丝'));
-
-  const custom = createRpgState('custom', names, { startName: '阁楼', dayLimit: 7 });
-  assert.deepEqual(custom.locations.map((loc) => loc.name), ['阁楼', '奖励柜']);
-  assert.equal(custom.dayLimit, 7);
+  const custom = m.createRpgState('custom', names, { startName: '阁楼', dayLimit: 7 });
+  assert.deepEqual(custom.locations.map((loc) => loc.name), ['阁楼', '训练室', '奖励柜']);
 });
 
-test('系统动作：相邻移动；积分兑换；差事耗体力和时段；休息恢复；用休息券回体力；免罚券不能手动用', async () => {
-  const { createRpgState, travelTo, buyItem, doWork, restUntilMorning, itemUseAction } = await load();
-  let state = createRpgState('contract', names);
-  assert.match(travelTo(state, byName(state, '街区').id).error, /还没被发现/);
-  state = travelTo(state, byName(state, '客厅').id).state;
-  assert.match(restUntilMorning(state).error, /卧室/);
+test('课程：按地点和等级解锁；系统掷骰并结算属性、积分、体力、压力、时段和课表', async () => {
+  const m = await load();
+  let state = m.createRpgState('contract', names);
+  state = goTo(m, state, '客厅');
+  const here = m.getCoursesHere(state);
+  assert.ok(here.find((e) => e.course.id === 'recite').available);
+  assert.match(here.find((e) => e.course.id === 'kneel').reason, /耐受 入门/);
+  state = { ...state, plan: [{ period: 0, courseId: 'recite', done: false }] };
 
-  assert.match(buyItem(state, '免罚券').error, /积分不够/);
-  state = { ...state, points: 100, stamina: 50 };
-  state = buyItem(state, '休息券').state;
-  state = buyItem(state, '免罚券').state;
-  assert.equal(state.points, 10);
-  const used = itemUseAction(state, '休息券');
-  assert.equal(used.state.stamina, 80);
-  assert.equal(used.state.inventory.some((item) => item.name === '休息券'), false);
-  assert.match(used.message, /休息券（体力 \+30）/);
-  assert.match(itemUseAction(state, '免罚券').error, /自动使用/);
+  const pass = m.runCourse(state, 'recite', fixed(0.95)); // d20=20
+  assert.equal(pass.check.success, true);
+  assert.deepEqual([pass.state.trainee.obedience, pass.state.points, pass.state.stamina, pass.state.stress, pass.state.period], [13, 25, 96, 1, 1]);
+  assert.equal(pass.state.plan[0].done, true);
+  assert.match(pass.message, /课程：规矩复述.*今日课表/);
+  assert.match(pass.message, /系统已结算：服从 \+3、积分 \+5、体力 -4、压力 \+1/);
 
-  state = travelTo(used.state, byName(used.state, '厨房').id).state;
-  const worked = doWork(state);
-  assert.deepEqual([worked.state.points, worked.state.stamina, worked.state.period], [25, 70, 1]);
-  assert.match(doWork({ ...state, stamina: 5 }).error, /体力不够/);
-  assert.match(doWork({ ...state, period: 3 }).error, /太晚/);
+  const fail = m.runCourse(state, 'recite', fixed(0)); // d20=1
+  assert.equal(fail.check.success, false);
+  assert.equal(fail.state.trainee.obedience, 11, '失败也有一点经验');
+  assert.equal(fail.state.points, 20);
+  assert.equal(fail.state.stress, 5, '课程 +1，失败 +4');
+  assert.equal(fail.state.counters.fails.obedience, 1);
 
-  const tired = { ...createRpgState('contract', names), stamina: 10, period: 3 };
-  const rested = restUntilMorning(tired);
-  assert.deepEqual([rested.state.day, rested.state.period, rested.state.stamina], [2, 0, 100]);
+  assert.match(m.runCourse(state, 'bath').error, /不能进行/);
+  assert.match(m.runCourse({ ...state, stress: 90 }, 'recite').error, /压力太大/);
+  const tired = goTo(m, { ...m.createRpgState('contract', names), stress: 90, stamina: 50 }, '浴室');
+  const relax = m.runCourse(tired, 'bath');
+  assert.deepEqual([relax.state.stress, relax.state.stamina], [80, 65], '放松课程在高压时也能做');
 });
 
-test('检定：用用户的训练属性做修正（30 为基准，羞耻反向），体力低 -2；20 必成、1 必败；免罚券失败时自动消耗', async () => {
-  const { createRpgState, rollCheck, formatCheckResult, checkModifier, consumePardon, buyItem } = await load();
-  const state = createRpgState('contract', names);
-  assert.equal(checkModifier(state, 'obedience'), -2, '服从 10');
-  assert.equal(checkModifier(state, 'shame'), 1, '羞耻 60 → 放得开 40');
-  assert.equal(checkModifier({ ...state, trainee: { ...state.trainee, endurance: 70 } }, 'endurance'), 4);
-  assert.equal(checkModifier({ ...state, stamina: 10 }, 'shame'), -1);
-  const mid = rollCheck({ ...state, trainee: { ...state.trainee, endurance: 50 } }, { stat: 'endurance', dc: 12 }, () => 0.45);
-  assert.deepEqual([mid.roll, mid.mod, mid.total, mid.success], [10, 2, 12, true]);
-  assert.equal(rollCheck(state, { stat: 'obedience', dc: 25 }, () => 0.999).success, true);
-  assert.equal(rollCheck(state, { stat: 'obedience', dc: 2 }, () => 0).success, false);
-  assert.match(formatCheckResult(rollCheck(state, { stat: 'shame', dc: 10 }, () => 0.45)), /克服羞耻检定：d20=10 \+1 = 11 \/ 难度 10 · 成功/);
-
-  assert.equal(consumePardon(state).used, false);
-  let withPardon = { ...state, currentId: byName(state, '客厅').id, points: 200 };
-  withPardon = buyItem(buyItem(withPardon, '免罚券').state, '免罚券').state;
-  const once = consumePardon(withPardon);
-  assert.equal(once.used, true);
-  assert.equal(once.state.inventory.find((item) => item.name === '免罚券').qty, 1);
+test('检定修正：属性 + 特质 - 体力低 - 压力高；特质按累计表现获得并排进事件', async () => {
+  const m = await load();
+  const base = m.createRpgState('contract', names);
+  assert.equal(m.checkModifier(base, 'obedience'), -2);
+  assert.equal(m.checkModifier(base, 'shame'), 0, '羞耻 70 → 放得开 30');
+  assert.equal(m.checkModifier({ ...base, stamina: 10, stress: 70 }, 'shame'), -4);
+  const docile = { ...base, counters: { ...base.counters, passes: { ...base.counters.passes, obedience: 8 } } };
+  const progressed = m.evaluateProgress(docile);
+  assert.deepEqual(progressed.newTraits, ['docile']);
+  assert.equal(m.checkModifier(progressed.state, 'obedience'), -1);
+  assert.ok(progressed.state.pendingEvents.some((e) => e.includes('乖巧')));
+  assert.equal(m.evaluateProgress(progressed.state).newTraits.length, 0, '特质只给一次');
 });
 
-test('目标：按用户训练属性自动达成并发积分；已达成的不重复发', async () => {
-  const { createRpgState, evaluateGoals } = await load();
-  const state = createRpgState('contract', names);
-  const first = evaluateGoals({ ...state, trainee: { obedience: 45, endurance: 10, shame: 25, devotion: 10 } });
-  assert.deepEqual(first.completed.map((quest) => quest.title), ['学会规矩', '放下羞耻']);
-  assert.equal(first.state.points, 20 + 40 + 60);
-  assert.equal(evaluateGoals(first.state).completed.length, 0);
+test('阶段提升与目标达成都会生成事件；事件在下一次应用 AI 回复时清空', async () => {
+  const m = await load();
+  const state = m.createRpgState('contract', names);
+  const grown = m.evaluateProgress({ ...state, trainee: { obedience: 45, endurance: 45, shame: 40, devotion: 45 } });
+  assert.equal(grown.stageUp, true);
+  assert.equal(grown.state.stage, 2);
+  assert.deepEqual(grown.completed.map((q) => q.title), ['学会规矩', '坚持住', '放下羞耻']);
+  assert.equal(grown.state.points, 20 + 40 + 40 + 60);
+  assert.ok(grown.state.pendingEvents.some((e) => e.includes('渐入佳境')));
+  const prompt = m.buildRpgPrompt(grown.state, names);
+  assert.ok(prompt.includes('【本轮需要回应的事件】'));
+  assert.ok(prompt.includes('请让莉莉丝') || prompt.includes('请莉莉丝'), '事件里的占位符替换成角色名');
+  const after = m.applyRpgUpdate(grown.state, m.parseRpgUpdate('<!--RPG:{"choices":["好"]}-->'));
+  assert.deepEqual(after.state.pendingEvents, []);
 });
 
-test('解析：训练属性增减、积分（兼容 gold）、容忍 +数值与尾逗号、截断标签；回应选项带检定', async () => {
-  const { parseRpgUpdate, stripRpgTags } = await load();
-  const reply = '「跪好。」她垂眸看着你。\n<!--RPG:{"train":{"obedience":+3,"忍耐":"+2","shame":"-2","unknown":5},"stamina":-12,"gold":+5,"discover":[{"name":"天台","kind":"阳台","dir":"北"}],"items":{"add":["发夹x2"]},"time":"+1","choices":[{"text":"乖乖跪好"},{"text":"坚持不动","check":"耐受:12"},"小声求饶|devotion:8",]}-->\n<!--STATUS:{"favor":"+1"}-->';
-  const update = parseRpgUpdate(reply);
-  assert.deepEqual(update.train, { obedience: 3, endurance: 2, shame: -2 });
-  assert.equal(update.stamina, -12);
-  assert.equal(update.points, 5);
-  assert.equal(update.discover[0].kind, 'outdoor');
-  assert.deepEqual(update.itemsAdd, [{ name: '发夹', qty: 2 }]);
-  assert.deepEqual(update.choices.map((choice) => choice.check), [undefined, { stat: 'endurance', dc: 12 }, { stat: 'devotion', dc: 8 }]);
-  assert.equal(stripRpgTags(reply).includes('RPG'), false);
-  assert.ok(stripRpgTags(reply).includes('STATUS'));
-  assert.equal(parseRpgUpdate('好。<!--RPG:{"points":-5,"choices":["走"]}').points, -5);
-  assert.equal(stripRpgTags('好的。<!--RPG:{"points":-5', true), '好的。');
-  assert.equal(stripRpgTags('好的。<!-', true), '好的。');
-  assert.equal(parseRpgUpdate('没有标签'), null);
+test('家规：用户可加可删；AI 立规每轮一条；违规计数、扣积分、加压力并影响守规矩特质', async () => {
+  const m = await load();
+  let state = m.createRpgState('contract', names);
+  assert.match(m.addRule(state, '  ').error, /不能为空/);
+  state = m.addRule(state, '吃饭前要先说谢谢').state;
+  assert.equal(state.rules.length, 4);
+  assert.match(m.addRule(state, '吃饭前要先说谢谢').error, /已经有/);
+  state = m.removeRule(state, 3);
+  assert.equal(state.rules.length, 3);
+
+  const { state: next } = m.applyRpgUpdate({ ...state, points: 20 }, m.parseRpgUpdate('<!--RPG:{"rules":{"add":["不许撒谎","第二条"],"violated":[1,"敲门"]},"choices":["对不起"]}-->'));
+  assert.equal(next.rules.length, 4, '每轮只接受一条新家规');
+  assert.equal(next.rules[3].by, 'trainer');
+  assert.deepEqual(next.rules.slice(0, 2).map((r) => r.violations), [1, 1]);
+  assert.deepEqual([next.points, next.stress, next.today.violations], [10, 6, 2]);
 });
 
-test('应用：训练属性单轮 ±8；体力、积分限幅且积分不为负；不相邻移动被拒；时间最多到深夜；系统目标不让 AI 改', async () => {
-  const { createRpgState, applyRpgUpdate, parseRpgUpdate, getReachableLocations, getLocation } = await load();
-  const state = { ...createRpgState('contract', names), period: 2, points: 10 };
-  const { state: next, notes } = applyRpgUpdate(state, parseRpgUpdate('<!--RPG:{"train":{"obedience":"+50","shame":"-30"},"discover":[{"name":"阳台","kind":"outdoor","dir":"南"}],"move":"街区","stamina":"-99","points":"-99","items":{"remove":["魔杖"],"add":[{"name":"项圈"}]},"time":"+3","quests":[{"title":"学会规矩","status":"done"},{"title":"背诵家规","objective":"今晚前背熟"}],"choices":["跪好"]}-->'));
-  assert.deepEqual([next.trainee.obedience, next.trainee.shame], [18, 52]);
-  const balcony = byName(next, '阳台');
-  assert.ok(getReachableLocations(next).includes(balcony));
-  assert.deepEqual([balcony.x, balcony.y], [0, 1]);
-  assert.equal(getLocation(next, next.currentId).name, '卧室', '街区不相邻');
-  assert.equal(next.stamina, 60, '单轮最多 -40');
-  assert.equal(next.points, 0, '最多扣 30，且不为负');
-  assert.ok(next.inventory.some((item) => item.name === '项圈'));
+test('休息：生成日报、发课表奖励、压力下降、排新课表；连续守规矩累计天数', async () => {
+  const m = await load();
+  let state = m.createRpgState('contract', names);
+  state = goTo(m, state, '客厅');
+  state = { ...state, plan: [{ period: 0, courseId: 'recite', done: false }, { period: 3, courseId: 'report', done: false }] };
+  state = m.runCourse(state, 'recite', fixed(0.95)).state;
+  state = m.runCourse(state, 'report', fixed(0.95)).state;
+  state = { ...state, stress: 50 };
+  assert.match(m.restUntilMorning(state).error, /卧室/);
+  state = goTo(m, state, '卧室');
+  const rested = m.restUntilMorning(state, fixed(0.5));
+  const report = rested.state.reports.at(-1);
+  assert.deepEqual([report.planDone, report.planTotal, report.bonus, report.courses, report.passed], [2, 2, 40, 2, 2]);
+  assert.deepEqual(report.deltas, { obedience: 3, devotion: 3 });
+  assert.deepEqual([rested.state.day, rested.state.period, rested.state.stamina, rested.state.stress], [2, 0, 100, 20]);
+  assert.equal(rested.state.counters.cleanDays, 1);
+  assert.equal(rested.state.plan.length, 4);
+  assert.ok(rested.state.plan.every((slot) => !slot.done));
+  assert.match(rested.message, /今日小结：完成课程 2 次；检定 2 成 0 败；课表 2\/2；没有违反家规；服从 \+3、依恋 \+3；积分 \+50（含课表奖励 40）/);
+});
+
+test('期满给出结局并排进事件；可以续约', async () => {
+  const m = await load();
+  let state = { ...m.createRpgState('contract', names), day: 30, trainee: { obedience: 70, endurance: 40, shame: 50, devotion: 45 } };
+  const rested = m.restUntilMorning(state, fixed(0.5)).state;
+  assert.equal(rested.ending.title, '模范学徒');
+  assert.ok(rested.pendingEvents.some((e) => e.includes('续约')));
+  const renewed = m.renewContract(rested);
+  assert.deepEqual([renewed.dayLimit, renewed.ending], [60, null]);
+  assert.equal(m.computeEnding({ obedience: 10, endurance: 10, shame: 90, devotion: 10 }, []).title, '未完成的契约');
+});
+
+test('营业时段：不开放的地点去不了；差事和兑换也看时段', async () => {
+  const m = await load();
+  let state = goTo(m, m.createRpgState('contract', names), '客厅', '街区');
+  assert.match(m.travelTo(state, byName(state, '街角咖啡馆').id).error, /清晨不开放/);
+  state = { ...state, period: 1 };
+  assert.equal(m.travelTo(state, byName(state, '街角咖啡馆').id).error, undefined);
+  const kitchen = goTo(m, { ...m.createRpgState('contract', names), period: 3 }, '客厅', '厨房');
+  assert.equal(m.getLocation(kitchen, kitchen.currentId).name, '客厅', '深夜厨房不开放');
+});
+
+test('物品：兑换、回体力/减压力、免罚券自动消耗', async () => {
+  const m = await load();
+  let state = { ...goTo(m, m.createRpgState('contract', names), '客厅'), points: 200, stamina: 50, stress: 40 };
+  state = m.buyItem(m.buyItem(m.buyItem(state, '休息券').state, '抱抱券').state, '免罚券').state;
+  assert.equal(state.points, 85);
+  state = m.itemUseAction(state, '休息券').state;
+  state = m.itemUseAction(state, '抱抱券').state;
+  assert.deepEqual([state.stamina, state.stress], [80, 25]);
+  assert.match(m.itemUseAction(state, '免罚券').error, /自动使用/);
+  const pardon = m.consumePardon(state);
+  assert.equal(pardon.used, true);
+  assert.equal(pardon.state.inventory.some((item) => item.name === '免罚券'), false);
+});
+
+test('解析与应用：训练属性 ±8、体力/压力/积分限幅、不相邻移动被拒、没有标签时保留选项', async () => {
+  const m = await load();
+  const state = { ...m.createRpgState('contract', names), period: 2, points: 10, choices: [{ text: '旧选项' }] };
+  const reply = '「跪好。」\n<!--RPG:{"train":{"obedience":+50,"忍耐":"+2","shame":"-30"},"stamina":-99,"stress":"+40","points":-99,"move":"街区","discover":[{"name":"阳台","kind":"阳台","dir":"南"}],"items":{"add":["发夹x2"],"remove":["魔杖"]},"time":"+3","quests":[{"title":"学会规矩","status":"done"}],"choices":[{"text":"跪好"},{"text":"坚持不动","check":"耐受:12"},"小声求饶|devotion:8",]}-->\n<!--STATUS:{"favor":"+1"}-->';
+  const update = m.parseRpgUpdate(reply);
+  assert.deepEqual(update.choices.map((c) => c.check), [undefined, { stat: 'endurance', dc: 12 }, { stat: 'devotion', dc: 8 }]);
+  const { state: next, notes } = m.applyRpgUpdate(state, update);
+  assert.deepEqual(next.trainee, { obedience: 18, endurance: 12, shame: 62, devotion: 10 });
+  assert.deepEqual([next.stamina, next.stress, next.points, next.period], [60, 15, 0, 3]);
+  assert.equal(m.getLocation(next, next.currentId).name, '卧室');
+  assert.deepEqual([byName(next, '阳台').x, byName(next, '阳台').y], [0, 1]);
   assert.ok(notes.some((n) => n.text.includes('魔杖')));
-  assert.deepEqual([next.period, next.day], [3, 1]);
   assert.equal(next.quests.find((q) => q.title === '学会规矩').status, 'active');
-  assert.ok(next.quests.some((q) => q.title === '背诵家规'));
+  assert.equal(m.stripRpgTags(reply).includes('RPG'), false);
+  assert.ok(m.stripRpgTags(reply).includes('STATUS'));
+  assert.equal(m.stripRpgTags('好的。<!--RPG:{"points":-5', true), '好的。');
+
+  const missing = m.applyRpgUpdate(state, m.parseRpgUpdate('没有标签'));
+  assert.equal(missing.missingTag, true);
+  assert.deepEqual(missing.state.choices, [{ text: '旧选项' }]);
 });
 
-test('回滚与存储校验；旧版存档不加载；开关默认关闭', async () => {
-  const { createRpgState, applyRpgUpdate, parseRpgUpdate, rememberSnapshot, restoreSnapshot, normalizeRpgState, isRpgModeEnabled, setRpgModeEnabled } = await load();
-  const state = rememberSnapshot(createRpgState('manor', names), 'msg_1');
-  const changed = applyRpgUpdate(state, parseRpgUpdate('<!--RPG:{"stamina":"-20","points":"+10","train":{"obedience":"+5"}}-->')).state;
-  const restored = restoreSnapshot(changed, 'msg_1');
-  assert.deepEqual([restored.stamina, restored.points, restored.trainee.obedience], [100, 20, 10]);
-  assert.equal(restoreSnapshot(restored, 'msg_1'), null);
+test('回滚、存储校验、旧版存档不加载、开关默认关闭', async () => {
+  const m = await load();
+  const state = m.rememberSnapshot(m.createRpgState('manor', names), 'msg_1');
+  const changed = m.applyRpgUpdate(state, m.parseRpgUpdate('<!--RPG:{"stamina":"-20","points":"+10","train":{"obedience":"+5"},"rules":{"violated":[1]}}-->')).state;
+  const restored = m.restoreSnapshot(changed, 'msg_1');
+  assert.deepEqual([restored.stamina, restored.points, restored.trainee.obedience, restored.rules[0].violations], [100, 20, 10, 0]);
+  assert.equal(m.restoreSnapshot(restored, 'msg_1'), null);
 
-  const loaded = normalizeRpgState(JSON.parse(JSON.stringify({ ...state, stamina: 500, trainee: { obedience: 999 }, hardware: { punishOnFail: true, punishLevel: 9999, punishSeconds: 60 } })));
-  assert.equal(loaded.stamina, 100);
-  assert.deepEqual(loaded.trainee, { obedience: 100, endurance: 10, shame: 60, devotion: 10 });
+  const loaded = m.normalizeRpgState(JSON.parse(JSON.stringify({ ...state, stress: 500, traits: ['docile', 'fake'], trainee: { obedience: 999 }, hardware: { punishOnFail: true, punishLevel: 9999, punishSeconds: 60 } })));
+  assert.equal(loaded.stress, 100);
+  assert.deepEqual(loaded.traits, ['docile']);
+  assert.deepEqual(loaded.trainee, { obedience: 100, endurance: 10, shame: 70, devotion: 10 });
   assert.equal(loaded.hardware.punishLevel, 200);
-  assert.equal(loaded.hardware.punishSeconds, 5);
-  assert.equal(normalizeRpgState({ version: 2, locations: [{}] }), null);
+  assert.equal(m.normalizeRpgState({ version: 3, locations: [{}] }), null);
 
   const storage = new Map();
   globalThis.localStorage = { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)), removeItem: (k) => storage.delete(k) };
   try {
-    assert.equal(isRpgModeEnabled(), false);
-    setRpgModeEnabled(true);
-    assert.equal(isRpgModeEnabled(), true);
+    assert.equal(m.isRpgModeEnabled(), false);
+    m.setRpgModeEnabled(true);
+    assert.equal(m.isRpgModeEnabled(), true);
   } finally {
     delete globalThis.localStorage;
   }

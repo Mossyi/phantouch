@@ -162,26 +162,34 @@ import {
 } from 'lucide-react';
 import { TavernRpgChoices, TavernRpgHud, TavernRpgPanel, type RpgPanelTab, type RpgSystemAction } from './TavernRpgPanel';
 import {
-  appendRpgLog,
+  RPG_HIGH_STRESS,
+  STAGES,
+  addRule,
   applyRpgUpdate,
   buildRpgPrompt,
   buyItem,
   consumePardon,
   createRpgState,
   doWork,
-  evaluateGoals,
+  evaluateProgress,
   formatCheckResult,
+  getTrait,
   isRpgModeEnabled,
+  itemUseAction,
   loadRpgState,
   parseRpgUpdate,
+  recordCheck,
   rememberSnapshot,
+  removeRule,
+  renewContract,
   restUntilMorning,
   restoreSnapshot,
   rollCheck,
+  runCourse,
   saveRpgState,
   travelTo,
-  itemUseAction,
   type RpgActionResult,
+  type RpgCheckResult,
   type RpgChoice,
   type TavernRpgState,
 } from '../../core/tavern/tavernRpg';
@@ -2026,26 +2034,55 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     }, 550);
   };
 
-  // ─── 日程模式 ────────────────────────────────────────────────────────────────
+  // ─── 训练日程 ────────────────────────────────────────────────────────────────
   const rpgActive = rpgEnabled && !isGroupScene && Boolean(rpgState);
   const updateRpgState = (next: TavernRpgState | null) => {
     rpgStateRef.current = next;
     setRpgState(next);
     saveRpgState(activeCard.id, next);
   };
-  const rpgNames = () => ({ char: activeCard.name, user: store.getTavernModelConfig().userName || '旅人' });
+  // 卡名常带头衔（「莉莉丝 · 深渊魅魔导师」），日程里只用短名
+  const rpgCharName = activeCard.name.split(/\s*[·・|｜]\s*/)[0] || activeCard.name;
+  const rpgNames = () => ({ char: rpgCharName, user: store.getTavernModelConfig().userName || '旅人' });
   const rpgEmsCeiling = resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200);
 
-  /** 应用一轮 AI 给出的训练变化，再按用户的训练属性判定目标 */
+  /** 应用一轮 AI 给出的训练变化，并提示目标、特质、阶段等进展 */
   const commitRpgTurn = (before: TavernRpgState, rawReply: string, messageId: string) => {
     const applied = applyRpgUpdate(rememberSnapshot(before, messageId), parseRpgUpdate(rawReply));
-    const goals = evaluateGoals(applied.state);
-    updateRpgState(goals.state);
+    updateRpgState(applied.state);
+    const { progress } = applied;
     const highlights = [
-      ...goals.completed.map((quest) => `🎯 达成「${quest.title}」${quest.reward ? ` +${quest.reward}` : ''}`),
+      ...(progress.stageUp ? [`⬆️ 阶段「${STAGES[progress.state.stage]?.name}」`] : []),
+      ...progress.newTraits.map((id) => `🏅 特质「${getTrait(id)?.name}」`),
+      ...progress.completed.map((quest) => `🎯 达成「${quest.title}」${quest.reward ? ` +${quest.reward}` : ''}`),
       ...applied.notes.filter((entry) => entry.tone !== 'warn').map((entry) => entry.text),
     ].slice(0, 3);
     if (highlights.length) showFeatureNotice(highlights.join(' · '));
+  };
+
+  /**
+   * 检定结果落地：失败时有免罚券自动用掉；可选的硬件奖惩立即执行。
+   * 电击仍受全局安全上限与急停约束，压力偏高时强度减半。
+   */
+  const settleRpgCheck = (state: TavernRpgState, result: RpgCheckResult): { state: TavernRpgState; note: string } => {
+    let next = state;
+    let note = '';
+    let pardoned = false;
+    if (!result.success) {
+      const pardon = consumePardon(next);
+      next = pardon.state;
+      pardoned = pardon.used;
+      if (pardoned) note = '（用了免罚券）';
+    }
+    const manager = DeviceManager.getInstance();
+    const baseLevel = Math.min(state.hardware.punishLevel, rpgEmsCeiling);
+    const level = state.stress >= RPG_HIGH_STRESS ? Math.ceil(baseLevel / 2) : baseLevel;
+    if (!result.success && !pardoned && state.hardware.punishOnFail && level > 0) {
+      void manager.setEmsStrength('AB', level, state.hardware.punishSeconds).catch(() => undefined);
+    } else if (result.success && state.hardware.rewardOnSuccess) {
+      void manager.setToyMotor(8, 4, 0).then(() => manager.scheduleOutputStop('toy', 2)).catch(() => undefined);
+    }
+    return { state: next, note };
   };
 
   const startRpg = (templateId: string, custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number }) => {
@@ -2056,56 +2093,57 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     void handleSendRef.current?.(`🧭 开始：${next.worldName} · 第 1 天清晨 · ${home}`, false);
   };
 
-  /** 移动、兑换、差事、休息、使用物品：系统先结算，再把结果作为一条消息发给 AI 描写 */
+  /** 移动、课程、兑换、差事、休息、使用物品、续约：系统先结算，再把结果作为一条消息发给 AI 描写 */
   const runRpgAction = (action: RpgSystemAction) => {
     const current = rpgStateRef.current;
     if (!current || isLoading) return;
     let result: RpgActionResult;
     switch (action.type) {
       case 'travel': result = travelTo(current, action.locationId); break;
+      case 'course': result = runCourse(current, action.courseId); break;
       case 'buy': result = buyItem(current, action.item); break;
       case 'work': result = doWork(current); break;
       case 'rest': result = restUntilMorning(current); break;
       case 'use': result = itemUseAction(current, action.item); break;
+      case 'renew': result = { state: renewContract(current), message: '🧭 续约：我愿意再签 30 天' }; break;
     }
     if (result.error) {
       showFeatureNotice(result.error);
       return;
     }
-    updateRpgState(result.state);
-    if (result.message) void handleSendRef.current?.(result.message, false);
+    let next = result.state;
+    let message = result.message;
+    if (result.check) {
+      const settled = settleRpgCheck(next, result.check);
+      next = settled.state;
+      if (settled.note && message) message = message.replace(/(🎲[^\n]*)/, `$1${settled.note}`);
+    }
+    updateRpgState(next);
+    if (message) void handleSendRef.current?.(message, false);
   };
 
-  /**
-   * 用户的回应选项：带检定的先掷骰（用户的训练属性做修正）。
-   * 可选的硬件奖惩在掷骰时立即执行，仍受全局安全上限与急停约束；失败时有免罚券会自动用掉、免除电击。
-   */
+  /** 用户的回应选项：带检定的先掷骰（用户的训练属性和特质做修正） */
   const pickRpgChoice = (choice: RpgChoice) => {
     const current = rpgStateRef.current;
     if (!current || isLoading) return;
     let text = choice.text;
     if (choice.check) {
       const result = rollCheck(current, choice.check);
-      let line = formatCheckResult(result);
-      let next = current;
-      let pardoned = false;
-      if (!result.success) {
-        const pardon = consumePardon(current);
-        next = pardon.state;
-        pardoned = pardon.used;
-        if (pardoned) line += '（用了免罚券）';
-      }
-      text = `${choice.text}\n${line}`;
-      updateRpgState(appendRpgLog(next, line.replace(/^🎲\s*/, ''), result.success ? 'good' : 'bad'));
-      const manager = DeviceManager.getInstance();
-      const level = Math.min(current.hardware.punishLevel, rpgEmsCeiling);
-      if (!result.success && !pardoned && current.hardware.punishOnFail && level > 0) {
-        void manager.setEmsStrength('AB', level, current.hardware.punishSeconds).catch(() => undefined);
-      } else if (result.success && current.hardware.rewardOnSuccess) {
-        void manager.setToyMotor(8, 4, 0).then(() => manager.scheduleOutputStop('toy', 2)).catch(() => undefined);
-      }
+      const recorded = evaluateProgress(recordCheck(current, result)).state;
+      const settled = settleRpgCheck(recorded, result);
+      text = `${choice.text}\n${formatCheckResult(result)}${settled.note}`;
+      updateRpgState(settled.state);
     }
     void handleSendRef.current?.(text, false);
+  };
+
+  const addRpgRule = (text: string) => {
+    const current = rpgStateRef.current;
+    if (!current) return '还没有开始训练。';
+    const result = addRule(current, text, 'user');
+    if (result.error) return result.error;
+    updateRpgState(result.state);
+    return undefined;
   };
 
   const handleSend = async (forcedPrompt?: string, forcedOoc?: boolean) => {
@@ -2210,7 +2248,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       );
       const statusInstruction = buildStatusPromptInstruction(characterStatsRef.current);
       const rpgTurnState = !isOOC && rpgEnabled ? rpgStateRef.current : null;
-      const rpgPrompt = rpgTurnState ? buildRpgPrompt(rpgTurnState, { char: activeCard.name, user: userName }) : '';
+      const rpgPrompt = rpgTurnState ? buildRpgPrompt(rpgTurnState, { char: rpgCharName, user: userName }) : '';
       const systemPrompt = resolveTavernDebugSystemPrompt(automaticSystemPrompt, promptOverride).prompt;
       const promptWithLorebook = lorebookInjected
         ? `${systemPrompt}\n\n【实时硬件世界书激活设定】\n${lorebookInjected}`
@@ -3281,14 +3319,16 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       {rpgPanelTab && (
         <TavernRpgPanel
           state={isGroupScene ? null : rpgState}
-          charName={activeCard.name}
+          charName={rpgCharName}
           userName={store.getTavernModelConfig().userName || '你'}
           busy={isLoading}
           emsCeiling={rpgEmsCeiling}
           initialTab={rpgPanelTab}
           onStart={startRpg}
           onAction={runRpgAction}
-          onEnd={() => { updateRpgState(null); setRpgPanelTab(null); showFeatureNotice('训练日程已结束，聊天记录保留'); }}
+          onAddRule={addRpgRule}
+          onRemoveRule={(index) => { if (rpgStateRef.current) updateRpgState(removeRule(rpgStateRef.current, index)); }}
+          onEnd={() => { updateRpgState(null); setRpgPanelTab(null); showFeatureNotice('训练已结束，聊天记录保留'); }}
           onUpdateHardware={(hardware) => { if (rpgStateRef.current) updateRpgState({ ...rpgStateRef.current, hardware }); }}
           onClose={() => setRpgPanelTab(null)}
         />
