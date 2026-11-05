@@ -1,21 +1,25 @@
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Backpack, BatteryLow, BedDouble, Briefcase, CalendarDays, Coins, Dices, Footprints, Map as MapIcon, MessageCircleHeart, Settings2, ShoppingBag, Sparkles, Target, X, Zap } from 'lucide-react';
+import { BatteryLow, BedDouble, CalendarDays, Dices, Footprints, Gift, Map as MapIcon, MessageCircleHeart, Settings2, Sparkles, Star, Target, UserRound, Wrench, X, Zap } from 'lucide-react';
 import {
   RPG_CUSTOM_TEMPLATE_ID,
   RPG_KIND_META,
   RPG_LOW_STAMINA,
   RPG_PERIOD_LABELS,
+  RPG_CHECK_LABELS,
+  RPG_SERVICE_LABELS,
+  RPG_STAT_HINTS,
   RPG_STAT_LABELS,
   RPG_TEMPLATES,
   checkModifier,
   getLocation,
   getReachableLocations,
-  type RpgCharacterStats,
   type RpgChoice,
   type RpgHardwareSettings,
   type RpgLocation,
   type RpgQuest,
+  type RpgStatKey,
+  type RpgTraineeStats,
   type TavernRpgState,
 } from '../../core/tavern/tavernRpg';
 
@@ -53,12 +57,12 @@ export const TavernRpgHud: React.FC<{ state: TavernRpgState; onOpen: () => void 
           <span aria-hidden>{location ? RPG_KIND_META[location.kind].icon : '📍'}</span>
           <span className="truncate">{location?.name ?? '未知'}</span>
         </span>
-        <span className="flex shrink-0 items-center gap-1" title={`体力 ${state.stamina}/100`}>
+        <span className="flex shrink-0 items-center gap-1" title={`你的体力 ${state.stamina}/100`}>
           {state.stamina < RPG_LOW_STAMINA ? <BatteryLow className="h-3 w-3 text-rose-500" /> : <Zap className="h-3 w-3 text-amber-500" />}
           <StaminaBar value={state.stamina} />
           <span className="tabular-nums">{state.stamina}</span>
         </span>
-        <span className="flex shrink-0 items-center gap-0.5 tabular-nums"><Coins className="h-3 w-3 text-amber-500" />{state.gold}</span>
+        <span className="flex shrink-0 items-center gap-0.5 tabular-nums" title="积分"><Star className="h-3 w-3 text-amber-500" />{state.points}</span>
         <span className="hidden min-w-0 truncate text-slate-500 min-[380px]:inline">{dayLabel(state)}·{RPG_PERIOD_LABELS[state.period]}</span>
         <span className="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-pink-50 px-2 py-0.5 font-bold text-pink-600">
           <CalendarDays className="h-3 w-3" />日程
@@ -72,12 +76,11 @@ export const TavernRpgHud: React.FC<{ state: TavernRpgState; onOpen: () => void 
 
 export const TavernRpgChoices: React.FC<{
   state: TavernRpgState;
-  stats: RpgCharacterStats;
   disabled: boolean;
   onPick: (choice: RpgChoice) => void;
   onAction: (action: RpgSystemAction) => void;
   onOpenShop: () => void;
-}> = ({ state, stats, disabled, onPick, onAction, onOpenShop }) => {
+}> = ({ state, disabled, onPick, onAction, onOpenShop }) => {
   const here = getLocation(state, state.currentId);
   const reachable = getReachableLocations(state);
   // AI 推荐的「去某地」和前往按钮重复时，只保留前往按钮（移动由系统完成，更可靠）
@@ -91,12 +94,12 @@ export const TavernRpgChoices: React.FC<{
     // 每回合换一组选项时从头显示
     <div key={`${state.turn}-${state.currentId}`} className="flex items-center gap-1.5 overflow-x-auto px-1 scrollbar-none" data-allow-scroll>
       {choices.map((choice) => {
-        const mod = choice.check ? checkModifier(state, stats, choice.check.stat) : 0;
+        const mod = choice.check ? checkModifier(state, choice.check.stat) : 0;
         return (
           <button key={choice.text} type="button" disabled={disabled} onClick={() => onPick(choice)} className={`${chip} border-pink-200 bg-white/95 text-slate-700 hover:border-pink-300 hover:text-pink-600`}>
             {choice.check ? <Dices className="h-3 w-3 text-violet-500" /> : <MessageCircleHeart className="h-3 w-3 text-pink-500" />}
             <span>{choice.text}</span>
-            {choice.check && <span className="font-medium text-violet-600">{RPG_STAT_LABELS[choice.check.stat]}{mod >= 0 ? `+${mod}` : mod} / {choice.check.dc}</span>}
+            {choice.check && <span className="font-medium text-violet-600">{RPG_CHECK_LABELS[choice.check.stat]}{mod >= 0 ? `+${mod}` : mod} / {choice.check.dc}</span>}
           </button>
         );
       })}
@@ -107,12 +110,12 @@ export const TavernRpgChoices: React.FC<{
       )}
       {here?.services.includes('work') && state.period < 3 && (
         <button type="button" disabled={disabled} onClick={() => onAction({ type: 'work' })} className={`${chip} border-emerald-200 bg-emerald-50/90 text-emerald-800`}>
-          <Briefcase className="h-3 w-3" />打工 +{here.pay}
+          <Wrench className="h-3 w-3" />做差事 +{here.pay}
         </button>
       )}
       {here?.services.includes('shop') && (
         <button type="button" disabled={disabled} onClick={onOpenShop} className={`${chip} border-amber-200 bg-amber-50/90 text-amber-800`}>
-          <ShoppingBag className="h-3 w-3" />购物
+          <Gift className="h-3 w-3" />兑换奖励
         </button>
       )}
       {reachable.slice(0, 5).map((location) => (
@@ -212,7 +215,7 @@ const RpgSetup: React.FC<{ charName: string; userName: string; onStart: (templat
   return (
     <div className="space-y-3">
       <p className="text-[11px] leading-5 text-slate-600">
-        按天安排{userName}和{charName}的日程：每天四个时段，去不同地点互动、打工、购物、休息。互动会消耗{charName}的体力，目标跟状态栏的好感、服从这些数值挂钩，由系统自动判定。
+        {charName}是调教者，{userName}是被调教的一方。每天分四个时段，由{charName}安排课程、下达指令；训练会消耗你的体力，回卧室休息到第二天恢复。你的服从、耐受、羞耻、依恋由系统记录，达成目标能拿积分换奖励。
       </p>
       <div className="grid grid-cols-2 gap-2">
         {RPG_TEMPLATES.map((template) => (
@@ -232,13 +235,13 @@ const RpgSetup: React.FC<{ charName: string; userName: string; onStart: (templat
           className={`col-span-2 rounded-2xl border p-3 text-left transition ${isCustom ? 'border-pink-400 bg-pink-50 shadow-sm' : 'border-pink-100 bg-white hover:border-pink-200'}`}
         >
           <span className="block text-[12px] font-black text-slate-800">自定义</span>
-          <span className="mt-0.5 block text-[9.5px] text-slate-500">从住处出发，其他地点由 AI 在剧情里慢慢添加</span>
+          <span className="mt-0.5 block text-[9.5px] text-slate-500">从你的住处出发，其他地点由 AI 在剧情里慢慢添加</span>
         </button>
       </div>
       {isCustom && (
         <div className="space-y-2 rounded-2xl border border-pink-100 bg-white p-3">
           <label className="block text-[10px] font-bold text-slate-700">名称
-            <input value={custom.worldName} maxLength={16} onChange={(event) => setCustom({ ...custom, worldName: event.target.value })} placeholder="例如：海边小屋" className={input} />
+            <input value={custom.worldName} maxLength={16} onChange={(event) => setCustom({ ...custom, worldName: event.target.value })} placeholder="例如：魅魔的城堡" className={input} />
           </label>
           <label className="block text-[10px] font-bold text-slate-700">住处
             <input value={custom.startName} maxLength={12} onChange={(event) => setCustom({ ...custom, startName: event.target.value })} placeholder="例如：阁楼卧室" className={input} />
@@ -247,7 +250,7 @@ const RpgSetup: React.FC<{ charName: string; userName: string; onStart: (templat
             <input type="number" min={0} max={365} value={custom.dayLimit} onChange={(event) => setCustom({ ...custom, dayLimit: Number(event.target.value) })} className={input} />
           </label>
           <label className="block text-[10px] font-bold text-slate-700">背景
-            <textarea value={custom.premise} maxLength={400} rows={3} onChange={(event) => setCustom({ ...custom, premise: event.target.value })} placeholder="你们是什么关系，有什么约定？" className={`${input} resize-none leading-5`} />
+            <textarea value={custom.premise} maxLength={400} rows={3} onChange={(event) => setCustom({ ...custom, premise: event.target.value })} placeholder="TA 为什么调教你，你们约定了什么？" className={`${input} resize-none leading-5`} />
           </label>
         </div>
       )}
@@ -264,7 +267,7 @@ const RpgSetup: React.FC<{ charName: string; userName: string; onStart: (templat
 
 // ─── 目标进度 ──────────────────────────────────────────────────────────────────
 
-const QuestCard: React.FC<{ quest: RpgQuest; stats: RpgCharacterStats }> = ({ quest, stats }) => {
+const QuestCard: React.FC<{ quest: RpgQuest; stats: RpgTraineeStats }> = ({ quest, stats }) => {
   const condition = quest.condition;
   const value = condition ? stats[condition.stat] : 0;
   const progress = condition
@@ -297,7 +300,6 @@ export type RpgPanelTab = 'map' | 'bag' | 'goals' | 'log' | 'settings';
 
 export interface TavernRpgPanelProps {
   state: TavernRpgState | null;
-  stats: RpgCharacterStats;
   charName: string;
   userName: string;
   busy: boolean;
@@ -310,7 +312,7 @@ export interface TavernRpgPanelProps {
   onClose: () => void;
 }
 
-export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({ state, stats, charName, userName, busy, emsCeiling, initialTab = 'map', onStart, onAction, onEnd, onUpdateHardware, onClose }) => {
+export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({ state, charName, userName, busy, emsCeiling, initialTab = 'map', onStart, onAction, onEnd, onUpdateHardware, onClose }) => {
   const [tab, setTab] = useState<RpgPanelTab>(initialTab);
   const [selectedId, setSelectedId] = useState(state?.currentId ?? '');
   const [confirmEnd, setConfirmEnd] = useState(false);
@@ -330,7 +332,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({ state, stats, ch
 
   const tabs: Array<{ id: RpgPanelTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: 'map', label: '地图', icon: MapIcon },
-    { id: 'bag', label: '背包', icon: Backpack },
+    { id: 'bag', label: '状态', icon: UserRound },
     { id: 'goals', label: '目标', icon: Target },
     { id: 'log', label: '日志', icon: Sparkles },
     { id: 'settings', label: '设置', icon: Settings2 },
@@ -343,14 +345,14 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({ state, stats, ch
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="日程模式"
+        aria-label="训练日程"
         onClick={(event) => event.stopPropagation()}
         className="flex max-h-[88vh] w-full max-w-md flex-col rounded-t-3xl border border-pink-200 bg-white shadow-2xl sm:rounded-3xl"
       >
         <div className="flex shrink-0 items-center justify-between border-b border-pink-100 px-4 py-3">
           <div className="min-w-0">
-            <h3 className="flex items-center gap-1.5 text-[13px] font-black text-slate-800"><CalendarDays className="h-4 w-4 text-pink-500" />{state ? state.worldName : '日程模式'}</h3>
-            {state && <p className="text-[10px] text-slate-500">{dayLabel(state)} · {RPG_PERIOD_LABELS[state.period]} · 体力 {state.stamina} · 金币 {state.gold}</p>}
+            <h3 className="flex items-center gap-1.5 text-[13px] font-black text-slate-800"><CalendarDays className="h-4 w-4 text-pink-500" />{state ? state.worldName : '训练日程'}</h3>
+            {state && <p className="text-[10px] text-slate-500">{dayLabel(state)} · {RPG_PERIOD_LABELS[state.period]} · 体力 {state.stamina} · 积分 {state.points}</p>}
           </div>
           <button type="button" onClick={onClose} aria-label="关闭" className="rounded-full p-1.5 text-slate-500 hover:bg-pink-50"><X className="h-4 w-4" /></button>
         </div>
@@ -386,10 +388,10 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({ state, stats, ch
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-[13px] font-black text-slate-800">{RPG_KIND_META[selected.kind].icon} {selected.name}</p>
-                          <p className="text-[10px] text-slate-500">{RPG_KIND_META[selected.kind].label}{selected.services.length ? ` · 可${selected.services.map((s) => ({ rest: '休息', shop: '购物', work: '打工' }[s])).join('、')}` : ''}</p>
+                          <p className="text-[10px] text-slate-500">{RPG_KIND_META[selected.kind].label}{selected.services.length ? ` · 可${selected.services.map((service) => RPG_SERVICE_LABELS[service]).join('、')}` : ''}</p>
                         </div>
                         {isHere ? (
-                          <span className="shrink-0 rounded-full bg-pink-50 px-2 py-1 text-[10px] font-bold text-pink-600">你们在这里</span>
+                          <span className="shrink-0 rounded-full bg-pink-50 px-2 py-1 text-[10px] font-bold text-pink-600">你在这里</span>
                         ) : reachableIds.has(selected.id) ? (
                           <button type="button" disabled={busy} onClick={() => act({ type: 'travel', locationId: selected.id })} className="flex shrink-0 items-center gap-1 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 px-3 py-1.5 text-[11px] font-black text-white disabled:opacity-50">
                             <Footprints className="h-3.5 w-3.5" />前往
@@ -406,7 +408,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({ state, stats, ch
                       )}
                       {isHere && selected.services.includes('work') && (
                         <button type="button" disabled={busy || state.period >= 3} onClick={() => act({ type: 'work' })} className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-800 disabled:opacity-50">
-                          <Briefcase className="h-3.5 w-3.5" />{state.period >= 3 ? '已经关门了' : `打工一个时段，+${selected.pay} 金币`}
+                          <Wrench className="h-3.5 w-3.5" />{state.period >= 3 ? '太晚了，先休息' : `做一个时段的差事（体力 -10），+${selected.pay} 积分`}
                         </button>
                       )}
                       {isHere && selected.services.includes('shop') && (
@@ -417,8 +419,8 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({ state, stats, ch
                                 <span className="block text-[11px] font-bold text-slate-800">{item.name}</span>
                                 <span className="block text-[9.5px] text-slate-500">{item.note}</span>
                               </span>
-                              <button type="button" disabled={busy || state.gold < item.price} onClick={() => act({ type: 'buy', item: item.name })} className="flex shrink-0 items-center gap-0.5 rounded-lg bg-amber-500 px-2.5 py-1 text-[10.5px] font-black text-white disabled:opacity-40">
-                                <Coins className="h-3 w-3" />{item.price}
+                              <button type="button" disabled={busy || state.points < item.price} onClick={() => act({ type: 'buy', item: item.name })} className="flex shrink-0 items-center gap-0.5 rounded-lg bg-amber-500 px-2.5 py-1 text-[10.5px] font-black text-white disabled:opacity-40">
+                                <Star className="h-3 w-3" />{item.price}
                               </button>
                             </div>
                           ))}
@@ -426,7 +428,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({ state, stats, ch
                       )}
                     </div>
                   )}
-                  <p className="text-[10px] text-slate-500">虚线圈是现在能去的地点，带橙点的地点可以休息、购物或打工。剧情里去了新地方，AI 会把它加到地图上。</p>
+                  <p className="text-[10px] text-slate-500">虚线圈是现在能去的地点，带橙点的地点可以休息、兑换奖励或做差事。剧情里去了新地方，AI 会把它加到地图上。</p>
                 </>
               )}
 
@@ -434,36 +436,57 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({ state, stats, ch
                 <>
                   <div className="grid grid-cols-2 gap-2 text-center">
                     <div className="rounded-2xl border border-pink-100 bg-white p-2.5">
-                      <p className="text-[10px] text-slate-500">{charName}的体力</p>
+                      <p className="text-[10px] text-slate-500">你的体力</p>
                       <p className={`text-[16px] font-black ${state.stamina < RPG_LOW_STAMINA ? 'text-rose-600' : 'text-slate-800'}`}>{state.stamina}<span className="text-[10px] text-slate-400">/100</span></p>
                       <StaminaBar value={state.stamina} className="mx-auto mt-1 block w-24" />
                     </div>
                     <div className="rounded-2xl border border-pink-100 bg-white p-2.5">
-                      <p className="text-[10px] text-slate-500">金币</p>
-                      <p className="text-[16px] font-black text-amber-600">{state.gold}</p>
-                      <p className="text-[9px] text-slate-500">打工、目标奖励可以赚</p>
+                      <p className="text-[10px] text-slate-500">积分</p>
+                      <p className="text-[16px] font-black text-amber-600">{state.points}</p>
+                      <p className="text-[9px] text-slate-500">差事、目标和调教者的奖励</p>
                     </div>
                   </div>
                   {state.stamina < RPG_LOW_STAMINA && <p className="rounded-xl bg-rose-50 px-3 py-2 text-[10.5px] text-rose-700">体力偏低：所有检定 -2。回卧室休息到第二天就能恢复。</p>}
+                  <div className="space-y-2 rounded-2xl border border-violet-100 bg-violet-50/30 p-3">
+                    <p className="text-[11px] font-black text-slate-700">训练属性</p>
+                    {(Object.keys(RPG_STAT_LABELS) as RpgStatKey[]).map((key) => {
+                      const mod = checkModifier(state, key);
+                      return (
+                        <div key={key} className="flex items-center gap-2 text-[10.5px]">
+                          <span className="w-9 shrink-0 font-bold text-slate-700">{RPG_STAT_LABELS[key]}</span>
+                          <span className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-violet-100">
+                            <span className={`absolute inset-y-0 left-0 rounded-full ${key === 'shame' ? 'bg-rose-400' : 'bg-violet-500'}`} style={{ width: `${state.trainee[key]}%` }} />
+                          </span>
+                          <span className="w-7 shrink-0 text-right tabular-nums text-slate-700">{state.trainee[key]}</span>
+                          <span className="w-16 shrink-0 text-right text-[9.5px] text-violet-600">检定 {mod >= 0 ? `+${mod}` : mod}</span>
+                        </div>
+                      );
+                    })}
+                    <p className="text-[9.5px] leading-4 text-slate-500">{(Object.keys(RPG_STAT_HINTS) as RpgStatKey[]).map((key) => `${RPG_STAT_LABELS[key]}：${RPG_STAT_HINTS[key]}`).join('；')}</p>
+                  </div>
                   <div>
                     <p className="mb-1.5 text-[11px] font-black text-slate-700">背包</p>
                     {state.inventory.length ? (
                       <div className="space-y-1.5">
                         {state.inventory.map((item) => (
                           <div key={item.name} className="flex items-center justify-between gap-2 rounded-xl border border-pink-100 bg-white px-3 py-1.5">
-                            <span className="text-[11px] text-slate-700">{item.name}{item.qty > 1 ? ` ×${item.qty}` : ''}</span>
-                            <button type="button" disabled={busy} onClick={() => act({ type: 'use', item: item.name })} className="rounded-lg border border-pink-200 px-2.5 py-1 text-[10.5px] font-bold text-pink-600 hover:bg-pink-50 disabled:opacity-50">使用</button>
+                            <span className="text-[11px] text-slate-700">{item.name}{item.qty > 1 ? ` ×${item.qty}` : ''}{item.effect?.stamina ? <span className="ml-1 text-[9.5px] text-emerald-600">体力 +{item.effect.stamina}</span> : null}</span>
+                            {item.effect?.pardon ? (
+                              <span className="text-[10px] text-slate-500">失败时自动使用</span>
+                            ) : (
+                              <button type="button" disabled={busy} onClick={() => act({ type: 'use', item: item.name })} className="rounded-lg border border-pink-200 px-2.5 py-1 text-[10.5px] font-bold text-pink-600 hover:bg-pink-50 disabled:opacity-50">使用</button>
+                            )}
                           </div>
                         ))}
                       </div>
-                    ) : <p className="text-[11px] text-slate-500">空空如也，去商店看看吧。</p>}
+                    ) : <p className="text-[11px] text-slate-500">空空如也，攒积分去兑换吧。</p>}
                   </div>
                 </>
               )}
 
               {tab === 'goals' && (
                 state.quests.length ? (
-                  <div className="space-y-2">{state.quests.map((quest) => <QuestCard key={quest.title} quest={quest} stats={stats} />)}</div>
+                  <div className="space-y-2">{state.quests.map((quest) => <QuestCard key={quest.title} quest={quest} stats={state.trainee} />)}</div>
                 ) : <p className="text-[11px] text-slate-500">还没有目标。剧情里出现的约定和任务会记在这里。</p>
               )}
 
@@ -482,7 +505,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({ state, stats, ch
                     <label className="flex items-center justify-between gap-3">
                       <span>
                         <span className="flex items-center gap-1 text-[11.5px] font-bold text-slate-800"><Zap className="h-3.5 w-3.5 text-pink-500" />失败时电击</span>
-                        <span className="block text-[10px] text-slate-500">{emsCeiling > 0 ? '到时自动停止，受全局安全上限和急停约束' : '当前安全上限为 0，无法启用'}</span>
+                        <span className="block text-[10px] text-slate-500">{emsCeiling > 0 ? '你没做到时电击；有免罚券会自动抵掉。到时自动停止，受全局安全上限和急停约束' : '当前安全上限为 0，无法启用'}</span>
                       </span>
                       <input type="checkbox" checked={state.hardware.punishOnFail && emsCeiling > 0} disabled={emsCeiling <= 0} onChange={(event) => onUpdateHardware({ ...state.hardware, punishOnFail: event.target.checked })} className="h-4 w-4 accent-pink-500" />
                     </label>
@@ -499,14 +522,14 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({ state, stats, ch
                     <label className="flex items-center justify-between gap-3 border-t border-pink-50 pt-2.5">
                       <span>
                         <span className="text-[11.5px] font-bold text-slate-800">成功时震动奖励</span>
-                        <span className="block text-[10px] text-slate-500">玩具轻震 2 秒</span>
+                        <span className="block text-[10px] text-slate-500">你做到时玩具轻震 2 秒</span>
                       </span>
                       <input type="checkbox" checked={state.hardware.rewardOnSuccess} onChange={(event) => onUpdateHardware({ ...state.hardware, rewardOnSuccess: event.target.checked })} className="h-4 w-4 accent-pink-500" />
                     </label>
                   </div>
                   {confirmEnd ? (
                     <div className="flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3">
-                      <span className="flex-1 text-[11px] text-rose-800">结束后地图、日程和背包都会清空，聊天记录保留。</span>
+                      <span className="flex-1 text-[11px] text-rose-800">结束后地图、训练属性和背包都会清空，聊天记录保留。</span>
                       <button type="button" onClick={() => setConfirmEnd(false)} className="rounded-xl px-2.5 py-1.5 text-[11px] font-bold text-slate-600">取消</button>
                       <button type="button" onClick={onEnd} className="rounded-xl bg-rose-500 px-2.5 py-1.5 text-[11px] font-black text-white">结束</button>
                     </div>

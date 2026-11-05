@@ -278,19 +278,19 @@ export const TavernApiTab: React.FC = () => {
 
   return (
     <div className="space-y-3.5 pb-8">
-      {/* 玩法开关：日程模式默认关闭 */}
+      {/* 玩法开关：训练日程默认关闭 */}
       <label className="flex items-center gap-3 rounded-3xl border border-pink-100/90 bg-white p-3.5 shadow-sm">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-pink-200 bg-pink-50 text-pink-600">
           <CalendarDays className="h-5 w-5" />
         </div>
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-black text-slate-800">日程模式</span>
-          <span className="block text-[10.5px] leading-relaxed text-slate-500">按天安排日程的经营玩法：地图、体力、金币、商店、目标。开启后在对谈的工具菜单里进入，关闭不会删除进度。</span>
+          <span className="block text-sm font-black text-slate-800">训练日程</span>
+          <span className="block text-[10.5px] leading-relaxed text-slate-500">由角色调教你的按天经营玩法：地图、你的体力和训练属性、积分兑换、目标。开启后在对谈的工具菜单里进入，关闭不会删除进度。</span>
         </span>
         <input
           type="checkbox"
           role="switch"
-          aria-label="开启日程模式"
+          aria-label="开启训练日程"
           checked={rpgEnabled}
           onChange={(event) => { setRpgEnabled(event.target.checked); setRpgModeEnabled(event.target.checked); }}
           className="h-5 w-5 shrink-0 accent-pink-500"

@@ -166,6 +166,7 @@ import {
   applyRpgUpdate,
   buildRpgPrompt,
   buyItem,
+  consumePardon,
   createRpgState,
   doWork,
   evaluateGoals,
@@ -181,7 +182,6 @@ import {
   travelTo,
   itemUseAction,
   type RpgActionResult,
-  type RpgCharacterStats,
   type RpgChoice,
   type TavernRpgState,
 } from '../../core/tavern/tavernRpg';
@@ -1722,7 +1722,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         rpgBefore ? {
           systemAddon: buildRpgPrompt(rpgBefore, rpgNames()),
           onRawReply: (rawReply) => {
-            if (!controller.signal.aborted) commitRpgTurn(rpgBefore, rawReply, message.id, characterStatsRef.current);
+            if (!controller.signal.aborted) commitRpgTurn(rpgBefore, rawReply, message.id);
           },
         } : undefined,
       )).trim();
@@ -2035,12 +2035,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
   const rpgNames = () => ({ char: activeCard.name, user: store.getTavernModelConfig().userName || '旅人' });
   const rpgEmsCeiling = resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200);
-  const toRpgStats = (stats: TavernCharacterStats): RpgCharacterStats => ({ favor: stats.favor, obedience: stats.obedience, arousal: stats.arousal, shame: stats.shame });
 
-  /** 应用一轮 AI 给出的日程变化，再按最新的状态栏数值判定目标 */
-  const commitRpgTurn = (before: TavernRpgState, rawReply: string, messageId: string, stats: TavernCharacterStats) => {
+  /** 应用一轮 AI 给出的训练变化，再按用户的训练属性判定目标 */
+  const commitRpgTurn = (before: TavernRpgState, rawReply: string, messageId: string) => {
     const applied = applyRpgUpdate(rememberSnapshot(before, messageId), parseRpgUpdate(rawReply));
-    const goals = evaluateGoals(applied.state, toRpgStats(stats));
+    const goals = evaluateGoals(applied.state);
     updateRpgState(goals.state);
     const highlights = [
       ...goals.completed.map((quest) => `🎯 达成「${quest.title}」${quest.reward ? ` +${quest.reward}` : ''}`),
@@ -2057,7 +2056,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     void handleSendRef.current?.(`🧭 开始：${next.worldName} · 第 1 天清晨 · ${home}`, false);
   };
 
-  /** 移动、购物、打工、休息、使用物品：系统先结算，再把结果作为一条消息发给 AI 描写 */
+  /** 移动、兑换、差事、休息、使用物品：系统先结算，再把结果作为一条消息发给 AI 描写 */
   const runRpgAction = (action: RpgSystemAction) => {
     const current = rpgStateRef.current;
     if (!current || isLoading) return;
@@ -2077,19 +2076,30 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     if (result.message) void handleSendRef.current?.(result.message, false);
   };
 
-  /** 推荐互动：带检定的先掷骰；可选的硬件奖惩在掷骰时立即执行，仍受全局安全上限与急停约束 */
+  /**
+   * 用户的回应选项：带检定的先掷骰（用户的训练属性做修正）。
+   * 可选的硬件奖惩在掷骰时立即执行，仍受全局安全上限与急停约束；失败时有免罚券会自动用掉、免除电击。
+   */
   const pickRpgChoice = (choice: RpgChoice) => {
     const current = rpgStateRef.current;
     if (!current || isLoading) return;
     let text = choice.text;
     if (choice.check) {
-      const result = rollCheck(current, toRpgStats(characterStatsRef.current), choice.check);
-      const line = formatCheckResult(result);
+      const result = rollCheck(current, choice.check);
+      let line = formatCheckResult(result);
+      let next = current;
+      let pardoned = false;
+      if (!result.success) {
+        const pardon = consumePardon(current);
+        next = pardon.state;
+        pardoned = pardon.used;
+        if (pardoned) line += '（用了免罚券）';
+      }
       text = `${choice.text}\n${line}`;
-      updateRpgState(appendRpgLog(current, line.replace(/^🎲\s*/, ''), result.success ? 'good' : 'bad'));
+      updateRpgState(appendRpgLog(next, line.replace(/^🎲\s*/, ''), result.success ? 'good' : 'bad'));
       const manager = DeviceManager.getInstance();
       const level = Math.min(current.hardware.punishLevel, rpgEmsCeiling);
-      if (!result.success && current.hardware.punishOnFail && level > 0) {
+      if (!result.success && !pardoned && current.hardware.punishOnFail && level > 0) {
         void manager.setEmsStrength('AB', level, current.hardware.punishSeconds).catch(() => undefined);
       } else if (result.success && current.hardware.rewardOnSuccess) {
         void manager.setToyMotor(8, 4, 0).then(() => manager.scheduleOutputStop('toy', 2)).catch(() => undefined);
@@ -2346,7 +2356,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       const assistantMessageId = createMessageId('msg');
       const parsedStatus = parseAndApplyStatusUpdate(rawModelReply, characterStatsRef.current, rawText);
       if (rpgTurnState && rpgStateRef.current) {
-        commitRpgTurn(rpgStateRef.current, rawModelReply, assistantMessageId, parsedStatus.nextStats);
+        commitRpgTurn(rpgStateRef.current, rawModelReply, assistantMessageId);
       }
       if (parsedStatus.updated) {
         setCharacterStats(parsedStatus.nextStats);
@@ -3271,7 +3281,6 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       {rpgPanelTab && (
         <TavernRpgPanel
           state={isGroupScene ? null : rpgState}
-          stats={toRpgStats(characterStats)}
           charName={activeCard.name}
           userName={store.getTavernModelConfig().userName || '你'}
           busy={isLoading}
@@ -3279,7 +3288,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           initialTab={rpgPanelTab}
           onStart={startRpg}
           onAction={runRpgAction}
-          onEnd={() => { updateRpgState(null); setRpgPanelTab(null); showFeatureNotice('日程已结束，聊天记录保留'); }}
+          onEnd={() => { updateRpgState(null); setRpgPanelTab(null); showFeatureNotice('训练日程已结束，聊天记录保留'); }}
           onUpdateHardware={(hardware) => { if (rpgStateRef.current) updateRpgState({ ...rpgStateRef.current, hardware }); }}
           onClose={() => setRpgPanelTab(null)}
         />
@@ -3496,7 +3505,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           </div>}
 
           {rpgActive && rpgState && (
-            <TavernRpgChoices state={rpgState} stats={toRpgStats(characterStats)} disabled={isLoading} onPick={pickRpgChoice} onAction={runRpgAction} onOpenShop={() => setRpgPanelTab('map')} />
+            <TavernRpgChoices state={rpgState} disabled={isLoading} onPick={pickRpgChoice} onAction={runRpgAction} onOpenShop={() => setRpgPanelTab('map')} />
           )}
 
           {/* 待发送图片缩略图 */}
@@ -3617,7 +3626,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               <span className="mt-1.5 block text-[9px] font-bold">上传图片</span>
             </button>
             <button onClick={() => { setIsSeseBoosted((value) => !value); setShowActionMenu(false); }} className={`rounded-2xl p-3 text-center border transition-all ${isSeseBoosted ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white border-rose-400 shadow-sm' : 'border-pink-100/90 bg-white text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 shadow-sm'}`}><Flame className={`mx-auto h-5 w-5 ${isSeseBoosted ? 'text-white' : 'text-rose-500'}`} /><span className="mt-1.5 block text-[9px] font-bold">瑟瑟增强</span></button>
-            {rpgEnabled && <button onClick={() => { setShowActionMenu(false); if (isGroupScene) { showFeatureNotice('多人场景暂不支持日程模式'); return; } setRpgPanelTab('map'); }} className={`rounded-2xl p-3 text-center border transition-all shadow-sm ${rpgState ? 'border-pink-300 bg-pink-50 text-pink-700' : 'border-pink-100/90 bg-white text-slate-700 hover:bg-pink-50/50 hover:border-pink-200'}`}><CalendarDays className="mx-auto h-5 w-5 text-pink-500" /><span className="mt-1.5 block text-[9px] font-bold">{rpgState ? '日程面板' : '日程模式'}</span></button>}
+            {rpgEnabled && <button onClick={() => { setShowActionMenu(false); if (isGroupScene) { showFeatureNotice('多人场景暂不支持训练日程'); return; } setRpgPanelTab('map'); }} className={`rounded-2xl p-3 text-center border transition-all shadow-sm ${rpgState ? 'border-pink-300 bg-pink-50 text-pink-700' : 'border-pink-100/90 bg-white text-slate-700 hover:bg-pink-50/50 hover:border-pink-200'}`}><CalendarDays className="mx-auto h-5 w-5 text-pink-500" /><span className="mt-1.5 block text-[9px] font-bold">训练日程</span></button>}
             <button onClick={() => generateSceneCard()} className="rounded-2xl border border-pink-100/90 bg-white p-3 text-center text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 transition-all shadow-sm"><Camera className="mx-auto h-5 w-5 text-pink-500" /><span className="mt-1.5 block text-[9px] font-bold">生成图片</span></button>
             <button onClick={openCardExtraction} className="rounded-2xl border border-pink-100/90 bg-white p-3 text-center text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 transition-all shadow-sm"><IdCard className="mx-auto h-5 w-5 text-purple-500" /><span className="mt-1.5 block text-[9px] font-bold">生成角色卡</span></button>
             <button onClick={() => saveArchive('save')} className="rounded-2xl border border-pink-100/90 bg-white p-3 text-center text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 transition-all shadow-sm"><Save className="mx-auto h-5 w-5 text-amber-500" /><span className="mt-1.5 block text-[9px] font-bold">保存存档</span></button>
