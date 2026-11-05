@@ -258,3 +258,38 @@ export const RPG_TEMPLATES: RpgTemplate[] = [
     inventory: [{ name: '仆从名牌', qty: 1 }],
   },
 ];
+
+// ─── 地点事件（进入地点时按概率触发，参考 era / DoL 的随机事件）────────────────
+
+export interface RpgEventChoice {
+  text: string;
+  check?: { stat: RpgStatKey; dc: number };
+}
+
+export interface RpgLocationEvent {
+  id: string;
+  title: string;
+  /** 交给 AI 描写的情境；{{char}} / {{user}} 会被替换 */
+  text: string;
+  kinds: RpgLocationKind[];
+  /** 只在这些时段触发，不填为任意时段 */
+  periods?: number[];
+  choices: RpgEventChoice[];
+}
+
+export const RPG_LOCATION_EVENTS: RpgLocationEvent[] = [
+  { id: 'bed_check', title: '床铺检查', text: '{{char}}掀开被子检查{{user}}的床铺有没有叠整齐。', kinds: ['bedroom'], periods: [0, 1], choices: [{ text: '立刻重新叠好', check: { stat: 'obedience', dc: 10 } }, { text: '小声解释' }] },
+  { id: 'night_talk', title: '睡前谈心', text: '{{char}}坐在床边，想听{{user}}说说今天真实的感受。', kinds: ['bedroom'], periods: [3], choices: [{ text: '老实说出来', check: { stat: 'devotion', dc: 10 } }, { text: '害羞地岔开话题' }] },
+  { id: 'quiz', title: '突击抽查', text: '{{char}}突然叫住{{user}}，要求当场背出一条家规。', kinds: ['home', 'bedroom'], choices: [{ text: '马上背出来', check: { stat: 'obedience', dc: 12 } }, { text: '请求再给一点时间' }] },
+  { id: 'tea_time', title: '陪喝下午茶', text: '{{char}}让{{user}}陪着喝下午茶，全程要保持端正的坐姿。', kinds: ['home', 'cafe'], periods: [1, 2], choices: [{ text: '坐得笔直', check: { stat: 'endurance', dc: 11 } }, { text: '主动为她添茶' }] },
+  { id: 'hair_wash', title: '帮忙洗头', text: '{{char}}靠在浴缸边，让{{user}}帮她洗头。', kinds: ['bath'], choices: [{ text: '认真又轻柔地洗', check: { stat: 'devotion', dc: 10 } }, { text: '紧张得手忙脚乱' }] },
+  { id: 'steam', title: '雾气里的命令', text: '浴室里雾气弥漫，{{char}}隔着雾气下了一个口令，要{{user}}照做。', kinds: ['bath'], periods: [2, 3], choices: [{ text: '循着声音照做', check: { stat: 'shame', dc: 12 } }, { text: '先确认她说了什么' }] },
+  { id: 'new_tool', title: '没见过的道具', text: '{{char}}拿出一件{{user}}没见过的道具，问{{user}}敢不敢试。', kinds: ['playroom'], choices: [{ text: '点头答应', check: { stat: 'shame', dc: 13 } }, { text: '先问清楚用途' }, { text: '摇头拒绝' }] },
+  { id: 'freeze', title: '口令「定」', text: '{{char}}说出口令「定」，{{user}}必须保持当前姿势，直到被允许为止。', kinds: ['playroom', 'home'], choices: [{ text: '一动不动', check: { stat: 'endurance', dc: 13 } }, { text: '小声请求放松' }] },
+  { id: 'extra_chore', title: '临时加活', text: '{{char}}临时多交代了一件差事，要{{user}}马上去做。', kinds: ['work', 'home'], periods: [0, 1, 2], choices: [{ text: '二话不说接下来', check: { stat: 'endurance', dc: 10 } }, { text: '讨价还价' }] },
+  { id: 'reward_pick', title: '挑一件奖励', text: '{{char}}心情不错，让{{user}}从柜子里挑一件小奖励，但要先说出想要它的理由。', kinds: ['shop'], choices: [{ text: '诚实说出理由', check: { stat: 'devotion', dc: 11 } }, { text: '让她替自己挑' }] },
+  { id: 'stranger', title: '有人搭讪', text: '一个陌生人过来搭讪，{{char}}就在一旁看着{{user}}怎么应对。', kinds: ['cafe', 'outdoor'], periods: [1, 2], choices: [{ text: '礼貌又坚定地拒绝', check: { stat: 'obedience', dc: 11 } }, { text: '求助地看向她' }] },
+  { id: 'hand_hold', title: '人前牵手', text: '在人多的地方，{{char}}牵起{{user}}的手，要{{user}}跟紧、不许低头。', kinds: ['outdoor', 'cafe'], choices: [{ text: '红着脸跟上', check: { stat: 'shame', dc: 12 } }, { text: '把手握得更紧' }] },
+  { id: 'rain', title: '突然下雨', text: '天突然下起雨，两个人只带了一把伞。', kinds: ['outdoor'], periods: [1, 2, 3], choices: [{ text: '把伞往她那边倾', check: { stat: 'devotion', dc: 10 } }, { text: '一起跑回去' }] },
+  { id: 'strange_sound', title: '奇怪的声响', text: '这里传来奇怪的声响，{{char}}示意{{user}}去看看是什么。', kinds: ['special', 'outdoor'], choices: [{ text: '鼓起勇气过去', check: { stat: 'endurance', dc: 11 } }, { text: '躲到她身后' }] },
+];

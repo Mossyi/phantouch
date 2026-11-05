@@ -260,7 +260,7 @@ test('AI 生成世界：容忍代码块和尾逗号；去重、补齐必需地�
   assert.deepEqual([courses[1].stamina, courses[1].stress], [-20, -20]);
 
   // 开局：专属课程进课程列表，地点连通、只能走相邻
-  const state = m.createRpgStateFromTemplate(template, { char: '莉莉丝', user: '小猫' }, courses);
+  const state = m.createRpgStateFromTemplate(template, { char: '莉莉丝', user: '小猫' }, { courses });
   assert.equal(m.getLocation(state, state.currentId).name, '塔顶卧房');
   assert.ok(state.rules[0].text.includes('行礼'));
   assert.ok(state.premise.includes('莉莉丝'));
@@ -296,4 +296,132 @@ test('探索周边：最多两个新地点，挂在当前位置旁；不允许�
   assert.ok(m.getReachableLocations(result.state).some((l) => l.name === '小阳台'));
   const again = m.discoverLocations(result.state, [{ name: '客厅', kind: 'home', dir: '', desc: '', from: undefined }], 2);
   assert.equal(again.added.length, 0);
+});
+
+const seq = (...values) => { let i = 0; return () => values[Math.min(i++, values.length - 1)]; };
+
+test('地点事件：到达时按概率触发；同地点同一天只一次；冷却期内不重复；事件选项排在 AI 选项前面', async () => {
+  const m = await load();
+  const base = m.createRpgState('contract', names);
+  const living = byName(base, '客厅').id;
+  const miss = m.travelTo(base, living, seq(0.9));
+  assert.equal(miss.message, '🧭 前往：客厅');
+  const hit = m.travelTo(base, living, seq(0.1, 0));
+  assert.match(hit.message, /✨ 地点事件：突击抽查/);
+  assert.ok(hit.state.pendingEvents.some((e) => e.includes('突击抽查') && e.includes('马上背出来')));
+  assert.deepEqual(hit.state.eventChoices.map((c) => c.text), ['马上背出来', '请求再给一点时间']);
+  // 同一天再来一次不会再触发
+  const back = m.travelTo(hit.state, byName(hit.state, '卧室').id, seq(0.9));
+  const again = m.travelTo(back.state, living, seq(0.1, 0));
+  assert.doesNotMatch(again.message, /地点事件/);
+  // 第二天：突击抽查在冷却中，换成别的事件
+  const nextDay = m.travelTo({ ...back.state, day: 2 }, living, seq(0.1, 0));
+  assert.match(nextDay.message, /地点事件/);
+  assert.doesNotMatch(nextDay.message, /突击抽查/);
+  // AI 回复后：事件选项在前，AI 选项去重补在后面
+  const applied = m.applyRpgUpdate(hit.state, m.parseRpgUpdate('<!--RPG:{"choices":["马上背出来","哭着求饶","乖乖跪好"]}-->'), seq(0.9)).state;
+  assert.deepEqual(applied.choices.map((c) => c.text), ['马上背出来', '请求再给一点时间', '哭着求饶', '乖乖跪好']);
+  assert.equal(applied.choices[0].check.stat, 'obedience');
+  assert.deepEqual(applied.eventChoices, []);
+  // AI 漏了标签时也能用上事件选项
+  assert.deepEqual(m.applyRpgUpdate(hit.state, null).state.choices.map((c) => c.text), ['马上背出来', '请求再给一点时间']);
+});
+
+test('调教者传唤：时间推进后可能传唤；按时到达有奖励；过时没到记失败加压力；同时只有一个传唤', async () => {
+  const m = await load();
+  let state = goTo(m, m.createRpgState('contract', names), '客厅');
+  state = { ...state, plan: [] };
+  // 课程推进时段后触发传唤（random：检定 20 → 传唤概率命中 → 选第一个候选）
+  const course = m.runCourse(state, 'recite', seq(0.95, 0.1, 0));
+  const summon = m.activeSummon(course.state);
+  assert.ok(summon, '应该有传唤');
+  assert.deepEqual(summon.deadline, { day: 1, period: 2 });
+  assert.ok(course.state.pendingEvents.some((e) => e.includes('传话')));
+  assert.equal(m.maybeSummon(course.state, seq(0)).quests.filter((q) => q.target).length, 1, '同时只有一个传唤');
+  const prompt = m.buildRpgPrompt(course.state, names);
+  assert.ok(prompt.includes('限时传唤'));
+
+  // 按时到达
+  const target = m.getLocation(course.state, summon.target);
+  const path = m.getNeighborIds(course.state, course.state.currentId).includes(target.id) ? [target.name] : ['卧室', target.name];
+  let arrived = course.state;
+  for (const name of path) arrived = m.travelTo(arrived, byName(arrived, name).id, seq(0.9)).state;
+  if (m.getLocation(arrived, arrived.currentId).id === target.id) {
+    assert.equal(arrived.quests.find((q) => q.target === target.id).status, 'done');
+    assert.equal(arrived.points, course.state.points + 10);
+    assert.equal(arrived.trainee.devotion, course.state.trainee.devotion + 1);
+  }
+
+  // 过时没到
+  const late = m.expireSummons({ ...course.state, period: 3 });
+  assert.equal(late.quests.find((q) => q.target).status, 'failed');
+  assert.equal(late.stress, course.state.stress + 3);
+  assert.ok(late.pendingEvents.some((e) => e.includes('没有按时')));
+});
+
+test('训练回忆：里程碑写进状态和提示词；最近几天的日报摘要也在提示词里', async () => {
+  const m = await load();
+  let state = m.createRpgState('contract', names);
+  state = m.evaluateProgress({ ...state, day: 3, trainee: { ...state.trainee, obedience: 45 } }).state;
+  assert.deepEqual(state.milestones.map((x) => x.text), ['达成目标「学会规矩」', '进入阶段「学习规矩」']);
+  state = goTo(m, state, '卧室');
+  const rested = m.restUntilMorning(state, seq(0.9)).state;
+  const prompt = m.buildRpgPrompt(rested, names);
+  assert.match(prompt, /训练回忆.*第3天达成目标「学会规矩」/);
+  assert.match(prompt, /最近几天：第3天课程 0 次/);
+});
+
+test('AI 生成世界带专属事件；存档读回事件仍在', async () => {
+  const gen = await loadGen();
+  const m = await load();
+  const raw = JSON.stringify({
+    worldName: '温泉旅馆', premise: '安全词是「雪」。',
+    locations: [{ id: 'r', name: '客房', kind: 'bedroom', desc: '榻榻米' }, { id: 'o', name: '露天温泉', kind: 'bath', desc: '雪景' }, { id: 'p', name: '茶室', kind: 'playroom', desc: '安静' }],
+    links: [['r', 'o'], ['r', 'p']],
+    events: [
+      { title: '雪落进温泉', text: '{{char}}让{{user}}在雪里多泡一会儿', kinds: ['bath'], periods: [3], choices: [{ text: '乖乖泡着', check: 'endurance:11' }, '想出去|devotion:9'] },
+      { title: '没有地点', text: '不会出现', kinds: ['castle'] },
+      { title: '', text: '没标题' },
+    ],
+  });
+  const world = gen.parseGeneratedWorld(raw, { theme: '温泉', dayLimit: 7 });
+  assert.equal(world.events.length, 1);
+  assert.deepEqual(world.events[0].choices, [{ text: '乖乖泡着', check: { stat: 'endurance', dc: 11 } }, { text: '想出去', check: { stat: 'devotion', dc: 9 } }]);
+  const state = m.createRpgStateFromTemplate(world.template, names, { courses: world.courses, events: world.events });
+  assert.ok(m.allLocationEvents(state).some((e) => e.id === 'aie_0'));
+  const reloaded = m.normalizeRpgState(JSON.parse(JSON.stringify(state)));
+  assert.equal(reloaded.customEvents[0].title, '雪落进温泉');
+});
+
+test('存档槽：最多 5 个；自动存档按世界名覆盖并能挤掉最旧的自动存档；不保存回滚快照；读回可用', async () => {
+  const storage = new Map();
+  globalThis.localStorage = { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)), removeItem: (k) => storage.delete(k) };
+  try {
+    const slots = await loadBundledModule('../src/core/tavern/tavernRpgSlots.ts');
+    const m = await load();
+    const a = m.rememberSnapshot(m.createRpgState('contract', names), 'msg');
+    const b = m.createRpgState('manor', names);
+    let result = slots.saveRpgSlot('card', a, '第一段', false);
+    assert.equal(result.slots.length, 1);
+    assert.deepEqual(result.slots[0].state.snapshots, []);
+    slots.saveRpgSlot('card', { ...a, day: 5 }, '', true);
+    result = slots.saveRpgSlot('card', { ...a, day: 6 }, '', true);
+    assert.equal(result.slots.filter((s) => s.auto).length, 1, '同一世界只留一个自动存档');
+    assert.equal(result.slots.find((s) => s.auto).day, 6);
+    slots.saveRpgSlot('card', b, '庄园', false);
+    slots.saveRpgSlot('card', b, '庄园2', false);
+    result = slots.saveRpgSlot('card', b, '庄园3', false);
+    assert.equal(result.slots.length, 5);
+    const sixth = slots.saveRpgSlot('card', b, '第六个', false);
+    assert.equal(sixth.error, undefined, '手动存档可以挤掉最旧的自动存档');
+    assert.equal(sixth.slots.filter((s) => s.auto).length, 0);
+    assert.match(slots.saveRpgSlot('card', b, '第七个', false).error, /最多 5 个/, '没有自动存档可挤时提示删除');
+    result = { slots: slots.listRpgSlots('card') };
+    const loaded = slots.loadRpgSlot('card', result.slots.find((s) => s.name === '第一段').id);
+    assert.equal(loaded.worldName, '契约训练');
+    assert.ok(slots.slotLocationIds('card').has(loaded.currentId));
+    assert.equal(slots.deleteRpgSlot('card', result.slots[0].id).length, 4);
+  } finally {
+    delete globalThis.localStorage;
+  }
 });

@@ -161,10 +161,12 @@ import {
   CalendarDays,
 } from 'lucide-react';
 import { TavernRpgChoices, TavernRpgHud, TavernRpgPanel, type RpgPanelTab, type RpgSystemAction } from './TavernRpgPanel';
-import { buildLocationArtPrompt, clearRpgArt, isRpgArtAutoEnabled, loadRpgArt, saveRpgArt, setRpgArtAutoEnabled } from '../../core/tavern/tavernRpgArt';
+import { buildLocationArtPrompt, deleteRpgArt, isRpgArtAutoEnabled, loadRpgArt, saveRpgArt, setRpgArtAutoEnabled } from '../../core/tavern/tavernRpgArt';
+import { deleteRpgSlot, listRpgSlots, loadRpgSlot, saveRpgSlot, slotLocationIds, type RpgSaveSlot } from '../../core/tavern/tavernRpgSlots';
 import { WORLD_GEN_SYSTEM, buildExploreRequest, buildWorldGenRequest, parseExploredLocations, parseGeneratedWorld, type GeneratedWorld, type WorldGenInput } from '../../core/tavern/tavernRpgWorldGen';
 import {
   RPG_HIGH_STRESS,
+  RPG_PERIOD_LABELS,
   STAGES,
   addRule,
   applyRpgUpdate,
@@ -497,6 +499,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const rpgArtControllerRef = useRef<AbortController | null>(null);
   const rpgWorldControllerRef = useRef<AbortController | null>(null);
   const [rpgExploring, setRpgExploring] = useState(false);
+  const [rpgSlots, setRpgSlots] = useState<RpgSaveSlot[]>(() => listRpgSlots(activeCard.id));
   useEffect(() => {
     let cancelled = false;
     void loadRpgArt(activeCard.id).then((art) => {
@@ -2214,7 +2217,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   const startGeneratedRpg = (world: GeneratedWorld) => {
-    const next = createRpgStateFromTemplate(world.template, rpgNames(), world.courses);
+    const next = createRpgStateFromTemplate(world.template, rpgNames(), { courses: world.courses, events: world.events });
     updateRpgState(next);
     setRpgPanelTab(null);
     const home = next.locations.find((location) => location.id === next.homeId)?.name ?? '住处';
@@ -2249,6 +2252,54 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       if (rpgWorldControllerRef.current === controller) rpgWorldControllerRef.current = null;
       setRpgExploring(false);
     }
+  };
+
+  // ─── 存档槽 ───
+  const autoSaveCurrentRpg = () => {
+    const current = rpgStateRef.current;
+    if (!current) return;
+    const result = saveRpgSlot(activeCard.id, current, `${current.worldName} · 第${current.day}天`, true);
+    setRpgSlots(result.slots);
+  };
+
+  const saveRpgToSlot = (name: string) => {
+    const current = rpgStateRef.current;
+    if (!current) return '还没有开始训练。';
+    const result = saveRpgSlot(activeCard.id, current, name, false);
+    setRpgSlots(result.slots);
+    if (!result.error) showFeatureNotice('已存档');
+    return result.error;
+  };
+
+  const loadRpgFromSlot = (slotId: string) => {
+    const loaded = loadRpgSlot(activeCard.id, slotId);
+    if (!loaded || isLoading) return;
+    autoSaveCurrentRpg();
+    updateRpgState(loaded);
+    setRpgPanelTab(null);
+    const here = loaded.locations.find((location) => location.id === loaded.currentId)?.name ?? '住处';
+    void handleSendRef.current?.(`🧭 读档：回到「${loaded.worldName}」第 ${loaded.day} 天${RPG_PERIOD_LABELS[loaded.period]}，在${here}`, false);
+  };
+
+  const startNewRpgRun = () => {
+    autoSaveCurrentRpg();
+    updateRpgState(null);
+    showFeatureNotice('当前进度已自动存档，可以开始新的一局了');
+  };
+
+  /** 结束训练：清掉当前进度；只删存档里用不到的地点插画 */
+  const endRpgRun = () => {
+    const current = rpgStateRef.current;
+    updateRpgState(null);
+    setRpgPanelTab(null);
+    rpgArtControllerRef.current?.abort();
+    if (current) {
+      const keep = slotLocationIds(activeCard.id);
+      const removable = current.locations.filter((location) => !keep.has(location.id)).map((location) => location.id);
+      setRpgArt((art) => Object.fromEntries(Object.entries(art).filter(([id]) => !removable.includes(id))));
+      for (const id of removable) void deleteRpgArt(activeCard.id, id);
+    }
+    showFeatureNotice('训练已结束，聊天记录保留');
   };
 
   const addRpgRule = (text: string) => {
@@ -3451,6 +3502,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           onStartGenerated={startGeneratedRpg}
           onExplore={() => void exploreRpg()}
           exploring={rpgExploring}
+          slots={rpgSlots}
+          onSaveSlot={saveRpgToSlot}
+          onLoadSlot={loadRpgFromSlot}
+          onDeleteSlot={(slotId) => setRpgSlots(deleteRpgSlot(activeCard.id, slotId))}
+          onNewRun={startNewRpgRun}
           charName={rpgCharName}
           userName={store.getTavernModelConfig().userName || '你'}
           busy={isLoading}
@@ -3460,14 +3516,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           onAction={runRpgAction}
           onAddRule={addRpgRule}
           onRemoveRule={(index) => { if (rpgStateRef.current) updateRpgState(removeRule(rpgStateRef.current, index)); }}
-          onEnd={() => {
-            updateRpgState(null);
-            setRpgPanelTab(null);
-            rpgArtControllerRef.current?.abort();
-            setRpgArt({});
-            void clearRpgArt(activeCard.id);
-            showFeatureNotice('训练已结束，聊天记录保留');
-          }}
+          onEnd={endRpgRun}
           onUpdateHardware={(hardware) => { if (rpgStateRef.current) updateRpgState({ ...rpgStateRef.current, hardware }); }}
           onClose={() => setRpgPanelTab(null)}
         />

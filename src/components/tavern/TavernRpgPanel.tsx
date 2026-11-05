@@ -1,13 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  BatteryLow, BedDouble, CalendarDays, Telescope, Wand2, CheckCircle2, Circle, Dices, Footprints, Gift, Gavel, HeartPulse, ImagePlus, Loader2, Lock,
+  BatteryLow, BedDouble, CalendarDays, Telescope, Wand2, Megaphone, Save, FolderOpen, Trash2, History, CheckCircle2, Circle, Dices, Footprints, Gift, Gavel, HeartPulse, ImagePlus, Loader2, Lock,
   Map as MapIcon, MessageCircleHeart, NotebookText, Plus, RefreshCw, ScrollText, Settings2, Star, Trophy, UserRound, Wrench, X, Zap,
 } from 'lucide-react';
 import { RPG_ICON_CREDIT, RPG_ICON_PATHS } from '../../core/tavern/rpgIcons';
 import type { TavernCharacterExpressions, TavernEmotionKey } from '../../core/tavern/tavernTypes';
 import { KIND_ICONS, PERIOD_ICONS, RpgIcon, STAGE_ICONS, courseIcon, itemIcon, traitIcon } from './RpgIcon';
 import type { GeneratedWorld, WorldGenInput } from '../../core/tavern/tavernRpgWorldGen';
+import type { RpgSaveSlot } from '../../core/tavern/tavernRpgSlots';
 import {
   LEVEL_NAMES,
   RPG_CHECK_LABELS,
@@ -22,6 +23,7 @@ import {
   RPG_TEMPLATES,
   STAGES,
   STAT_KEYS,
+  activeSummon,
   checkModifier,
   createRpgStateFromTemplate,
   findCourse,
@@ -122,6 +124,8 @@ const courseCheckText = (state: TavernRpgState, entry: CourseAvailability) => {
 
 export const TavernRpgHud: React.FC<{ state: TavernRpgState; art?: string; onOpen: () => void }> = ({ state, art, onOpen }) => {
   const location = getLocation(state, state.currentId);
+  const summon = activeSummon(state);
+  const summonTarget = summon?.target ? getLocation(state, summon.target)?.name : undefined;
   return (
     <div className="relative z-10 w-full px-3 pb-0.5">
       <button
@@ -149,7 +153,13 @@ export const TavernRpgHud: React.FC<{ state: TavernRpgState; art?: string; onOpe
           </span>
         )}
         <span className="flex shrink-0 items-center gap-0.5 tabular-nums" title="积分"><Star className="h-3 w-3 text-amber-500" />{state.points}</span>
-        <span className="hidden min-w-0 truncate text-slate-500 min-[380px]:inline">{dayLabel(state)}·{RPG_PERIOD_LABELS[state.period]}</span>
+        {summonTarget ? (
+          <span className="flex min-w-0 animate-pulse items-center gap-0.5 truncate font-bold text-amber-700" title="调教者传唤">
+            <Megaphone className="h-3 w-3 shrink-0" />去{summonTarget}
+          </span>
+        ) : (
+          <span className="hidden min-w-0 truncate text-slate-500 min-[380px]:inline">{dayLabel(state)}·{RPG_PERIOD_LABELS[state.period]}</span>
+        )}
         <span className="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-pink-50 px-2 py-0.5 font-bold text-pink-600">
           <CalendarDays className="h-3 w-3" />日程
         </span>
@@ -307,7 +317,7 @@ const AI_THEME_IDEAS = ['魅魔的城堡', '海边度假别墅', '魔法学院�
 /** AI 生成的世界预览：全图展开、列出地点/课程/家规和修补记录 */
 const WorldPreview: React.FC<{ world: GeneratedWorld; charName: string; userName: string }> = ({ world, charName, userName }) => {
   const preview = useMemo(() => {
-    const state = createRpgStateFromTemplate(world.template, { char: charName, user: userName }, world.courses);
+    const state = createRpgStateFromTemplate(world.template, { char: charName, user: userName }, { courses: world.courses, events: world.events });
     return { ...state, locations: state.locations.map((loc) => ({ ...loc, discovered: true, visited: true })) };
   }, [world, charName, userName]);
   return (
@@ -509,6 +519,11 @@ export interface TavernRpgPanelProps {
   onStartGenerated: (world: GeneratedWorld) => void;
   onExplore: () => void;
   exploring: boolean;
+  slots: RpgSaveSlot[];
+  onSaveSlot: (name: string) => string | undefined;
+  onLoadSlot: (slotId: string) => void;
+  onDeleteSlot: (slotId: string) => void;
+  onNewRun: () => void;
   charName: string;
   userName: string;
   busy: boolean;
@@ -524,7 +539,7 @@ export interface TavernRpgPanelProps {
 }
 
 export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
-  state, portrait, art, artBusyId, artAuto, onGenerateArt, onToggleArtAuto, onGenerateWorld, onStartGenerated, onExplore, exploring,
+  state, portrait, art, artBusyId, artAuto, onGenerateArt, onToggleArtAuto, onGenerateWorld, onStartGenerated, onExplore, exploring, slots, onSaveSlot, onLoadSlot, onDeleteSlot, onNewRun,
   charName, userName, busy, emsCeiling, initialTab = 'map', onStart, onAction, onAddRule, onRemoveRule, onEnd, onUpdateHardware, onClose,
 }) => {
   const [tab, setTab] = useState<RpgPanelTab>(initialTab);
@@ -532,6 +547,9 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [ruleDraft, setRuleDraft] = useState('');
   const [ruleError, setRuleError] = useState('');
+  const [slotName, setSlotName] = useState('');
+  const [slotError, setSlotError] = useState('');
+  const [confirmLoad, setConfirmLoad] = useState<string | null>(null);
   const selected = state ? getLocation(state, selectedId) ?? getLocation(state, state.currentId) : null;
   const reachableIds = useMemo(() => new Set(state ? getReachableLocations(state).map((loc) => loc.id) : []), [state]);
 
@@ -556,6 +574,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   ];
 
   const isHere = selected?.id === state?.currentId;
+  const summon = state ? activeSummon(state) : null;
   const coursesHere = state ? getCoursesHere(state) : [];
 
   const courseButton = (entry: CourseAvailability) => (
@@ -591,7 +610,23 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
         </div>
 
         {!state ? (
-          <div className="overflow-y-auto p-4" data-allow-scroll><RpgSetup charName={charName} userName={userName} onStart={onStart} onGenerateWorld={onGenerateWorld} onStartGenerated={onStartGenerated} /></div>
+          <div className="space-y-3 overflow-y-auto p-4" data-allow-scroll>
+            {slots.length > 0 && (
+              <div className="space-y-1.5 rounded-2xl border border-amber-100 bg-amber-50/40 p-3">
+                <p className="flex items-center gap-1 text-[11px] font-black text-slate-700"><FolderOpen className="h-3.5 w-3.5 text-amber-500" />继续之前的存档</p>
+                {slots.map((slot) => (
+                  <button key={slot.id} type="button" disabled={busy} onClick={() => onLoadSlot(slot.id)} className="flex w-full items-center justify-between gap-2 rounded-xl border border-amber-100 bg-white px-2.5 py-1.5 text-left disabled:opacity-50">
+                    <span className="min-w-0">
+                      <span className="block truncate text-[11px] font-bold text-slate-800">{slot.auto ? '（自动）' : ''}{slot.name}</span>
+                      <span className="block text-[9.5px] text-slate-500">{slot.worldName} · 第 {slot.day} 天 · {slot.stageName}</span>
+                    </span>
+                    <span className="shrink-0 text-[10px] font-bold text-amber-700">读取</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <RpgSetup charName={charName} userName={userName} onStart={onStart} onGenerateWorld={onGenerateWorld} onStartGenerated={onStartGenerated} />
+          </div>
         ) : (
           <>
             <div className="flex shrink-0 gap-0.5 border-b border-pink-50 px-2 py-2" role="tablist">
@@ -689,6 +724,19 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
 
               {tab === 'today' && (
                 <>
+                  {summon && summon.target && (
+                    <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                      <TrainerPortrait portrait={portrait} mood="smug" className="h-11 w-11" />
+                      <div className="min-w-0 flex-1">
+                        <p className="flex items-center gap-1 text-[12px] font-black text-amber-900"><Megaphone className="h-3.5 w-3.5" />{charName}的传唤</p>
+                        <p className="text-[11px] text-amber-900">{summon.objective.replace('调教者', charName)}</p>
+                        <p className="text-[9.5px] text-amber-700">按时到达 +{summon.reward ?? 10} 积分、依恋 +1；迟到压力 +3</p>
+                      </div>
+                      {reachableIds.has(summon.target) && (
+                        <button type="button" disabled={busy} onClick={() => act({ type: 'travel', locationId: summon.target! })} className="shrink-0 rounded-xl bg-amber-500 px-2.5 py-1.5 text-[10.5px] font-black text-white disabled:opacity-50">前往</button>
+                      )}
+                    </div>
+                  )}
                   {getLocation(state, state.currentId) && (
                     <LocationBanner location={getLocation(state, state.currentId)!} art={art[state.currentId]} busy={artBusyId === state.currentId} className="aspect-[21/9]" />
                   )}
@@ -726,6 +774,16 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
 
               {tab === 'status' && (
                 <>
+                  {(state.milestones ?? []).length > 0 && (
+                    <div className="rounded-2xl border border-amber-100 bg-amber-50/40 p-3">
+                      <p className="mb-1 flex items-center gap-1 text-[11px] font-black text-slate-700"><History className="h-3.5 w-3.5 text-amber-500" />训练回忆</p>
+                      <ol className="space-y-0.5">
+                        {state.milestones.slice().reverse().slice(0, 8).map((entry, index) => (
+                          <li key={`${entry.day}-${index}`} className="text-[10.5px] text-slate-600"><span className="font-bold text-amber-700">第 {entry.day} 天</span> {entry.text}</li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
                   <div className="rounded-2xl border border-pink-100 bg-gradient-to-br from-pink-50 to-violet-50 p-3">
                     <p className="text-[10px] text-slate-500">训练阶段 {state.stage + 1}/{STAGES.length}</p>
                     <p className="flex items-center gap-1.5 text-[15px] font-black text-slate-800"><RpgIcon name={STAGE_ICONS[state.stage] ?? 'crown'} className="h-5 w-5 text-pink-500" />{STAGES[state.stage]?.name}</p>
@@ -857,6 +915,34 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
 
               {tab === 'settings' && (
                 <>
+                  <div className="space-y-2 rounded-2xl border border-pink-100 bg-white p-3">
+                    <p className="flex items-center gap-1 text-[11px] font-black text-slate-800"><Save className="h-3.5 w-3.5 text-pink-500" />存档（最多 5 个）</p>
+                    <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); setSlotError(onSaveSlot(slotName) ?? ''); setSlotName(''); }}>
+                      <input value={slotName} maxLength={20} onChange={(event) => setSlotName(event.target.value)} placeholder={`存档名，默认「${state.worldName}」`} className="min-w-0 flex-1 rounded-xl border border-pink-200 bg-pink-50/30 px-3 py-1.5 text-[11px] text-slate-800 outline-none focus:border-pink-400" />
+                      <button type="submit" className="shrink-0 rounded-xl bg-pink-500 px-3 py-1.5 text-[11px] font-black text-white">保存</button>
+                    </form>
+                    {slotError && <p className="text-[10.5px] text-rose-600">{slotError}</p>}
+                    {slots.length ? (
+                      <ul className="space-y-1.5">
+                        {slots.map((slot) => (
+                          <li key={slot.id} className="flex items-center gap-2 rounded-xl border border-pink-50 bg-pink-50/30 px-2.5 py-1.5">
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[11px] font-bold text-slate-800">{slot.auto ? '（自动）' : ''}{slot.name}</span>
+                              <span className="block text-[9.5px] text-slate-500">{slot.worldName} · 第 {slot.day} 天 · {slot.stageName} · {new Date(slot.savedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                            </span>
+                            {confirmLoad === slot.id ? (
+                              <button type="button" disabled={busy} onClick={() => { setConfirmLoad(null); onLoadSlot(slot.id); }} className="shrink-0 rounded-lg bg-amber-500 px-2 py-1 text-[10px] font-black text-white disabled:opacity-50">确认读取</button>
+                            ) : (
+                              <button type="button" aria-label={`读取存档 ${slot.name}`} disabled={busy} onClick={() => setConfirmLoad(slot.id)} className="shrink-0 rounded-lg border border-pink-200 p-1.5 text-pink-600 disabled:opacity-50"><FolderOpen className="h-3.5 w-3.5" /></button>
+                            )}
+                            <button type="button" aria-label={`删除存档 ${slot.name}`} onClick={() => onDeleteSlot(slot.id)} className="shrink-0 rounded-lg p-1.5 text-slate-400 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : <p className="text-[10.5px] text-slate-500">还没有存档。</p>}
+                    {confirmLoad && <p className="text-[10px] text-amber-700">读取会替换当前进度，当前进度会先自动存一份。</p>}
+                    <button type="button" disabled={busy} onClick={onNewRun} className="w-full rounded-xl border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-bold text-violet-700 disabled:opacity-50">开始新的一局（当前进度自动存档）</button>
+                  </div>
                   <div className="space-y-2.5 rounded-2xl border border-pink-100 bg-white p-3">
                     <p className="flex items-center gap-1 text-[11px] font-black text-slate-800"><Gavel className="h-3.5 w-3.5 text-pink-500" />检定的硬件奖惩</p>
                     <label className="flex items-center justify-between gap-3">

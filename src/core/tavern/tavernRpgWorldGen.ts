@@ -11,7 +11,9 @@ import {
   getLocation,
   getNeighborIds,
   normalizeCustomCourse,
+  normalizeCustomEvent,
   type RpgCourse,
+  type RpgLocationEvent,
   type RpgDiscoverEntry,
   type RpgLocationKind,
   type RpgShopItem,
@@ -29,6 +31,8 @@ export interface WorldGenInput {
 export interface GeneratedWorld {
   template: RpgTemplate;
   courses: RpgCourse[];
+  /** 这个世界专属的地点事件 */
+  events: RpgLocationEvent[];
   /** 修补过程中做的改动，给用户看 */
   fixes: string[];
 }
@@ -60,6 +64,9 @@ const SCHEMA = `{
   "rules": ["家规，不超过 20 字"],
   "courses": [
     { "name": "课程名，不超过 8 字", "desc": "做什么，不超过 30 字", "kinds": ["playroom"], "stat": "obedience", "dc": 12, "stamina": 10, "stress": 3, "gain": { "obedience": 3 }, "points": 8, "unlockLevel": 1 }
+  ],
+  "events": [
+    { "title": "事件名，不超过 8 字", "text": "进入地点时发生的情境，不超过 60 字，用 {{char}} 和 {{user}} 指代双方", "kinds": ["outdoor"], "periods": [2,3], "choices": [{ "text": "回应，不超过 12 字", "check": "shame:12" }, { "text": "另一种回应" }] }
   ]
 }`;
 
@@ -81,7 +88,8 @@ ${input.details ? `补充要求：${text(input.details, 300)}\n` : ''}${cardInfo
 4. open 是开放时段（0 ${RPG_PERIOD_LABELS[0]}、1 ${RPG_PERIOD_LABELS[1]}、2 ${RPG_PERIOD_LABELS[2]}、3 ${RPG_PERIOD_LABELS[3]}），全天开放的地点省略 open；卧室必须全天开放。
 5. 物品 effect 只能写 "stamina:数值"（回体力 5-40）、"stress:数值"（减压力 5-30）、"pardon"（免罚券）或省略。
 6. 2-4 条家规；2-3 门贴合这个世界的专属课程，stat 取 obedience/endurance/shame/devotion（shame 课程用来克服羞耻，gain 里写负数），dc 8-18，stamina 2-25，stress -5 到 8，points 0-20，unlockLevel 0-2。
-7. 所有文字用简体中文，地点名不要重复。
+7. 4-6 个贴合这个世界的地点事件（进入某类地点时可能发生的小插曲），每个给 2-3 个${names.user}的回应，需要检定的写 check（属性:难度）。
+8. 所有文字用简体中文，地点名不要重复。
 
 严格按下面的 JSON 结构输出：
 ${SCHEMA}`;
@@ -264,6 +272,12 @@ export const parseGeneratedWorld = (raw: string, input: WorldGenInput): Generate
     .filter((course): course is RpgCourse => Boolean(course))
     .map((course) => ({ ...course, kinds: course.kinds.filter((kind) => locations.some((loc) => loc.kind === kind)).length ? course.kinds : ['playroom' as RpgLocationKind] }));
 
+  const events = (Array.isArray(data.events) ? data.events : [])
+    .slice(0, 6)
+    .map((event, index) => normalizeCustomEvent({ ...(event as object), id: `aie_${index}` }, index))
+    .filter((event): event is RpgLocationEvent => Boolean(event))
+    .filter((event) => event.kinds.some((kind) => locations.some((loc) => loc.kind === kind)));
+
   const template: RpgTemplate = {
     id: `ai${Date.now().toString(36)}`,
     name: text(data.worldName, 12) || text(input.theme, 12) || 'AI 生成的世界',
@@ -282,7 +296,7 @@ export const parseGeneratedWorld = (raw: string, input: WorldGenInput): Generate
     rules,
     inventory: [],
   };
-  return { template, courses, fixes };
+  return { template, courses, events, fixes };
 };
 
 // ─── 探索周边 ──────────────────────────────────────────────────────────────────
