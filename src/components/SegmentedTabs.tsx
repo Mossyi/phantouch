@@ -22,6 +22,24 @@ interface SegmentedTabsProps<T extends string> {
  */
 export function SegmentedTabs<T extends string>({ items, value, onChange, ariaLabel, className = '' }: SegmentedTabsProps<T>) {
   const trackRef = React.useRef<HTMLDivElement>(null);
+  // 标签放不下时在边缘加渐隐，提示还能横向滑动（否则靠右的标签很容易被忽略）
+  const [overflow, setOverflow] = React.useState({ left: false, right: false });
+  const updateOverflow = React.useCallback(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    const left = track.scrollLeft > 4;
+    const right = track.scrollLeft + track.clientWidth < track.scrollWidth - 4;
+    setOverflow((current) => (current.left === left && current.right === right ? current : { left, right }));
+  }, []);
+
+  React.useEffect(() => {
+    updateOverflow();
+    const track = trackRef.current;
+    if (!track || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(updateOverflow);
+    observer.observe(track);
+    return () => observer.disconnect();
+  }, [updateOverflow, items.length]);
 
   React.useEffect(() => {
     const track = trackRef.current;
@@ -33,7 +51,14 @@ export function SegmentedTabs<T extends string>({ items, value, onChange, ariaLa
 
   return (
     // data-allow-scroll：App 的滚动拦截器会把未标记容器的横向偏移强制归零
-    <div ref={trackRef} role="tablist" aria-label={ariaLabel} data-allow-scroll="true" className={`segmented-track ${className}`}>
+    <div
+      ref={trackRef}
+      role="tablist"
+      aria-label={ariaLabel}
+      data-allow-scroll="true"
+      onScroll={updateOverflow}
+      className={`segmented-track ${overflow.left ? 'segmented-track--more-left' : ''} ${overflow.right ? 'segmented-track--more-right' : ''} ${className}`}
+    >
       {items.map((item) => {
         const Icon = item.icon;
         const selected = item.id === value;

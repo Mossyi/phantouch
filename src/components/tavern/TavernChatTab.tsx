@@ -181,6 +181,7 @@ import {
   formatCheckResult,
   getTrait,
   isRpgModeEnabled,
+  setRpgModeEnabled,
   itemUseAction,
   loadRpgState,
   parseRpgUpdate,
@@ -490,7 +491,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const rpgStateRef = useRef<TavernRpgState | null>(rpgState);
   const [rpgPanelTab, setRpgPanelTab] = useState<RpgPanelTab | null>(null);
   // 日程模式在酒馆设置里开关，默认关闭；关闭时不显示入口、不注入提示词，进度保留
-  const [rpgEnabled] = useState(isRpgModeEnabled);
+  const [rpgEnabled, setRpgEnabled] = useState(isRpgModeEnabled);
   // 地点插画：{ 地点 id: dataURL }，存在 IndexedDB
   const [rpgArt, setRpgArt] = useState<Record<string, string>>({});
   const [rpgArtLoaded, setRpgArtLoaded] = useState(false);
@@ -3527,6 +3528,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           onLoadSlot={loadRpgFromSlot}
           onDeleteSlot={(slotId) => setRpgSlots(deleteRpgSlot(activeCard.id, slotId))}
           onNewRun={startNewRpgRun}
+          onDisableMode={() => {
+            setRpgModeEnabled(false);
+            setRpgEnabled(false);
+            setRpgPanelTab(null);
+            showFeatureNotice('训练日程已关闭，进度保留；从会话工具里点「训练日程」可重新开启');
+          }}
           charName={rpgCharName}
           userName={store.getTavernModelConfig().userName || '你'}
           busy={isLoading}
@@ -3874,7 +3881,24 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               <span className="mt-1.5 block text-[9px] font-bold">上传图片</span>
             </button>
             <button onClick={() => { setIsSeseBoosted((value) => !value); setShowActionMenu(false); }} className={`rounded-2xl p-3 text-center border transition-all ${isSeseBoosted ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white border-rose-400 shadow-sm' : 'border-pink-100/90 bg-white text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 shadow-sm'}`}><Flame className={`mx-auto h-5 w-5 ${isSeseBoosted ? 'text-white' : 'text-rose-500'}`} /><span className="mt-1.5 block text-[9px] font-bold">瑟瑟增强</span></button>
-            {rpgEnabled && <button onClick={() => { setShowActionMenu(false); if (isGroupScene) { showFeatureNotice('多人场景暂不支持训练日程'); return; } setRpgPanelTab('map'); }} className={`rounded-2xl p-3 text-center border transition-all shadow-sm ${rpgState ? 'border-pink-300 bg-pink-50 text-pink-700' : 'border-pink-100/90 bg-white text-slate-700 hover:bg-pink-50/50 hover:border-pink-200'}`}><CalendarDays className="mx-auto h-5 w-5 text-pink-500" /><span className="mt-1.5 block text-[9px] font-bold">训练日程</span></button>}
+            <button
+              onClick={() => {
+                setShowActionMenu(false);
+                if (isGroupScene) { showFeatureNotice('多人场景暂不支持训练日程'); return; }
+                // 入口始终可见；没开启时点一下就开启（开启是用户自己的选择，可在面板设置或酒馆设置里关闭）
+                if (!rpgEnabled) {
+                  setRpgModeEnabled(true);
+                  setRpgEnabled(true);
+                  showFeatureNotice('已开启训练日程，可在日程面板的「设置」里随时关闭');
+                }
+                setRpgPanelTab(rpgState ? 'today' : 'map');
+              }}
+              className={`relative rounded-2xl p-3 text-center border transition-all shadow-sm ${rpgEnabled && rpgState ? 'border-pink-300 bg-pink-50 text-pink-700' : 'border-pink-100/90 bg-white text-slate-700 hover:bg-pink-50/50 hover:border-pink-200'}`}
+            >
+              {!rpgEnabled && <span className="absolute right-1 top-1 rounded-full bg-slate-100 px-1 text-[7.5px] font-bold text-slate-500">未开启</span>}
+              <CalendarDays className="mx-auto h-5 w-5 text-pink-500" />
+              <span className="mt-1.5 block text-[9px] font-bold">训练日程</span>
+            </button>
             <button onClick={() => generateSceneCard()} className="rounded-2xl border border-pink-100/90 bg-white p-3 text-center text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 transition-all shadow-sm"><Camera className="mx-auto h-5 w-5 text-pink-500" /><span className="mt-1.5 block text-[9px] font-bold">生成图片</span></button>
             <button onClick={openCardExtraction} className="rounded-2xl border border-pink-100/90 bg-white p-3 text-center text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 transition-all shadow-sm"><IdCard className="mx-auto h-5 w-5 text-purple-500" /><span className="mt-1.5 block text-[9px] font-bold">生成角色卡</span></button>
             <button onClick={() => saveArchive('save')} className="rounded-2xl border border-pink-100/90 bg-white p-3 text-center text-slate-700 hover:bg-pink-50/50 hover:border-pink-200 transition-all shadow-sm"><Save className="mx-auto h-5 w-5 text-amber-500" /><span className="mt-1.5 block text-[9px] font-bold">保存存档</span></button>

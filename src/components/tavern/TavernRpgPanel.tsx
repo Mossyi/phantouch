@@ -524,6 +524,7 @@ export interface TavernRpgPanelProps {
   onLoadSlot: (slotId: string) => void;
   onDeleteSlot: (slotId: string) => void;
   onNewRun: () => void;
+  onDisableMode: () => void;
   charName: string;
   userName: string;
   busy: boolean;
@@ -539,7 +540,7 @@ export interface TavernRpgPanelProps {
 }
 
 export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
-  state, portrait, art, artBusyId, artAuto, onGenerateArt, onToggleArtAuto, onGenerateWorld, onStartGenerated, onExplore, exploring, slots, onSaveSlot, onLoadSlot, onDeleteSlot, onNewRun,
+  state, portrait, art, artBusyId, artAuto, onGenerateArt, onToggleArtAuto, onGenerateWorld, onStartGenerated, onExplore, exploring, slots, onSaveSlot, onLoadSlot, onDeleteSlot, onNewRun, onDisableMode,
   charName, userName, busy, emsCeiling, initialTab = 'map', onStart, onAction, onAddRule, onRemoveRule, onEnd, onUpdateHardware, onClose,
 }) => {
   const [tab, setTab] = useState<RpgPanelTab>(initialTab);
@@ -626,6 +627,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
               </div>
             )}
             <RpgSetup charName={charName} userName={userName} onStart={onStart} onGenerateWorld={onGenerateWorld} onStartGenerated={onStartGenerated} />
+            <button type="button" onClick={onDisableMode} className="w-full text-center text-[10.5px] text-slate-400 underline-offset-2 hover:underline">暂时不用，关闭训练日程</button>
           </div>
         ) : (
           <>
@@ -987,6 +989,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                   ) : (
                     <button type="button" onClick={() => setConfirmEnd(true)} className="w-full rounded-2xl border border-rose-200 px-3 py-2 text-[11px] font-bold text-rose-600 hover:bg-rose-50">结束这段训练</button>
                   )}
+                  <button type="button" onClick={onDisableMode} className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-[11px] font-bold text-slate-600 hover:bg-slate-50">关闭训练日程（隐藏状态条和选项，不再影响对话；进度保留）</button>
                   <p className="text-center text-[9.5px] text-slate-400">{RPG_ICON_CREDIT}</p>
                 </>
               )}
