@@ -15,7 +15,7 @@ export interface STTOptions {
 const SILICONFLOW_STT_ENDPOINT = 'https://api.siliconflow.cn/v1/audio/transcriptions';
 const VOLCENGINE_STT_ENDPOINT = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash';
 
-const encodeWav = (chunks: Float32Array[], sampleRate: number): Blob => {
+export const encodeWav = (chunks: Float32Array[], sampleRate: number): Blob => {
   const sampleCount = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
   const buffer = new ArrayBuffer(44 + sampleCount * 2);
   const view = new DataView(buffer);
@@ -353,6 +353,20 @@ export class STTManager {
       throw new Error(response.headers.get('x-api-message') || payload?.message || `火山语音识别失败 (${statusCode || response.status})`);
     }
     return extractTranscript(payload);
+  }
+
+  /**
+   * 识别一段已录好的音频（通话模式自己做断句，只借用云端识别）。
+   */
+  async transcribeAudio(wav: Blob, options: STTOptions, signal: AbortSignal): Promise<string> {
+    if (options.engine === 'volcengine') {
+      if (!options.volcengineApiKey?.trim() && !(options.volcengineAppId?.trim() && options.volcengineAccessKey?.trim())) {
+        throw new Error('请先在系统设置中填写豆包语音识别凭据');
+      }
+      return this.transcribeVolcengine(wav, options, signal);
+    }
+    if (!options.siliconflowApiKey?.trim()) throw new Error('请先在系统设置中填写硅基流动语音识别 Key');
+    return this.transcribeSiliconflow(wav, options, signal);
   }
 
   finishListening() {

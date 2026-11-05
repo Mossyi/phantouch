@@ -40,9 +40,12 @@ import {
 import { LLMClient } from '../../core/ai/llmClient';
 import { TTSManager } from '../../core/voice/ttsManager';
 import { STTManager } from '../../core/voice/sttManager';
+import type { CallTurnHooks, VoiceCallDeps } from '../../core/voice/voiceCallSession';
+import { PhoneCallOverlay, type PhoneCallDirection, type PhoneCallSummary } from './PhoneCallOverlay';
 import {
   prepareTavernSpeechText,
   resolveTavernNarrationVoiceConfig,
+  resolveTavernVoiceConfig,
   shouldAutoPlayTavernVoice,
 } from '../../core/tavern/tavernVoice';
 import { useAppStore } from '../../store/useAppStore';
@@ -135,6 +138,8 @@ import {
   MessageSquarePlus,
   Mic,
   Pencil,
+  Phone,
+  PhoneIncoming,
   Play,
   RefreshCw,
   RotateCcw,
@@ -308,6 +313,15 @@ const buildInitialGreetingMessage = (card: TavernCharacterCard, userName: string
   };
 };
 
+/** 语音通话期间追加给模型的说话方式约束：回复会被逐句直接念出来 */
+const PHONE_CALL_PROMPT = `【语音通话模式】你正在和对方用手机语音通话，你输出的每个字都会被直接念给对方听。
+- 只输出你在电话里说出口的话：不要写括号里的动作、神态、旁白、心理描写，不要用 Markdown、列表或表情符号。
+- 像真人打电话一样口语化、自然，可以有语气词、停顿和简短的反应（用逗号、省略号表现节奏）。
+- 每次回复简短，一般一到三句；对方要求你多讲时再展开。
+- 保持你的人设、口吻与你们之间的关系；隐藏的状态标签照常输出在末尾。`;
+
+const formatCallDuration = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+
 export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter }) => {
   const store = TavernStore.getInstance();
   const lorebookEngine = HardwareLorebookEngine.getInstance();
@@ -348,6 +362,20 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [isOOCMode, setIsOOCMode] = useState(false);
   const [isSeseBoosted, setIsSeseBoosted] = useState(false); // 🔥 狂暴瑟瑟增强模式
   const [isLoading, setIsLoading] = useState(false);
+  // 语音通话
+  const [phoneCall, setPhoneCall] = useState<PhoneCallDirection | null>(null);
+  const [showCallMenu, setShowCallMenu] = useState(false);
+  const [scheduledCallAt, setScheduledCallAt] = useState<number | null>(null);
+  const scheduledCallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const voiceCallActiveRef = useRef(false);
+  /** 当前这一轮是否由通话发起：流式文本回调给通话、回复不再自动整段朗读 */
+  const voiceTurnRef = useRef<{ hooks: CallTurnHooks; reply: string | null; error?: string } | null>(null);
+  const isLoadingRef = useRef(false);
+  const handleSendRef = useRef<((forcedPrompt?: string, forcedOoc?: boolean) => Promise<void>) | null>(null);
+  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
+  useEffect(() => () => {
+    if (scheduledCallTimerRef.current) clearTimeout(scheduledCallTimerRef.current);
+  }, []);
   const [streamingReply, setStreamingReply] = useState('');
   const [showSpriteWidget, setShowSpriteWidget] = useState<boolean>(() => {
     try {
@@ -2051,7 +2079,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       const promptWithAction = aiActionRequest
         ? `${promptWithLorebook}\n\n${aiActionRequest.instruction}`
         : promptWithLorebook;
-      const fullSystemPrompt = `${promptWithAction}\n\n${statusInstruction}`;
+      const fullSystemPrompt = [promptWithAction, voiceCallActiveRef.current ? PHONE_CALL_PROMPT : '', statusInstruction].filter(Boolean).join('\n\n');
 
       const isContinueInstruction = /^[（(]?\s*继续\s*[)）]?$/.test(rawText.trim());
       const lastAssistantMsg = messages.slice().reverse().find((m) => m.role === 'assistant') || null;
@@ -2089,7 +2117,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         }, currentGenerationConfig);
         const dzmmBaseSystemPrompt = promptOverride
           ? fullSystemPrompt
-          : [dzmmAutomaticPrompt, lorebookInjected, aiActionRequest?.instruction, statusInstruction].filter(Boolean).join('\n\n');
+          : [dzmmAutomaticPrompt, lorebookInjected, aiActionRequest?.instruction, voiceCallActiveRef.current ? PHONE_CALL_PROMPT : '', statusInstruction].filter(Boolean).join('\n\n');
         const dzmmSystemPrompt = continuationGuidance
           ? `${dzmmBaseSystemPrompt}\n\n${continuationGuidance}`
           : dzmmBaseSystemPrompt;
@@ -2126,6 +2154,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               'assistant_output',
             ).text;
             throttledUpdateStreamingReply(visibleText);
+            voiceTurnRef.current?.hooks.onVisibleText(visibleText);
           },
         });
       } else {
@@ -2174,6 +2203,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               'assistant_output',
             ).text;
             throttledUpdateStreamingReply(visibleText);
+            voiceTurnRef.current?.hooks.onVisibleText(visibleText);
           },
         );
         reply = result.reply;
@@ -2303,7 +2333,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       maybeAutoUpdateMemory(completedMessages);
 
       // 5. 完整朗读回复。不能只抽取引号，否则前置叙述会被错误跳过。
-      autoSpeakTavernReplies([{ text: reply, speaker: activeCard }]);
+      if (voiceTurnRef.current) {
+        // 通话中由通话会话逐句朗读，这里只把最终回复交回去
+        voiceTurnRef.current.reply = reply;
+      } else {
+        autoSpeakTavernReplies([{ text: reply, speaker: activeCard }]);
+      }
     } catch (e: any) {
       if (e?.name === 'AbortError') {
         const partialReply = sanitizeTavernVisibleContent(streamingReplyRef.current, false).trim();
@@ -2322,6 +2357,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         }
         return;
       }
+      if (voiceTurnRef.current) voiceTurnRef.current.error = String(e?.message || e || '生成失败').slice(0, 200);
       const isMultimodalIssue = Boolean(userMsg?.images && userMsg.images.length > 0);
       const errorDetail = isMultimodalIssue
         ? `（酒馆连接异常: ${e.message}。提示：若当前使用的不是多模态模型无法识别图片，已支持自动降级或点击该消息图片右上角红叉移除附件，即可顺畅文字聊天；若需图片识别请在【官网/迁移】切换为视觉模型）`
@@ -2354,6 +2390,104 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       setStreamingReply('');
       setIsLoading(false);
     }
+  };
+
+  handleSendRef.current = handleSend;
+
+  const waitForTavernIdle = async (timeoutMs = 8_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (isLoadingRef.current && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+
+  const createPhoneCallDeps = (): VoiceCallDeps => ({
+    sendTurn: async (text, hooks) => {
+      const turn: { hooks: CallTurnHooks; reply: string | null; error?: string } = { hooks, reply: null };
+      voiceTurnRef.current = turn;
+      try {
+        await handleSendRef.current?.(text, false);
+        if (turn.error) throw new Error(`酒馆连接异常：${turn.error}`);
+        return turn.reply;
+      } finally {
+        if (voiceTurnRef.current === turn) voiceTurnRef.current = null;
+      }
+    },
+    interruptTurn: () => requestControllerRef.current?.abort(),
+    waitUntilReady: () => waitForTavernIdle(),
+    prepareSpeech: (text) => {
+      const speech = prepareTavernSpeechText(applyTavernTextRules(text, loadTavernTextRules(), 'tts').text);
+      // 不保留括号旁白：电话里只读说出口的话
+      const voice = resolveTavernVoiceConfig(activeCard.voiceSettings, safetyConfig.ttsEngine) || { gender: 'female' as const, rate: 1, pitch: 1 };
+      return TTSManager.getInstance().prepare(speech, voice);
+    },
+    stopSpeech: () => TTSManager.getInstance().stop(),
+    sttOptions: {
+      engine: safetyConfig.sttEngine,
+      siliconflowApiKey: safetyConfig.siliconflowSttApiKey,
+      siliconflowModel: safetyConfig.siliconflowSttModel,
+      volcengineApiKey: safetyConfig.volcengineSttApiKey,
+      volcengineAppId: safetyConfig.volcengineSttAppId,
+      volcengineAccessKey: safetyConfig.volcengineSttAccessKey,
+      volcengineResourceId: safetyConfig.volcengineSttResourceId,
+    },
+  });
+
+  const startPhoneCall = (direction: PhoneCallDirection) => {
+    setShowCallMenu(false);
+    if (isGroupScene) {
+      showFeatureNotice('多人酒馆暂不支持语音通话，请先切回单人对话');
+      return;
+    }
+    if (phoneCall) return;
+    // 通话会占用麦克风与朗读：先停掉按键语音输入和正在进行的整段朗读
+    STTManager.getInstance().stopListening();
+    ttsSequenceRef.current += 1;
+    TTSManager.getInstance().stop();
+    TTSManager.getInstance().unlockAudioContext();
+    voiceCallActiveRef.current = true;
+    setPhoneCall(direction);
+  };
+
+  const scheduleIncomingCall = (minutes: number) => {
+    setShowCallMenu(false);
+    if (scheduledCallTimerRef.current) clearTimeout(scheduledCallTimerRef.current);
+    const delay = minutes * 60_000;
+    setScheduledCallAt(Date.now() + delay);
+    scheduledCallTimerRef.current = setTimeout(() => {
+      scheduledCallTimerRef.current = null;
+      setScheduledCallAt(null);
+      if (!voiceCallActiveRef.current) startPhoneCall('incoming');
+    }, delay);
+    showFeatureNotice(`${activeCard.name} 会在约 ${minutes} 分钟后给你打电话（请停留在酒馆页）`);
+  };
+
+  const cancelScheduledCall = () => {
+    if (scheduledCallTimerRef.current) clearTimeout(scheduledCallTimerRef.current);
+    scheduledCallTimerRef.current = null;
+    setScheduledCallAt(null);
+    setShowCallMenu(false);
+  };
+
+  const handlePhoneCallEnd = (summary: PhoneCallSummary) => {
+    setPhoneCall(null);
+    voiceCallActiveRef.current = false;
+    // 拨出后对方还没接就挂断：不留记录
+    if (!summary.connected && summary.direction === 'outgoing') return;
+    const note = summary.missed
+      ? `（📞 ${activeCard.name} 的未接来电）`
+      : summary.declined
+        ? `（📞 拒接了 ${activeCard.name} 的来电）`
+        : `（📞 语音通话结束 · 时长 ${formatCallDuration(summary.durationSec)}）`;
+    void (async () => {
+      // 等挂断时被中止的那一轮写完消息，再追加通话记录，避免被覆盖
+      await waitForTavernIdle();
+      setMessages((prev) => {
+        const next = [...prev, { id: createMessageId('msg_call'), role: 'assistant' as const, content: note }];
+        void store.saveSessionAsync(activeCard.id, next);
+        return next;
+      });
+    })();
   };
 
   const handleSpeak = (text: string, speakerCardId?: string) => {
@@ -2905,8 +3039,64 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           >
             <Mic className="h-3.5 w-3.5" />
           </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowCallMenu((value) => !value)}
+              aria-label="语音通话"
+              aria-expanded={showCallMenu}
+              title="语音通话"
+              className={`relative rounded-xl border p-1.5 text-[10px] transition-all shadow-xs liquid-btn ${scheduledCallAt ? 'border-emerald-300 bg-emerald-50 text-emerald-600' : 'border-white/80 bg-white/90 text-slate-500 hover:border-pink-200 hover:text-pink-600'}`}
+            >
+              <Phone className="h-3.5 w-3.5" />
+              {scheduledCallAt && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white" />}
+            </button>
+          </div>
         </div>
       </div>
+
+      {showCallMenu && (
+        <>
+          {/* 菜单必须放在聊天根节点：放在顶栏里会被下方状态栏与消息气泡的层级盖住 */}
+          <div className="absolute inset-0 z-40" onClick={() => setShowCallMenu(false)} aria-hidden="true" />
+          <div className="tavern-floating-panel absolute right-3 top-14 z-50 w-60 rounded-2xl border p-1.5 text-left">
+                <button type="button" onClick={() => startPhoneCall('outgoing')} className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left hover:bg-pink-50">
+                  <Phone className="h-4 w-4 text-emerald-600" />
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-bold text-slate-800">给 {activeCard.name} 打电话</span>
+                    <span className="block text-[11px] text-slate-500">实时语音对话，随时可以插话</span>
+                  </span>
+                </button>
+                {scheduledCallAt ? (
+                  <button type="button" onClick={cancelScheduledCall} className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left hover:bg-pink-50">
+                    <PhoneIncoming className="h-4 w-4 text-rose-500" />
+                    <span className="text-[13px] font-bold text-slate-800">取消预约来电</span>
+                  </button>
+                ) : (
+                  [1, 5].map((minutes) => (
+                    <button key={minutes} type="button" onClick={() => scheduleIncomingCall(minutes)} className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left hover:bg-pink-50">
+                      <PhoneIncoming className="h-4 w-4 text-pink-600" />
+                      <span className="text-[13px] font-bold text-slate-800">让 TA {minutes} 分钟后打给我</span>
+                    </button>
+                  ))
+                )}
+          </div>
+        </>
+      )}
+
+      {phoneCall && (
+        <PhoneCallOverlay
+          name={activeCard.name}
+          avatar={activeCard.avatar}
+          direction={phoneCall}
+          createDeps={createPhoneCallDeps}
+          openingLine={phoneCall === 'outgoing'
+            ? '（📞 我给你打了语音电话，你刚刚接起）'
+            : '（📞 你给我打了语音电话，我刚刚接起。请你先开口，说说为什么打来）'}
+          onEnd={handlePhoneCallEnd}
+          onEmergencyStop={() => void useAppStore.getState().triggerEmergencyStop()}
+        />
+      )}
 
       {/* 世界书触发浮动通知 */}
       {lorebookToast && (
