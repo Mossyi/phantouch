@@ -2,6 +2,7 @@
  * 训练日程的地点插画：用户配置的生图模型画出来，压缩后存在 IndexedDB（localStorage 放不下图片）。
  * 键为「角色卡 id::地点 id」，结束训练时整卡清空。
  */
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { RPG_PERIOD_LABELS, type RpgLocation } from './tavernRpg';
 
 const DB_NAME = 'ycy_tavern_rpg_art';
@@ -42,7 +43,7 @@ export const loadRpgArt = async (cardId: string): Promise<Record<string, string>
   try {
     const keys = await run('readonly', (store) => store.getAllKeys(IDBKeyRange.bound(`${cardId}::`, `${cardId}::￿`)));
     const entries = await Promise.all(keys.map(async (key) => [String(key).slice(cardId.length + 2), await run<string>('readonly', (store) => store.get(key))] as const));
-    return Object.fromEntries(entries.filter(([, value]) => typeof value === 'string' && value.startsWith('data:image/')));
+    return Object.fromEntries(entries.filter(([, value]) => typeof value === 'string' && /^(?:data:image\/|https:)/.test(value)));
   } catch {
     return {};
   }
@@ -72,6 +73,40 @@ export const setRpgArtAutoEnabled = (enabled: boolean) => {
   } catch {
     // ignore
   }
+};
+
+const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result));
+  reader.onerror = () => reject(reader.error ?? new Error('读取图片失败'));
+  reader.readAsDataURL(blob);
+});
+
+/**
+ * 生图接口有的返回图片数据，有的只返回一个（通常会过期的）链接。尽量把链接下载成 dataURL 存到本地；
+ * 浏览器受跨域限制时，安卓上改用原生 HTTP；都不行就原样返回链接。
+ */
+export const fetchImageAsDataUrl = async (url: string): Promise<string> => {
+  if (url.startsWith('data:image/')) return url;
+  try {
+    const response = await fetch(url);
+    if (response.ok) {
+      const blob = await response.blob();
+      if (blob.type.startsWith('image/')) return await blobToDataUrl(blob);
+    }
+  } catch {
+    // 跨域失败，继续尝试原生请求
+  }
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const response = await CapacitorHttp.get({ url, responseType: 'blob' });
+      const contentType = String(response.headers?.['Content-Type'] ?? response.headers?.['content-type'] ?? 'image/png').split(';')[0];
+      if (typeof response.data === 'string' && response.data && contentType.startsWith('image/')) return `data:${contentType};base64,${response.data}`;
+    } catch {
+      // ignore
+    }
+  }
+  return url;
 };
 
 const PERIOD_LIGHT = ['清晨的柔和晨光', '明亮的白天自然光', '黄昏的暖橙色夕阳光', '深夜的昏暗暖色灯光'];

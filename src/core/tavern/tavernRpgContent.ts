@@ -22,6 +22,8 @@ export interface RpgItemEffect {
   stress?: number;
   /** 免罚：下一次检定失败时自动消耗，免除这次的硬件惩罚 */
   pardon?: boolean;
+  /** 一次性：使用后从背包里扣掉（没有数值效果的券类物品） */
+  consumable?: boolean;
 }
 
 export interface RpgShopItem {
@@ -198,7 +200,7 @@ export const REWARD_CATALOG: RpgShopItem[] = [
   { name: '休息券', price: 30, note: '体力 +30', effect: { stamina: 30 } },
   { name: '抱抱券', price: 25, note: '压力 -15', effect: { stress: 15 } },
   { name: '免罚券', price: 60, note: '下次检定失败时自动使用，免除电击', effect: { pardon: true } },
-  { name: '撒娇券', price: 40, note: '可以向调教者提一个小要求' },
+  { name: '撒娇券', price: 40, note: '可以向调教者提一个小要求（用完即消失）', effect: { consumable: true } },
 ];
 
 export const RPG_TEMPLATES: RpgTemplate[] = [

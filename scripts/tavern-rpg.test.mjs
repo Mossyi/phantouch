@@ -393,30 +393,30 @@ test('AI 生成世界带专属事件；存档读回事件仍在', async () => {
   assert.equal(reloaded.customEvents[0].title, '雪落进温泉');
 });
 
-test('存档槽：最多 5 个；自动存档按世界名覆盖并能挤掉最旧的自动存档；不保存回滚快照；读回可用', async () => {
+test('存档槽：最多 5 个，满了拒绝而不是悄悄覆盖；自动存档只覆盖同一局；两局同名世界互不覆盖；不保存回滚快照', async () => {
   const storage = new Map();
   globalThis.localStorage = { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)), removeItem: (k) => storage.delete(k) };
   try {
     const slots = await loadBundledModule('../src/core/tavern/tavernRpgSlots.ts');
     const m = await load();
-    const a = m.rememberSnapshot(m.createRpgState('contract', names), 'msg');
-    const b = m.createRpgState('manor', names);
-    let result = slots.saveRpgSlot('card', a, '第一段', false);
-    assert.equal(result.slots.length, 1);
+    const runA = m.rememberSnapshot(m.createRpgState('contract', names), 'msg');
+    const runB = m.createRpgState('contract', names);
+    assert.notEqual(runA.runId, runB.runId);
+    let result = slots.saveRpgSlot('card', runA, '第一段', false);
     assert.deepEqual(result.slots[0].state.snapshots, []);
-    slots.saveRpgSlot('card', { ...a, day: 5 }, '', true);
-    result = slots.saveRpgSlot('card', { ...a, day: 6 }, '', true);
-    assert.equal(result.slots.filter((s) => s.auto).length, 1, '同一世界只留一个自动存档');
-    assert.equal(result.slots.find((s) => s.auto).day, 6);
-    slots.saveRpgSlot('card', b, '庄园', false);
-    slots.saveRpgSlot('card', b, '庄园2', false);
-    result = slots.saveRpgSlot('card', b, '庄园3', false);
+    slots.saveRpgSlot('card', { ...runA, day: 5 }, '', true);
+    result = slots.saveRpgSlot('card', { ...runA, day: 6 }, '', true);
+    assert.equal(result.slots.filter((s) => s.auto).length, 1, '同一局只留最新的自动存档');
+    result = slots.saveRpgSlot('card', { ...runB, day: 2 }, '', true);
+    assert.equal(result.slots.filter((s) => s.auto).length, 2, '同名世界的另一局不会覆盖 A 的自动存档');
+    slots.saveRpgSlot('card', runB, '二', false);
+    result = slots.saveRpgSlot('card', runB, '三', false);
     assert.equal(result.slots.length, 5);
-    const sixth = slots.saveRpgSlot('card', b, '第六个', false);
-    assert.equal(sixth.error, undefined, '手动存档可以挤掉最旧的自动存档');
-    assert.equal(sixth.slots.filter((s) => s.auto).length, 0);
-    assert.match(slots.saveRpgSlot('card', b, '第七个', false).error, /最多 5 个/, '没有自动存档可挤时提示删除');
-    result = { slots: slots.listRpgSlots('card') };
+    const full = slots.saveRpgSlot('card', runB, '第六个', false);
+    assert.match(full.error, /最多 5 个/);
+    assert.equal(full.slots.length, 5, '满了不覆盖任何存档');
+    assert.match(slots.saveRpgSlot('card', m.createRpgState('manor', names), '', true).error, /最多 5 个/, '新一局的自动存档也不会挤掉别人');
+    assert.equal(slots.saveRpgSlot('card', { ...runB, day: 3 }, '', true).error, undefined, '同一局的自动存档仍可覆盖');
     const loaded = slots.loadRpgSlot('card', result.slots.find((s) => s.name === '第一段').id);
     assert.equal(loaded.worldName, '契约训练');
     assert.ok(slots.slotLocationIds('card').has(loaded.currentId));
@@ -424,4 +424,46 @@ test('存档槽：最多 5 个；自动存档按世界名覆盖并能挤掉最�
   } finally {
     delete globalThis.localStorage;
   }
+});
+
+test('回归：AI 改不了传唤任务；课程/差事/休息后忽略 AI 的 time；照抄示例的占位内容被丢弃；券类用完即扣；选项去重；期满事件不溢出', async () => {
+  const m = await load();
+  let state = goTo(m, m.createRpgState('contract', names), '客厅');
+  // 传唤任务只由系统结算
+  state = m.maybeSummon({ ...state, plan: [] }, seq(0, 0));
+  const summon = m.activeSummon(state);
+  assert.ok(summon);
+  const tampered = m.applyRpgUpdate(state, m.parseRpgUpdate(`<!--RPG:{"quests":[{"title":"${summon.title}","status":"done"}],"choices":["好"]}-->`), seq(0.9)).state;
+  assert.equal(m.activeSummon(tampered)?.title, summon.title, 'AI 不能把传唤标成完成');
+  assert.equal(tampered.points, state.points);
+
+  // 课程推进过时间，本轮 AI 再写 time 会被忽略
+  const course = m.runCourse({ ...state, quests: state.quests.filter((q) => !q.target) }, 'recite', seq(0.95, 0.9));
+  assert.equal(course.state.period, 1);
+  assert.equal(course.state.timeLocked, true);
+  const afterReply = m.applyRpgUpdate(course.state, m.parseRpgUpdate('<!--RPG:{"time":"+1","choices":["好"]}-->'), seq(0.9)).state;
+  assert.equal(afterReply.period, 1, '不会重复推进');
+  assert.equal(afterReply.timeLocked, false);
+  const freeTalk = m.applyRpgUpdate(afterReply, m.parseRpgUpdate('<!--RPG:{"time":"+1","choices":["好"]}-->'), seq(0.9)).state;
+  assert.equal(freeTalk.period, 2, '普通对话里的 time 照常生效');
+
+  // 照抄示例的占位内容
+  const copied = m.parseRpgUpdate('<!--RPG:{"move":"地点名","discover":[{"name":"新地点","kind":"outdoor"}],"items":{"add":[{"name":"物品","qty":1}],"remove":["用掉的物品"]},"rules":{"add":["新家规"]},"quests":[{"title":"临时任务"}],"choices":[{"text":"跪好"},{"text":"跪好","check":"endurance:12"},"求饶","跪 好"]}-->');
+  assert.equal(copied.move, undefined);
+  assert.deepEqual([copied.discover.length, copied.itemsAdd.length, copied.itemsRemove.length, copied.rulesAdd.length, copied.quests.length], [0, 0, 0, 0, 0]);
+  assert.deepEqual(copied.choices, [{ text: '跪好', check: { stat: 'endurance', dc: 12 } }, { text: '求饶', check: undefined }], '同名选项只留一个，带检定的优先');
+
+  // 券类用完即扣
+  let bag = { ...goTo(m, m.createRpgState('contract', names), '客厅'), points: 100 };
+  bag = m.buyItem(bag, '撒娇券').state;
+  const used = m.itemUseAction(bag, '撒娇券');
+  assert.equal(used.message, '🧭 使用：撒娇券');
+  assert.equal(used.state.inventory.some((i) => i.name === '撒娇券'), false);
+  assert.ok(m.itemUseAction(bag, '契约书').state.inventory.some((i) => i.name === '契约书'), '契约书这种信物用了也还在');
+
+  // 期满那天的事件队列不会超长
+  let ending = { ...m.createRpgState('contract', names), day: 30, pendingEvents: ['a', 'b', 'c', 'd', 'e', 'f'] };
+  ending = m.restUntilMorning(ending, seq(0.9)).state;
+  assert.ok(ending.pendingEvents.length <= 6);
+  assert.ok(ending.pendingEvents.some((e) => e.includes('续约')), '结局事件不能被挤掉');
 });

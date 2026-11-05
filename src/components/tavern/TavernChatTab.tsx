@@ -161,7 +161,7 @@ import {
   CalendarDays,
 } from 'lucide-react';
 import { TavernRpgChoices, TavernRpgHud, TavernRpgPanel, type RpgPanelTab, type RpgSystemAction } from './TavernRpgPanel';
-import { buildLocationArtPrompt, deleteRpgArt, isRpgArtAutoEnabled, loadRpgArt, saveRpgArt, setRpgArtAutoEnabled } from '../../core/tavern/tavernRpgArt';
+import { buildLocationArtPrompt, deleteRpgArt, fetchImageAsDataUrl, isRpgArtAutoEnabled, loadRpgArt, saveRpgArt, setRpgArtAutoEnabled } from '../../core/tavern/tavernRpgArt';
 import { deleteRpgSlot, listRpgSlots, loadRpgSlot, saveRpgSlot, slotLocationIds, type RpgSaveSlot } from '../../core/tavern/tavernRpgSlots';
 import { WORLD_GEN_SYSTEM, buildExploreRequest, buildWorldGenRequest, parseExploredLocations, parseGeneratedWorld, type GeneratedWorld, type WorldGenInput } from '../../core/tavern/tavernRpgWorldGen';
 import {
@@ -1580,7 +1580,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       const lastUserMsg = history.slice().reverse().find((m) => m.role === 'user')?.content || '';
       const lastAssistantMsg = history.slice().reverse().find((m) => m.role === 'assistant' && m.speakerCardId === speaker.id)?.content || '';
       const speakerPrefixRegex = new RegExp(`^(?:\\{\\{char\\}\\}|${speaker.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|角色|AI|Assistant)\\s*[:：]\\s*`, 'i');
-      let strippedReply = reply.replace(speakerPrefixRegex, '').trim();
+      let strippedReply = stripThinkingArtifacts(reply, false).replace(speakerPrefixRegex, '').trim();
       extras?.onRawReply?.(strippedReply);
       // 先解析隐藏标签再清洗，否则清洗会把标签删掉
       const statusParsed = parseAndApplyStatusUpdate(strippedReply, currentSpeakerStats, lastUserMsg);
@@ -1624,7 +1624,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       })) as any, [], systemPrompt, signal);
     const lastUserMsg = history.slice().reverse().find((m) => m.role === 'user')?.content || '';
     const speakerPrefixRegex = new RegExp(`^(?:\\{\\{char\\}\\}|${speaker.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|角色|AI|Assistant)\\s*[:：]\\s*`, 'i');
-    let strippedReply = result.reply.replace(speakerPrefixRegex, '').trim();
+    let strippedReply = stripThinkingArtifacts(result.reply, false).replace(speakerPrefixRegex, '').trim();
     extras?.onRawReply?.(strippedReply);
     const statusParsed = parseAndApplyStatusUpdate(strippedReply, currentSpeakerStats, lastUserMsg);
     if (statusParsed.updated) {
@@ -2064,10 +2064,17 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
 
   // ─── 训练日程 ────────────────────────────────────────────────────────────────
   const rpgActive = rpgEnabled && !isGroupScene && Boolean(rpgState);
+  const rpgSaveWarnedRef = useRef(false);
   const updateRpgState = (next: TavernRpgState | null) => {
     rpgStateRef.current = next;
     setRpgState(next);
-    saveRpgState(activeCard.id, next);
+    const saved = saveRpgState(activeCard.id, next);
+    if (!saved && !rpgSaveWarnedRef.current) {
+      rpgSaveWarnedRef.current = true;
+      showFeatureNotice('⚠️ 本地存储满了，训练进度没能保存。请删掉一些存档或聊天存档');
+    } else if (saved) {
+      rpgSaveWarnedRef.current = false;
+    }
   };
   // 卡名常带头衔（「莉莉丝 · 深渊魅魔导师」），日程里只用短名
   const rpgCharName = activeCard.name.split(/\s*[·・|｜]\s*/)[0] || activeCard.name;
@@ -2177,12 +2184,14 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     if (!silent) showFeatureNotice(`正在给「${location.name}」画插画…`);
     try {
       const imageUrl = await generateWithConfiguredImageModel(buildLocationArtPrompt(location, current.worldName, current.period), controller.signal);
-      const stored = await compressImageForSession(imageUrl, 320_000).catch(() => imageUrl);
+      const local = await fetchImageAsDataUrl(imageUrl);
+      const stored = await compressImageForSession(local, 320_000).catch(() => local);
       if (controller.signal.aborted || activeCardIdRef.current !== cardId) return;
-      if (!stored.startsWith('data:image/')) throw new Error('生图结果无法保存到本地，请换用返回图片数据的生图模型');
       await saveRpgArt(cardId, locationId, stored);
       setRpgArt((art) => ({ ...art, [locationId]: stored }));
-      showFeatureNotice(`「${location.name}」的插画画好了`);
+      showFeatureNotice(stored.startsWith('data:image/')
+        ? `「${location.name}」的插画画好了`
+        : `「${location.name}」的插画画好了，但只拿到了图片链接（可能会过期），过期后点「重画」即可`);
     } catch (error) {
       if (controller.signal.aborted) return;
       showFeatureNotice(error instanceof Error ? `插画生成失败：${error.message}` : '插画生成失败');
@@ -2255,11 +2264,13 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   // ─── 存档槽 ───
-  const autoSaveCurrentRpg = () => {
+  /** 自动存一份当前进度；失败时返回错误，调用方必须中止（否则会丢进度） */
+  const autoSaveCurrentRpg = (): string | undefined => {
     const current = rpgStateRef.current;
-    if (!current) return;
+    if (!current) return undefined;
     const result = saveRpgSlot(activeCard.id, current, `${current.worldName} · 第${current.day}天`, true);
     setRpgSlots(result.slots);
+    return result.error;
   };
 
   const saveRpgToSlot = (name: string) => {
@@ -2274,7 +2285,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const loadRpgFromSlot = (slotId: string) => {
     const loaded = loadRpgSlot(activeCard.id, slotId);
     if (!loaded || isLoading) return;
-    autoSaveCurrentRpg();
+    const error = autoSaveCurrentRpg();
+    if (error) {
+      showFeatureNotice(`当前进度没能自动存档，已取消读档：${error}`);
+      return;
+    }
     updateRpgState(loaded);
     setRpgPanelTab(null);
     const here = loaded.locations.find((location) => location.id === loaded.currentId)?.name ?? '住处';
@@ -2282,7 +2297,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   const startNewRpgRun = () => {
-    autoSaveCurrentRpg();
+    const error = autoSaveCurrentRpg();
+    if (error) {
+      showFeatureNotice(`当前进度没能自动存档，已取消：${error}`);
+      return;
+    }
     updateRpgState(null);
     showFeatureNotice('当前进度已自动存档，可以开始新的一局了');
   };
@@ -2555,7 +2574,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
 
       const parsedAiActions = parseLorebookAiActionDecisions(reply, aiActionRequest);
       // 隐藏标签必须在清洗之前解析：清洗会把 STATUS / RPG 标签一起删掉
-      const rawModelReply = parsedAiActions.cleanedReply || '（角色暂时没有说话。）';
+      // 推理模型的思考过程里可能出现示例标签，先去掉思考内容再解析
+      const rawModelReply = stripThinkingArtifacts(parsedAiActions.cleanedReply || '', false) || '（角色暂时没有说话。）';
       const assistantMessageId = createMessageId('msg');
       const parsedStatus = parseAndApplyStatusUpdate(rawModelReply, characterStatsRef.current, rawText);
       if (rpgTurnState && rpgStateRef.current) {
