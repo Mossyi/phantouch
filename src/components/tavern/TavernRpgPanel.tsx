@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  BatteryLow, BedDouble, CalendarDays, CheckCircle2, Circle, Dices, Footprints, Gift, Gavel, HeartPulse, ImagePlus, Loader2, Lock,
+  BatteryLow, BedDouble, CalendarDays, Telescope, Wand2, CheckCircle2, Circle, Dices, Footprints, Gift, Gavel, HeartPulse, ImagePlus, Loader2, Lock,
   Map as MapIcon, MessageCircleHeart, NotebookText, Plus, RefreshCw, ScrollText, Settings2, Star, Trophy, UserRound, Wrench, X, Zap,
 } from 'lucide-react';
 import { RPG_ICON_CREDIT, RPG_ICON_PATHS } from '../../core/tavern/rpgIcons';
 import type { TavernCharacterExpressions, TavernEmotionKey } from '../../core/tavern/tavernTypes';
 import { KIND_ICONS, PERIOD_ICONS, RpgIcon, STAGE_ICONS, courseIcon, itemIcon, traitIcon } from './RpgIcon';
+import type { GeneratedWorld, WorldGenInput } from '../../core/tavern/tavernRpgWorldGen';
 import {
   LEVEL_NAMES,
   RPG_CHECK_LABELS,
@@ -22,7 +23,8 @@ import {
   STAGES,
   STAT_KEYS,
   checkModifier,
-  getCourse,
+  createRpgStateFromTemplate,
+  findCourse,
   getCoursesHere,
   getLocation,
   getReachableLocations,
@@ -300,38 +302,123 @@ const RpgMap: React.FC<{ state: TavernRpgState; art: Record<string, string>; sel
 
 type CustomSetup = { worldName?: string; premise?: string; startName?: string; dayLimit?: number };
 
-const RpgSetup: React.FC<{ charName: string; userName: string; onStart: (templateId: string, custom?: CustomSetup) => void }> = ({ charName, userName, onStart }) => {
-  const [templateId, setTemplateId] = useState(RPG_TEMPLATES[0].id);
+const AI_THEME_IDEAS = ['魅魔的城堡', '海边度假别墅', '魔法学院宿舍', '赛博公寓', '温泉旅馆', '王宫侍从'];
+
+/** AI 生成的世界预览：全图展开、列出地点/课程/家规和修补记录 */
+const WorldPreview: React.FC<{ world: GeneratedWorld; charName: string; userName: string }> = ({ world, charName, userName }) => {
+  const preview = useMemo(() => {
+    const state = createRpgStateFromTemplate(world.template, { char: charName, user: userName }, world.courses);
+    return { ...state, locations: state.locations.map((loc) => ({ ...loc, discovered: true, visited: true })) };
+  }, [world, charName, userName]);
+  return (
+    <div className="space-y-2 rounded-2xl border border-violet-200 bg-violet-50/30 p-3">
+      <p className="text-[13px] font-black text-slate-800">{preview.worldName}</p>
+      <p className="text-[10.5px] leading-5 text-slate-600">{preview.premise}</p>
+      <RpgMap state={preview} art={{}} selectedId="" onSelect={() => undefined} />
+      <div className="flex flex-wrap gap-1">
+        {preview.locations.map((loc) => (
+          <span key={loc.id} title={loc.description} className="flex items-center gap-1 rounded-full border border-pink-100 bg-white px-2 py-0.5 text-[10px] text-slate-700">
+            <RpgIcon name={KIND_ICONS[loc.kind]} className="h-3 w-3 text-pink-500" />{loc.name}{loc.open.length ? ` · ${loc.open.map((p) => RPG_PERIOD_LABELS[p]).join('/')}` : ''}
+          </span>
+        ))}
+      </div>
+      {world.courses.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10.5px] font-black text-slate-700">专属课程</p>
+          {world.courses.map((course) => (
+            <p key={course.id} className="flex items-center gap-1 text-[10.5px] text-slate-600">
+              <RpgIcon name={courseIcon(course.id)} className="h-3.5 w-3.5 shrink-0 text-violet-500" />
+              <span className="font-bold text-slate-800">{course.name}</span>
+              <span className="truncate">{course.description}</span>
+              <span className="shrink-0 text-violet-600">{course.check ? `${RPG_CHECK_LABELS[course.check.stat]} ${course.check.dc}` : '放松'}{course.unlock ? ` · Lv${course.unlock.level}` : ''}</span>
+            </p>
+          ))}
+        </div>
+      )}
+      {preview.rules.length > 0 && <p className="text-[10.5px] text-slate-600"><span className="font-black text-slate-700">家规：</span>{preview.rules.map((rule) => rule.text).join('；')}</p>}
+      {world.fixes.length > 0 && <p className="text-[9.5px] text-amber-700">系统修补：{world.fixes.join('；')}</p>}
+    </div>
+  );
+};
+
+const RpgSetup: React.FC<{
+  charName: string;
+  userName: string;
+  onStart: (templateId: string, custom?: CustomSetup) => void;
+  onGenerateWorld: (input: WorldGenInput) => Promise<GeneratedWorld>;
+  onStartGenerated: (world: GeneratedWorld) => void;
+}> = ({ charName, userName, onStart, onGenerateWorld, onStartGenerated }) => {
+  const [templateId, setTemplateId] = useState('ai');
   const [custom, setCustom] = useState({ worldName: '', premise: '', startName: '', dayLimit: 30 });
+  const [aiInput, setAiInput] = useState<WorldGenInput>({ theme: '', details: '', dayLimit: 30 });
+  const [world, setWorld] = useState<GeneratedWorld | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState('');
   const isCustom = templateId === 'custom';
+  const isAi = templateId === 'ai';
   const input = 'mt-1 w-full rounded-lg border border-pink-200 bg-pink-50/30 px-2.5 py-2 text-[11px] text-slate-800 outline-none focus:border-pink-400';
+  const option = (id: string) => `rounded-2xl border p-3 text-left transition ${templateId === id ? 'border-pink-400 bg-pink-50 shadow-sm' : 'border-pink-100 bg-white hover:border-pink-200'}`;
+
+  const generate = async () => {
+    setGenerating(true);
+    setError('');
+    try {
+      setWorld(await onGenerateWorld(aiInput));
+    } catch (err) {
+      if ((err as { name?: string })?.name !== 'AbortError') setError(err instanceof Error ? err.message : '生成失败');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   return (
     <div className="space-y-3">
       <p className="text-[11px] leading-5 text-slate-600">
         {charName}是调教者，{userName}是被调教的一方。每天早上系统会排好课表，{charName}按课表和地点下达指令；课程由系统掷骰结算，AI 只负责描写。
       </p>
-      <ul className="grid grid-cols-2 gap-1.5 text-[10px] text-slate-600">
-        <li className="rounded-xl bg-pink-50/60 px-2.5 py-1.5">📘 课程随能力等级解锁</li>
-        <li className="rounded-xl bg-pink-50/60 px-2.5 py-1.5">🏅 累计表现获得特质</li>
-        <li className="rounded-xl bg-pink-50/60 px-2.5 py-1.5">💗 压力过高只能安抚</li>
-        <li className="rounded-xl bg-pink-50/60 px-2.5 py-1.5">📜 家规与违规记录</li>
-        <li className="rounded-xl bg-pink-50/60 px-2.5 py-1.5">📝 每晚生成日报</li>
-        <li className="rounded-xl bg-pink-50/60 px-2.5 py-1.5">🏆 期满结局，可续约</li>
-      </ul>
       <div className="grid grid-cols-2 gap-2">
+        <button type="button" onClick={() => setTemplateId('ai')} className={`col-span-2 ${option('ai')}`}>
+          <span className="flex items-center gap-1 text-[12px] font-black text-slate-800"><Wand2 className="h-3.5 w-3.5 text-violet-500" />AI 生成世界</span>
+          <span className="mt-0.5 block text-[9.5px] text-slate-500">给一个主题，AI 设计地点、开放时段、兑换品、家规和 2-3 门专属课程，先预览再开始</span>
+        </button>
         {RPG_TEMPLATES.map((template) => (
-          <button key={template.id} type="button" onClick={() => setTemplateId(template.id)}
-            className={`rounded-2xl border p-3 text-left transition ${templateId === template.id ? 'border-pink-400 bg-pink-50 shadow-sm' : 'border-pink-100 bg-white hover:border-pink-200'}`}>
+          <button key={template.id} type="button" onClick={() => setTemplateId(template.id)} className={option(template.id)}>
             <span className="block text-[12px] font-black text-slate-800">{template.name}</span>
             <span className="mt-0.5 block text-[9.5px] text-slate-500">{template.tagline}</span>
           </button>
         ))}
-        <button type="button" onClick={() => setTemplateId('custom')}
-          className={`col-span-2 rounded-2xl border p-3 text-left transition ${isCustom ? 'border-pink-400 bg-pink-50 shadow-sm' : 'border-pink-100 bg-white hover:border-pink-200'}`}>
-          <span className="block text-[12px] font-black text-slate-800">自定义</span>
-          <span className="mt-0.5 block text-[9.5px] text-slate-500">从你的住处出发，其他地点由 AI 在剧情里慢慢添加</span>
+        <button type="button" onClick={() => setTemplateId('custom')} className={`col-span-2 ${option('custom')}`}>
+          <span className="block text-[12px] font-black text-slate-800">自定义（从空白开始）</span>
+          <span className="mt-0.5 block text-[9.5px] text-slate-500">只有住处、训练室和奖励柜，其他地点在剧情里或用「探索周边」慢慢添加</span>
         </button>
       </div>
+
+      {isAi && (
+        <div className="space-y-2 rounded-2xl border border-violet-100 bg-white p-3">
+          <label className="block text-[10px] font-bold text-slate-700">主题
+            <input value={aiInput.theme} maxLength={60} onChange={(event) => setAiInput({ ...aiInput, theme: event.target.value })} placeholder={`例如：${AI_THEME_IDEAS[0]}；留空则按${charName}的设定来`} className={input} />
+          </label>
+          <div className="flex flex-wrap gap-1">
+            {AI_THEME_IDEAS.map((idea) => (
+              <button key={idea} type="button" onClick={() => setAiInput({ ...aiInput, theme: idea })} className="rounded-full border border-violet-100 bg-violet-50/60 px-2 py-0.5 text-[10px] text-violet-700">{idea}</button>
+            ))}
+          </div>
+          <label className="block text-[10px] font-bold text-slate-700">补充要求（可选）
+            <textarea value={aiInput.details} maxLength={300} rows={2} onChange={(event) => setAiInput({ ...aiInput, details: event.target.value })} placeholder="想要的地点、氛围、规矩……" className={`${input} resize-none leading-5`} />
+          </label>
+          <label className="block text-[10px] font-bold text-slate-700">期限（天，0 为不限）
+            <input type="number" min={0} max={365} value={aiInput.dayLimit} onChange={(event) => setAiInput({ ...aiInput, dayLimit: Number(event.target.value) })} className={input} />
+          </label>
+          <button type="button" disabled={generating} onClick={() => void generate()}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-[11.5px] font-black text-violet-700 disabled:opacity-60">
+            {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+            {generating ? 'AI 正在设计世界…（约 10-40 秒）' : world ? '不满意，重新生成' : '让 AI 生成世界'}
+          </button>
+          {error && <p className="text-[10.5px] text-rose-600">{error}</p>}
+        </div>
+      )}
+      {isAi && world && <WorldPreview world={world} charName={charName} userName={userName} />}
+
       {isCustom && (
         <div className="space-y-2 rounded-2xl border border-pink-100 bg-white p-3">
           <label className="block text-[10px] font-bold text-slate-700">名称
@@ -348,9 +435,10 @@ const RpgSetup: React.FC<{ charName: string; userName: string; onStart: (templat
           </label>
         </div>
       )}
-      <button type="button" onClick={() => onStart(templateId, isCustom ? custom : undefined)}
-        className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-pink-500 to-rose-500 px-4 py-2.5 text-[12px] font-black text-white shadow-sm">
-        <CalendarDays className="h-4 w-4" />开始第一天
+      <button type="button" disabled={isAi && (!world || generating)}
+        onClick={() => (isAi ? world && onStartGenerated(world) : onStart(templateId, isCustom ? custom : undefined))}
+        className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-pink-500 to-rose-500 px-4 py-2.5 text-[12px] font-black text-white shadow-sm disabled:opacity-40">
+        <CalendarDays className="h-4 w-4" />{isAi ? (world ? '就用这个世界，开始第一天' : '先生成世界') : '开始第一天'}
       </button>
     </div>
   );
@@ -417,6 +505,10 @@ export interface TavernRpgPanelProps {
   artAuto: boolean;
   onGenerateArt: (locationId: string) => void;
   onToggleArtAuto: (enabled: boolean) => void;
+  onGenerateWorld: (input: WorldGenInput) => Promise<GeneratedWorld>;
+  onStartGenerated: (world: GeneratedWorld) => void;
+  onExplore: () => void;
+  exploring: boolean;
   charName: string;
   userName: string;
   busy: boolean;
@@ -432,7 +524,7 @@ export interface TavernRpgPanelProps {
 }
 
 export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
-  state, portrait, art, artBusyId, artAuto, onGenerateArt, onToggleArtAuto,
+  state, portrait, art, artBusyId, artAuto, onGenerateArt, onToggleArtAuto, onGenerateWorld, onStartGenerated, onExplore, exploring,
   charName, userName, busy, emsCeiling, initialTab = 'map', onStart, onAction, onAddRule, onRemoveRule, onEnd, onUpdateHardware, onClose,
 }) => {
   const [tab, setTab] = useState<RpgPanelTab>(initialTab);
@@ -499,7 +591,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
         </div>
 
         {!state ? (
-          <div className="overflow-y-auto p-4" data-allow-scroll><RpgSetup charName={charName} userName={userName} onStart={onStart} /></div>
+          <div className="overflow-y-auto p-4" data-allow-scroll><RpgSetup charName={charName} userName={userName} onStart={onStart} onGenerateWorld={onGenerateWorld} onStartGenerated={onStartGenerated} /></div>
         ) : (
           <>
             <div className="flex shrink-0 gap-0.5 border-b border-pink-50 px-2 py-2" role="tablist">
@@ -581,7 +673,14 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                           ))}
                         </div>
                       )}
-                      {isHere && coursesHere.length > 0 && <div className="space-y-1.5">{coursesHere.map(courseButton)}</div>}
+                      {isHere && coursesHere.some((entry) => entry.available) && <div className="space-y-1.5">{coursesHere.filter((entry) => entry.available).map(courseButton)}</div>}
+                      {isHere && (
+                        <button type="button" disabled={busy || exploring} onClick={onExplore}
+                          className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] font-bold text-sky-800 disabled:opacity-60">
+                          {exploring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Telescope className="h-3.5 w-3.5" />}
+                          {exploring ? 'AI 正在探索附近…' : `让 AI 探索「${selected.name}」周边，发现新地点`}
+                        </button>
+                      )}
                     </div>
                   )}
                   <p className="text-[10px] text-slate-500">虚线圈是现在能去的地点，🌙 表示这个时段不开放，橙点表示可以休息、兑换或做差事。剧情里去了新地方，AI 会把它加到地图上。</p>
@@ -598,7 +697,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                     {state.plan.length ? (
                       <ol className="space-y-1.5">
                         {state.plan.map((slot, index) => {
-                          const course = getCourse(slot.courseId);
+                          const course = findCourse(state, slot.courseId);
                           const now = slot.period === state.period && !slot.done;
                           return (
                             <li key={`${slot.courseId}-${index}`} className={`flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[11px] ${now ? 'bg-white shadow-sm ring-1 ring-violet-200' : ''}`}>

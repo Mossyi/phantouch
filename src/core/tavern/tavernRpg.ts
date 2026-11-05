@@ -35,6 +35,7 @@ import {
   type RpgService,
   type RpgShopItem,
   type RpgStatKey,
+  type RpgTemplate,
   type RpgTraineeStats,
   type TemplateLocation,
 } from './tavernRpgContent';
@@ -157,6 +158,8 @@ export interface RpgCore {
   traits: string[];
   counters: RpgCounters;
   stage: number;
+  /** AI 生成世界时设计的专属课程（数值已由系统限幅） */
+  customCourses: RpgCourse[];
   rules: RpgRule[];
   inventory: RpgItem[];
   quests: RpgQuest[];
@@ -357,6 +360,44 @@ export interface CourseAvailability {
   reason?: string;
 }
 
+/** 内置课程 + 这个世界的专属课程 */
+export const allCourses = (state: RpgCore): RpgCourse[] => [...RPG_COURSES, ...(state.customCourses ?? [])];
+export const findCourse = (state: RpgCore, id: string) => allCourses(state).find((course) => course.id === id) ?? null;
+
+const COURSE_KINDS: RpgLocationKind[] = ['bedroom', 'home', 'bath', 'playroom', 'shop', 'work', 'cafe', 'outdoor', 'special'];
+/** 校验并限幅一门自定义课程（AI 生成或存档读入），不合格返回 null */
+export const normalizeCustomCourse = (value: unknown, index: number): RpgCourse | null => {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const name = cleanText(raw.name, 10);
+  if (!name) return null;
+  const kinds = (Array.isArray(raw.kinds) ? raw.kinds : [raw.kinds]).map((kind) => normalizeKind(kind)).filter((kind, i, list) => COURSE_KINDS.includes(kind) && list.indexOf(kind) === i);
+  const stat = normalizeStat((raw.check as Record<string, unknown> | undefined)?.stat ?? raw.stat);
+  const relief = raw.relief === true || !stat;
+  const gain: Partial<RpgTraineeStats> = {};
+  const rawGain = (raw.gain && typeof raw.gain === 'object' ? raw.gain : {}) as Record<string, unknown>;
+  for (const [key, delta] of Object.entries(rawGain)) {
+    const target = normalizeStat(key);
+    const amount = toInt(delta, 0);
+    if (target && amount) gain[target] = clamp(amount, -6, 6);
+  }
+  if (!relief && stat && !gain[stat]) gain[stat] = stat === 'shame' ? -3 : 3;
+  const unlockLevel = clamp(toInt(raw.unlockLevel ?? (raw.unlock as Record<string, unknown> | undefined)?.level, 0), 0, 3);
+  return {
+    id: typeof raw.id === 'string' && /^ai_[a-z0-9_]{1,24}$/.test(raw.id) ? raw.id : `ai_${index}`,
+    name,
+    description: cleanText(raw.description ?? raw.desc, 40) || name,
+    kinds: kinds.length ? kinds : ['playroom'],
+    check: relief || !stat ? undefined : { stat, dc: clamp(toInt((raw.check as Record<string, unknown> | undefined)?.dc ?? raw.dc, 12), 8, 18) },
+    stamina: relief ? -clamp(Math.abs(toInt(raw.stamina, 10)), 0, 20) : clamp(toInt(raw.stamina, 10), 2, 25),
+    stress: relief ? -clamp(Math.abs(toInt(raw.stress, 10)), 0, 20) : clamp(toInt(raw.stress, 3), -5, 8),
+    gain,
+    points: relief ? 0 : clamp(toInt(raw.points, 8), 0, 20),
+    unlock: !relief && stat && unlockLevel > 0 ? { stat, level: unlockLevel } : undefined,
+    relief,
+  };
+};
+
 export const isCourseUnlocked = (state: RpgCore, course: RpgCourse) =>
   !course.unlock || statLevel(course.unlock.stat, state.trainee[course.unlock.stat]) >= course.unlock.level;
 
@@ -364,7 +405,7 @@ export const isCourseUnlocked = (state: RpgCore, course: RpgCourse) =>
 export const getCoursesHere = (state: RpgCore): CourseAvailability[] => {
   const here = getLocation(state, state.currentId);
   if (!here) return [];
-  return RPG_COURSES.filter((course) => course.kinds.includes(here.kind)).map((course) => {
+  return allCourses(state).filter((course) => course.kinds.includes(here.kind)).map((course) => {
     if (!isCourseUnlocked(state, course)) {
       return { course, available: false, reason: `需要${RPG_STAT_LABELS[course.unlock!.stat]} ${LEVEL_NAMES[course.unlock!.level]}（Lv${course.unlock!.level}）` };
     }
@@ -377,7 +418,7 @@ export const getCoursesHere = (state: RpgCore): CourseAvailability[] => {
 /** 系统排的今日课表：前三个时段挑解锁的课程，优先补最弱的属性；深夜安排汇报或安抚 */
 export const buildDailyPlan = (state: RpgCore, random: () => number = Math.random): RpgPlanSlot[] => {
   const kinds = new Set(state.locations.filter((loc) => loc.discovered).map((loc) => loc.kind));
-  const candidates = RPG_COURSES.filter((course) => !course.relief && course.check && isCourseUnlocked(state, course) && course.kinds.some((kind) => kinds.has(kind)) && course.id !== 'report');
+  const candidates = allCourses(state).filter((course) => !course.relief && course.check && isCourseUnlocked(state, course) && course.kinds.some((kind) => kinds.has(kind)) && course.id !== 'report');
   const weakness = (course: RpgCourse) => effectiveStat(course.check!.stat, state.trainee[course.check!.stat]) + random() * 15;
   const picked: RpgCourse[] = [];
   for (const course of [...candidates].sort((a, b) => weakness(a) - weakness(b))) {
@@ -452,14 +493,9 @@ export const evaluateProgress = (input: TavernRpgState): RpgProgress => {
 
 // ─── 开局 ──────────────────────────────────────────────────────────────────────
 
-export const createRpgState = (
-  templateId: string,
-  names: { char: string; user: string },
-  custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number },
-): TavernRpgState => {
-  const template = RPG_TEMPLATES.find((item) => item.id === templateId);
+const freshCore = () => {
   const trainee = { ...DEFAULT_TRAINEE };
-  const common = {
+  return {
     version: 4 as const,
     stamina: 100,
     stress: 0,
@@ -467,6 +503,7 @@ export const createRpgState = (
     traits: [] as string[],
     counters: freshCounters(),
     stage: stageIndex(trainee),
+    customCourses: [] as RpgCourse[],
     day: 1,
     period: 0,
     plan: [] as RpgPlanSlot[],
@@ -478,55 +515,71 @@ export const createRpgState = (
     hardware: defaultHardware(),
     snapshots: [] as TavernRpgState['snapshots'],
   };
-  let state: TavernRpgState;
-  if (!template) {
-    const homeId = newId('loc');
-    const shopId = newId('loc');
-    const roomId = newId('loc');
-    const homeName = cleanText(custom?.startName, 12) || '住处';
-    state = {
-      ...common,
-      templateId: 'custom',
-      worldName: cleanText(custom?.worldName, 16) || '训练日常',
-      premise: cleanText(custom?.premise, 400) || `${names.user || '你'}自愿接受${names.char || '调教者'}的训练，每天的安排由${names.char || '调教者'}决定。`,
-      locations: [
-        makeLocation(homeId, { name: homeName, kind: 'bedroom', x: 0, y: 0, description: '可以在这里休息到第二天。', services: ['rest'] }, names),
-        makeLocation(roomId, { name: '训练室', kind: 'playroom', x: 0, y: -1, description: '进行课程的地方。' }, names),
-        makeLocation(shopId, { name: '奖励柜', kind: 'shop', x: 1, y: 0, description: '用积分兑换奖励。', services: ['shop'], catalog: REWARD_CATALOG }, names),
-      ],
-      edges: [[homeId, shopId], [homeId, roomId]],
-      currentId: homeId,
-      homeId,
-      points: 20,
-      rules: [],
-      inventory: [],
-      quests: [goalQuest({ title: '学会规矩', stat: 'obedience', op: 'gte', value: 40, reward: 40 }), goalQuest({ title: '交出信任', stat: 'devotion', op: 'gte', value: 50, reward: 60 })],
-      dayLimit: clamp(toInt(custom?.dayLimit, 0), 0, 365),
-      today: freshTally(trainee, 20),
-      log: [{ at: Date.now(), text: `开始：${homeName}`, tone: 'info' }],
-    };
-    state = revealAround(state, homeId);
-  } else {
-    const idByKey = new Map(template.locations.map((loc) => [loc.key, `${template.id}_${loc.key}`]));
-    const homeId = idByKey.get(template.home)!;
-    state = revealAround({
-      ...common,
-      templateId: template.id,
-      worldName: template.name,
-      premise: expandNames(template.premise, names),
-      locations: template.locations.map((loc) => makeLocation(idByKey.get(loc.key)!, loc, names)),
-      edges: template.edges.map(([a, b]) => [idByKey.get(a)!, idByKey.get(b)!] as [string, string]),
-      currentId: homeId,
-      homeId,
-      points: template.points,
-      rules: template.rules.map((text) => ({ text: expandNames(text, names), violations: 0, by: 'template' as const })),
-      inventory: template.inventory.map((item) => ({ ...item })),
-      quests: template.goals.map(goalQuest),
-      dayLimit: template.dayLimit,
-      today: freshTally(trainee, template.points),
-      log: [{ at: Date.now(), text: `开始：${template.name}`, tone: 'info' }],
-    }, homeId);
-  }
+};
+
+/** 从模板开局：内置模板和 AI 生成的世界都走这里 */
+export const createRpgStateFromTemplate = (
+  template: RpgTemplate,
+  names: { char: string; user: string },
+  customCourses: RpgCourse[] = [],
+): TavernRpgState => {
+  const common = freshCore();
+  const idByKey = new Map(template.locations.map((loc) => [loc.key, `${template.id}_${loc.key}`]));
+  const homeId = idByKey.get(template.home) ?? `${template.id}_${template.locations[0].key}`;
+  const state = revealAround<TavernRpgState>({
+    ...common,
+    customCourses,
+    templateId: template.id,
+    worldName: template.name,
+    premise: expandNames(template.premise, names),
+    locations: template.locations.map((loc) => makeLocation(idByKey.get(loc.key)!, loc, names)),
+    edges: template.edges.map(([a, b]) => [idByKey.get(a)!, idByKey.get(b)!] as [string, string]),
+    currentId: homeId,
+    homeId,
+    points: template.points,
+    rules: template.rules.map((text) => ({ text: expandNames(text, names), violations: 0, by: 'template' as const })),
+    inventory: template.inventory.map((item) => ({ ...item })),
+    quests: template.goals.map(goalQuest),
+    dayLimit: template.dayLimit,
+    today: freshTally(common.trainee, template.points),
+    log: [{ at: Date.now(), text: `开始：${template.name}`, tone: 'info' }],
+  }, homeId);
+  return { ...state, plan: buildDailyPlan(state) };
+};
+
+export const createRpgState = (
+  templateId: string,
+  names: { char: string; user: string },
+  custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number },
+): TavernRpgState => {
+  const template = RPG_TEMPLATES.find((item) => item.id === templateId);
+  if (template) return createRpgStateFromTemplate(template, names);
+  const common = freshCore();
+  const homeId = newId('loc');
+  const shopId = newId('loc');
+  const roomId = newId('loc');
+  const homeName = cleanText(custom?.startName, 12) || '住处';
+  const state = revealAround<TavernRpgState>({
+    ...common,
+    templateId: 'custom',
+    worldName: cleanText(custom?.worldName, 16) || '训练日常',
+    premise: cleanText(custom?.premise, 400) || `${names.user || '你'}自愿接受${names.char || '调教者'}的训练，每天的安排由${names.char || '调教者'}决定。`,
+    locations: [
+      makeLocation(homeId, { name: homeName, kind: 'bedroom', x: 0, y: 0, description: '可以在这里休息到第二天。', services: ['rest'] }, names),
+      makeLocation(roomId, { name: '训练室', kind: 'playroom', x: 0, y: -1, description: '进行课程的地方。' }, names),
+      makeLocation(shopId, { name: '奖励柜', kind: 'shop', x: 1, y: 0, description: '用积分兑换奖励。', services: ['shop'], catalog: REWARD_CATALOG }, names),
+    ],
+    edges: [[homeId, shopId], [homeId, roomId]],
+    currentId: homeId,
+    homeId,
+    points: 20,
+    rules: [],
+    inventory: [],
+    quests: [goalQuest({ title: '学会规矩', stat: 'obedience', op: 'gte', value: 40, reward: 40 }), goalQuest({ title: '交出信任', stat: 'devotion', op: 'gte', value: 50, reward: 60 })],
+    dayLimit: clamp(toInt(custom?.dayLimit, 0), 0, 365),
+    today: freshTally(common.trainee, 20),
+    log: [{ at: Date.now(), text: `开始：${homeName}`, tone: 'info' }],
+  }, homeId);
   return { ...state, plan: buildDailyPlan(state) };
 };
 
@@ -805,7 +858,7 @@ export const buildRpgPrompt = (state: RpgCore, names: { char: string; user: stri
   const stats = STAT_KEYS.map((key) => `${RPG_STAT_LABELS[key]} ${state.trainee[key]}（${LEVEL_NAMES[statLevel(key, state.trainee[key])]}）`).join('　');
   const traits = state.traits.map((id) => getTrait(id)?.name).filter(Boolean).join('、');
   const courses = getCoursesHere(state).filter((entry) => entry.available).map((entry) => entry.course.name).join('、');
-  const plan = state.plan.map((slot) => `${RPG_PERIOD_LABELS[slot.period]}·${getCourse(slot.courseId)?.name ?? slot.courseId}${slot.done ? '（已完成）' : ''}`).join('　');
+  const plan = state.plan.map((slot) => `${RPG_PERIOD_LABELS[slot.period]}·${findCourse(state, slot.courseId)?.name ?? slot.courseId}${slot.done ? '（已完成）' : ''}`).join('　');
   const rules = state.rules.map((rule, i) => `${i + 1}. ${rule.text}${rule.violations ? `（已违反 ${rule.violations} 次）` : ''}`).join('\n');
   const stressNote = state.stress >= RPG_MAX_STRESS
     ? '（压力已经到了极限：必须停止训练，先安抚和照顾 TA）'
@@ -1001,6 +1054,44 @@ export const parseRpgUpdate = (rawReply: string): RpgUpdate | null => {
 
 // ─── 应用 ──────────────────────────────────────────────────────────────────────
 
+export type RpgDiscoverEntry = RpgUpdate['discover'][number] & { open?: number[] };
+
+/** 把新地点挂到当前位置（或指定的已知地点）旁边；同名地点只补连线。AI 剧情发现和「探索周边」共用 */
+export const discoverLocations = (input: TavernRpgState, entries: RpgDiscoverEntry[], max: number) => {
+  let state = input;
+  const notes: RpgLogEntry[] = [];
+  const note = (text: string, tone: RpgLogEntry['tone']) => notes.push({ at: Date.now(), text, tone });
+  const added: RpgLocation[] = [];
+  for (const entry of entries) {
+    if (added.length >= max) break;
+    const origin = (entry.from && findLocationByName(state, entry.from)) || getLocation(state, state.currentId);
+    if (!origin || !origin.discovered) continue;
+    const existing = findLocationByName(state, entry.name);
+    if (existing) {
+      const linked = state.edges.some(([a, b]) => (a === origin.id && b === existing.id) || (b === origin.id && a === existing.id));
+      if (!linked && existing.id !== origin.id) state = { ...state, edges: [...state.edges, [origin.id, existing.id]] };
+      if (!existing.discovered) {
+        state = { ...state, locations: state.locations.map((loc) => (loc.id === existing.id ? { ...loc, discovered: true } : loc)) };
+        note(`发现地点：${existing.name}`, 'info');
+      }
+      continue;
+    }
+    if (state.locations.length >= MAX_LOCATIONS) {
+      note('地图已经很大了，新地点未加入', 'warn');
+      break;
+    }
+    const [x, y] = placeNear(state, origin, entry.dir);
+    const location: RpgLocation = {
+      ...makeLocation(newId('loc'), { name: entry.name, kind: entry.kind, description: entry.desc || '还没去过的地方。', x, y, open: entry.open }, { char: '', user: '' }),
+      discovered: true,
+    };
+    state = { ...state, locations: [...state.locations, location], edges: [...state.edges, [origin.id, location.id]] };
+    added.push(location);
+    note(`发现新地点：${location.name}`, 'info');
+  }
+  return { state, notes, added };
+};
+
 export interface RpgApplyResult {
   state: TavernRpgState;
   notes: RpgLogEntry[];
@@ -1039,34 +1130,9 @@ export const applyRpgUpdate = (input: TavernRpgState, update: RpgUpdate | null):
   }
 
   // 1. 新地点
-  let discovered = 0;
-  for (const entry of update.discover) {
-    if (discovered >= MAX_DISCOVER_PER_TURN) break;
-    const origin = (entry.from && findLocationByName(state, entry.from)) || getLocation(state, state.currentId);
-    if (!origin || !origin.discovered) continue;
-    const existing = findLocationByName(state, entry.name);
-    if (existing) {
-      const linked = state.edges.some(([a, b]) => (a === origin.id && b === existing.id) || (b === origin.id && a === existing.id));
-      if (!linked && existing.id !== origin.id) state = { ...state, edges: [...state.edges, [origin.id, existing.id]] };
-      if (!existing.discovered) {
-        state = { ...state, locations: state.locations.map((loc) => (loc.id === existing.id ? { ...loc, discovered: true } : loc)) };
-        note(`发现地点：${existing.name}`, 'info');
-      }
-      continue;
-    }
-    if (state.locations.length >= MAX_LOCATIONS) {
-      note('地图已经很大了，新地点未加入', 'warn');
-      break;
-    }
-    const [x, y] = placeNear(state, origin, entry.dir);
-    const location: RpgLocation = {
-      ...makeLocation(newId('loc'), { name: entry.name, kind: entry.kind, description: entry.desc || '还没去过的地方。', x, y }, { char: '', user: '' }),
-      discovered: true,
-    };
-    state = { ...state, locations: [...state.locations, location], edges: [...state.edges, [origin.id, location.id]] };
-    discovered += 1;
-    note(`发现新地点：${location.name}`, 'info');
-  }
+  const found = discoverLocations(state, update.discover, MAX_DISCOVER_PER_TURN);
+  state = found.state;
+  notes.push(...found.notes);
 
   // 2. 移动
   if (update.move) {
@@ -1221,6 +1287,7 @@ export const normalizeRpgState = (value: unknown): TavernRpgState | null => {
   const trainee = normalizeStats(raw.trainee, DEFAULT_TRAINEE);
   const counters = (raw.counters && typeof raw.counters === 'object' ? raw.counters : freshCounters()) as RpgCounters;
   const points = Math.max(0, toInt(raw.points, 0));
+  const customCourses = (Array.isArray(raw.customCourses) ? raw.customCourses : []).slice(0, 4).map(normalizeCustomCourse).filter((course): course is RpgCourse => Boolean(course));
   return {
     ...raw,
     currentId,
@@ -1251,7 +1318,8 @@ export const normalizeRpgState = (value: unknown): TavernRpgState | null => {
     period: clamp(toInt(raw.period, 0), 0, 3),
     day: Math.max(1, toInt(raw.day, 1)),
     dayLimit: clamp(toInt(raw.dayLimit, 0), 0, 3650),
-    plan: Array.isArray(raw.plan) ? raw.plan.filter((slot) => getCourse(slot.courseId)) : [],
+    plan: Array.isArray(raw.plan) ? raw.plan.filter((slot) => getCourse(slot.courseId) || customCourses.some((course) => course.id === slot.courseId)) : [],
+    customCourses,
     today: raw.today && typeof raw.today === 'object' ? { ...raw.today, startTrainee: normalizeStats(raw.today.startTrainee, trainee) } : freshTally(trainee, points),
     reports: Array.isArray(raw.reports) ? raw.reports.slice(-MAX_REPORTS) : [],
     ending: raw.ending && typeof raw.ending === 'object' ? raw.ending : null,

@@ -162,6 +162,7 @@ import {
 } from 'lucide-react';
 import { TavernRpgChoices, TavernRpgHud, TavernRpgPanel, type RpgPanelTab, type RpgSystemAction } from './TavernRpgPanel';
 import { buildLocationArtPrompt, clearRpgArt, isRpgArtAutoEnabled, loadRpgArt, saveRpgArt, setRpgArtAutoEnabled } from '../../core/tavern/tavernRpgArt';
+import { WORLD_GEN_SYSTEM, buildExploreRequest, buildWorldGenRequest, parseExploredLocations, parseGeneratedWorld, type GeneratedWorld, type WorldGenInput } from '../../core/tavern/tavernRpgWorldGen';
 import {
   RPG_HIGH_STRESS,
   STAGES,
@@ -171,6 +172,8 @@ import {
   buyItem,
   consumePardon,
   createRpgState,
+  createRpgStateFromTemplate,
+  discoverLocations,
   doWork,
   evaluateProgress,
   formatCheckResult,
@@ -492,6 +495,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [rpgArtBusyId, setRpgArtBusyId] = useState<string | null>(null);
   const [rpgArtAuto, setRpgArtAuto] = useState(isRpgArtAutoEnabled);
   const rpgArtControllerRef = useRef<AbortController | null>(null);
+  const rpgWorldControllerRef = useRef<AbortController | null>(null);
+  const [rpgExploring, setRpgExploring] = useState(false);
   useEffect(() => {
     let cancelled = false;
     void loadRpgArt(activeCard.id).then((art) => {
@@ -502,6 +507,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     return () => {
       cancelled = true;
       rpgArtControllerRef.current?.abort();
+      rpgWorldControllerRef.current?.abort();
     };
   }, [activeCard.id]);
   useEffect(() => {
@@ -2191,6 +2197,60 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rpgCurrentLocationId, rpgArtAuto, rpgArtLoaded]);
 
+  /** 让文字模型按主题生成整个世界（地点、连线、家规、专属课程），由引擎校验修补后给用户预览 */
+  const generateRpgWorld = async (input: WorldGenInput): Promise<GeneratedWorld> => {
+    rpgWorldControllerRef.current?.abort();
+    const controller = new AbortController();
+    rpgWorldControllerRef.current = controller;
+    try {
+      const request = buildWorldGenRequest(input, rpgNames(), { description: activeCard.description, personality: activeCard.personality, scenario: activeCard.scenario });
+      const raw = await runTavernTextModel(WORLD_GEN_SYSTEM, request, controller.signal, 'rpg_world');
+      const world = parseGeneratedWorld(raw, input);
+      if (!world) throw new Error('AI 返回的内容没法解析成世界，请重试，或者换一个更擅长输出 JSON 的模型');
+      return world;
+    } finally {
+      if (rpgWorldControllerRef.current === controller) rpgWorldControllerRef.current = null;
+    }
+  };
+
+  const startGeneratedRpg = (world: GeneratedWorld) => {
+    const next = createRpgStateFromTemplate(world.template, rpgNames(), world.courses);
+    updateRpgState(next);
+    setRpgPanelTab(null);
+    const home = next.locations.find((location) => location.id === next.homeId)?.name ?? '住处';
+    void handleSendRef.current?.(`🧭 开始：${next.worldName} · 第 1 天清晨 · ${home}`, false);
+  };
+
+  /** 让 AI 在当前位置附近设计 1-2 个新地点，加到地图上 */
+  const exploreRpg = async () => {
+    const current = rpgStateRef.current;
+    if (!current || rpgExploring) return;
+    rpgWorldControllerRef.current?.abort();
+    const controller = new AbortController();
+    rpgWorldControllerRef.current = controller;
+    setRpgExploring(true);
+    try {
+      const raw = await runTavernTextModel(WORLD_GEN_SYSTEM, buildExploreRequest(current, rpgNames()), controller.signal, 'rpg_explore');
+      const latest = rpgStateRef.current;
+      if (controller.signal.aborted || !latest) return;
+      const result = discoverLocations(latest, parseExploredLocations(raw), 2);
+      if (!result.added.length) {
+        showFeatureNotice('这次没有探索到新地点，可以再试一次');
+        return;
+      }
+      let next = result.state;
+      for (const entry of result.notes) next = { ...next, log: [...next.log, entry].slice(-50) };
+      updateRpgState(next);
+      showFeatureNotice(`🔭 发现了 ${result.added.map((location) => `「${location.name}」`).join('、')}`);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      showFeatureNotice(error instanceof Error ? `探索失败：${error.message}` : '探索失败');
+    } finally {
+      if (rpgWorldControllerRef.current === controller) rpgWorldControllerRef.current = null;
+      setRpgExploring(false);
+    }
+  };
+
   const addRpgRule = (text: string) => {
     const current = rpgStateRef.current;
     if (!current) return '还没有开始训练。';
@@ -2803,6 +2863,37 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     }, 0);
   };
 
+  /** 用酒馆的文字模型做一次独立请求（不带聊天历史）：生图提示词、训练日程的世界生成和探索共用 */
+  const runTavernTextModel = async (systemPrompt: string, userPrompt: string, signal: AbortSignal, purpose: string): Promise<string> => {
+    const tavernModelConfig = store.getTavernModelConfig();
+    if (tavernModelConfig.provider === 'dzmm') {
+      return DZMMApiClient.chatWithCard({
+        apiToken: tavernModelConfig.apiKey,
+        model: tavernModelConfig.model,
+        userName: tavernModelConfig.userName,
+        card: { ...activeCard, id: `${activeCard.id}_${purpose}`, hardwareEnchanted: false },
+        messages: [{ role: 'user', content: userPrompt }],
+        systemPrompt,
+        signal,
+      });
+    }
+    const useCustomTextModel = tavernModelConfig.provider === 'custom';
+    const client = new LLMClient({
+      ...llmConfig,
+      apiKey: useCustomTextModel ? tavernModelConfig.apiKey : llmConfig.apiKey,
+      baseUrl: useCustomTextModel ? tavernModelConfig.baseUrl : llmConfig.baseUrl,
+      model: useCustomTextModel ? tavernModelConfig.model : llmConfig.model,
+      selectedPersonaId: 'custom',
+    }, { hardwareToolsEnabled: false });
+    const result = await client.sendMessage([{
+      id: `${purpose}_${Date.now()}`,
+      role: 'user',
+      content: userPrompt,
+      timestamp: Date.now(),
+    }], [], systemPrompt, signal);
+    return result.reply;
+  };
+
   /** 用酒馆设置里的生图通道画一张图（对话生图和训练日程的地点插画共用） */
   const generateWithConfiguredImageModel = (prompt: string, signal: AbortSignal, sourceImage?: string) => {
     const imageConfig = store.getTavernImageModelConfig();
@@ -2841,39 +2932,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const requestCardId = activeCard.id;
     setAiImageGeneratingId(sourceMessage.id);
     try {
-      const tavernModelConfig = store.getTavernModelConfig();
       const promptRequest = buildTavernImagePromptRequest(activeCard, messages, sourceMessage.id);
       let positivePrompt = createFallbackTavernImagePrompt(activeCard, messages, sourceMessage.id);
       try {
         showFeatureNotice('正在让文字模型从当前对话提炼正向生图词…');
-        let rawPrompt = '';
-        if (tavernModelConfig.provider === 'dzmm') {
-          rawPrompt = await DZMMApiClient.chatWithCard({
-            apiToken: tavernModelConfig.apiKey,
-            model: tavernModelConfig.model,
-            userName: tavernModelConfig.userName,
-            card: { ...activeCard, id: `${activeCard.id}_image_prompt`, hardwareEnchanted: false },
-            messages: [{ role: 'user', content: promptRequest }],
-            systemPrompt: TAVERN_IMAGE_PROMPT_SYSTEM,
-            signal: controller.signal,
-          });
-        } else {
-          const useCustomTextModel = tavernModelConfig.provider === 'custom';
-          const client = new LLMClient({
-            ...llmConfig,
-            apiKey: useCustomTextModel ? tavernModelConfig.apiKey : llmConfig.apiKey,
-            baseUrl: useCustomTextModel ? tavernModelConfig.baseUrl : llmConfig.baseUrl,
-            model: useCustomTextModel ? tavernModelConfig.model : llmConfig.model,
-            selectedPersonaId: 'custom',
-          }, { hardwareToolsEnabled: false });
-          const result = await client.sendMessage([{
-            id: `image_prompt_${Date.now()}`,
-            role: 'user',
-            content: promptRequest,
-            timestamp: Date.now(),
-          }], [], TAVERN_IMAGE_PROMPT_SYSTEM, controller.signal);
-          rawPrompt = result.reply;
-        }
+        const rawPrompt = await runTavernTextModel(TAVERN_IMAGE_PROMPT_SYSTEM, promptRequest, controller.signal, 'image_prompt');
         const extractedPrompt = parseTavernPositiveImagePrompt(rawPrompt);
         if (!extractedPrompt) throw new Error('文字模型没有返回有效正向提示词');
         positivePrompt = extractedPrompt;
@@ -3384,6 +3447,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           artAuto={rpgArtAuto}
           onGenerateArt={(locationId) => void generateRpgArt(locationId)}
           onToggleArtAuto={(enabled) => { setRpgArtAuto(enabled); setRpgArtAutoEnabled(enabled); }}
+          onGenerateWorld={generateRpgWorld}
+          onStartGenerated={startGeneratedRpg}
+          onExplore={() => void exploreRpg()}
+          exploring={rpgExploring}
           charName={rpgCharName}
           userName={store.getTavernModelConfig().userName || '你'}
           busy={isLoading}
