@@ -42,6 +42,10 @@ import { TTSManager } from '../../core/voice/ttsManager';
 import { buildSttOptions, describeSttEngine, STTManager } from '../../core/voice/sttManager';
 import type { CallTurnHooks, VoiceCallDeps } from '../../core/voice/voiceCallSession';
 import { PhoneCallOverlay, type PhoneCallDirection, type PhoneCallSummary } from './PhoneCallOverlay';
+import { ObedienceDrillOverlay } from './ObedienceDrillOverlay';
+import { DRILL_DIFFICULTIES, type DrillSummary } from '../../core/discipline/obedienceDrill';
+import { DeviceManager } from '../../core/deviceManager';
+import { resolveEnabledEmsCeiling } from '../../core/safetyLimits';
 import {
   prepareTavernSpeechText,
   resolveTavernNarrationVoiceConfig,
@@ -140,6 +144,7 @@ import {
   Pencil,
   Phone,
   PhoneIncoming,
+  Megaphone,
   Play,
   RefreshCw,
   RotateCcw,
@@ -365,6 +370,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   // 语音通话
   const [phoneCall, setPhoneCall] = useState<PhoneCallDirection | null>(null);
   const [showCallMenu, setShowCallMenu] = useState(false);
+  const [drillOpen, setDrillOpen] = useState(false);
   const [scheduledCallAt, setScheduledCallAt] = useState<number | null>(null);
   const scheduledCallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceCallActiveRef = useRef(false);
@@ -2483,6 +2489,40 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     })();
   };
 
+  const stopTtsPlayback = useCallback(() => TTSManager.getInstance().stop(), []);
+
+  const openObedienceDrill = () => {
+    setShowCallMenu(false);
+    if (phoneCall) return;
+    STTManager.getInstance().stopListening();
+    ttsSequenceRef.current += 1;
+    TTSManager.getInstance().stop();
+    TTSManager.getInstance().unlockAudioContext();
+    setDrillOpen(true);
+  };
+
+  const speakAsCharacter = (text: string) => {
+    const speech = prepareTavernSpeechText(applyTavernTextRules(text, loadTavernTextRules(), 'tts').text);
+    const voice = resolveTavernVoiceConfig(activeCard.voiceSettings, safetyConfig.ttsEngine) || { gender: 'female' as const, rate: 1, pitch: 1 };
+    return TTSManager.getInstance().prepare(speech, voice).play();
+  };
+
+  const handleDrillClose = (summary: DrillSummary | null) => {
+    setDrillOpen(false);
+    if (!summary) return;
+    const level = summary.difficulty === 'custom' ? '自定义' : DRILL_DIFFICULTIES[summary.difficulty].name;
+    const reaction = summary.averageResponseMs === null ? '' : ` · 平均反应 ${(summary.averageResponseMs / 1000).toFixed(1)} 秒`;
+    const note = `（🎙️ 语音服从训练 · ${level} · ${summary.rounds} 句通过 ${summary.passed} 句 · 平均准确率 ${summary.averageAccuracy}%${reaction}）`;
+    void (async () => {
+      await waitForTavernIdle();
+      setMessages((prev) => {
+        const next = [...prev, { id: createMessageId('msg_drill'), role: 'assistant' as const, content: note }];
+        void store.saveSessionAsync(activeCard.id, next);
+        return next;
+      });
+    })();
+  };
+
   const handleSpeak = (text: string, speakerCardId?: string) => {
     const speakerCard = speakerCardId
       ? availableCards.find((card) => card.id === speakerCardId) || activeCard
@@ -3065,8 +3105,40 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
                     </button>
                   ))
                 )}
+            <button type="button" onClick={openObedienceDrill} className="flex w-full items-center gap-2.5 rounded-xl border-t border-pink-50 px-3 py-2.5 text-left hover:bg-pink-50">
+              <Megaphone className="h-4 w-4 text-pink-600" />
+              <span className="min-w-0">
+                <span className="block text-[13px] font-bold text-slate-800">语音服从训练</span>
+                <span className="block text-[11px] text-slate-500">TA 说口令，你原话复述并计分</span>
+              </span>
+            </button>
           </div>
         </>
+      )}
+
+      {drillOpen && (
+        <ObedienceDrillOverlay
+          name={activeCard.name}
+          avatar={activeCard.avatar}
+          userName={store.getTavernModelConfig().userName || '我'}
+          sttOptions={buildSttOptions(safetyConfig)}
+          speak={speakAsCharacter}
+          stopSpeech={stopTtsPlayback}
+          emsCeiling={resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200)}
+          punish={async (level, seconds) => { await DeviceManager.getInstance().setEmsStrength('AB', level, seconds); }}
+          reward={async () => {
+            const manager = DeviceManager.getInstance();
+            await manager.setToyMotor(8, 4, 0);
+            manager.scheduleOutputStop('toy', 2);
+          }}
+          stopOutputs={() => {
+            const manager = DeviceManager.getInstance();
+            void manager.setEmsStrength('AB', 0).catch(() => undefined);
+            void manager.stopToy().catch(() => undefined);
+          }}
+          onEmergencyStop={() => void useAppStore.getState().triggerEmergencyStop()}
+          onClose={handleDrillClose}
+        />
       )}
 
       {phoneCall && (

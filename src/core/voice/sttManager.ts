@@ -17,6 +17,8 @@ export interface STTOptions {
   openaiBaseUrl?: string;
   openaiApiKey?: string;
   openaiModel?: string;
+  /** 检测到开始说话时回调一次（用于计算反应时间，不参与持久化） */
+  onSpeechStart?: () => void;
 }
 
 /** 从设置构建识别参数（伴侣、酒馆按键说话与语音通话共用） */
@@ -131,6 +133,8 @@ export class STTManager {
   private isListeningNow = false;
   private onResultCb: STTResultCallback | null = null;
   private onStateCb: STTStateCallback | null = null;
+  private onSpeechStartCb: (() => void) | null = null;
+  private speechStartReported = false;
   private recognitionGeneration = 0;
   private operationGeneration = 0;
   private requestController: AbortController | null = null;
@@ -167,6 +171,10 @@ export class STTManager {
       recognition.continuous = false;
       recognition.interimResults = true;
       recognition.lang = 'zh-CN';
+      recognition.onspeechstart = () => {
+        if (generation !== this.recognitionGeneration || this.recognition !== recognition) return;
+        this.reportSpeechStart();
+      };
       recognition.onstart = () => {
         if (generation !== this.recognitionGeneration || this.recognition !== recognition) return;
         this.isListeningNow = true;
@@ -181,6 +189,7 @@ export class STTManager {
           if (event.results[index].isFinal) finalTranscript += text;
           else interim += text;
         }
+        if (finalTranscript || interim) this.reportSpeechStart();
         if (finalTranscript) this.onResultCb?.(finalTranscript, true);
         else if (interim) this.onResultCb?.(interim, false);
       };
@@ -199,6 +208,12 @@ export class STTManager {
     }
   }
 
+  private reportSpeechStart() {
+    if (this.speechStartReported) return;
+    this.speechStartReported = true;
+    try { this.onSpeechStartCb?.(); } catch (error) { console.warn('开始说话回调异常:', error); }
+  }
+
   static isSupported(): boolean {
     return typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
   }
@@ -208,6 +223,8 @@ export class STTManager {
     const operationGeneration = ++this.operationGeneration;
     this.onResultCb = onResult;
     this.onStateCb = onState || null;
+    this.onSpeechStartCb = options.onSpeechStart || null;
+    this.speechStartReported = false;
     const engine = options.engine || 'browser';
     if (engine === 'browser') {
       await this.startBrowserListening(options.language || 'zh-CN', operationGeneration);
@@ -285,6 +302,7 @@ export class STTManager {
         let energy = 0;
         for (let index = 0; index < copy.length; index += 1) energy += copy[index] * copy[index];
         if (Math.sqrt(energy / copy.length) > 0.018) {
+          if (!this.heardVoice) this.reportSpeechStart();
           this.heardVoice = true;
           this.lastVoiceAt = Date.now();
         }
