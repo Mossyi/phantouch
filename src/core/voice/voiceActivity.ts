@@ -27,7 +27,7 @@ export class VoiceActivityDetector {
   private readonly minThreshold: number;
   private readonly noiseMultiplier: number;
   private readonly minSpeechMs: number;
-  private readonly endSilenceMs: number;
+  private endSilenceMs: number;
   private readonly bargeInMultiplier: number;
   private readonly bargeInMinSpeechMs: number;
 
@@ -40,8 +40,23 @@ export class VoiceActivityDetector {
     this.bargeInMinSpeechMs = options.bargeInMinSpeechMs ?? 380;
   }
 
+  /** 调整「停顿多久算说完」（通话设置里的断句快慢） */
+  setEndSilenceMs(ms: number) {
+    this.endSilenceMs = Math.max(300, Math.min(2000, ms));
+  }
+
   isSpeaking(): boolean {
     return this.speaking;
+  }
+
+  /** 说话中当前这段停顿已持续多久（未在说话时为 0） */
+  getSilenceMs(now: number): number {
+    return this.speaking ? Math.max(0, now - this.lastVoiceAt) : 0;
+  }
+
+  /** 最近一次检测到人声的时间（用于从「你真正说完」开始计算延迟） */
+  getLastVoiceAt(): number {
+    return this.lastVoiceAt;
   }
 
   getThreshold(peerSpeaking = false): number {

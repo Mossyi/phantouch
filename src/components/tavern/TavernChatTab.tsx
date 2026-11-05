@@ -39,7 +39,7 @@ import {
 } from '../../core/tavern/tavernEmotions';
 import { LLMClient } from '../../core/ai/llmClient';
 import { TTSManager } from '../../core/voice/ttsManager';
-import { STTManager } from '../../core/voice/sttManager';
+import { buildSttOptions, describeSttEngine, STTManager } from '../../core/voice/sttManager';
 import type { CallTurnHooks, VoiceCallDeps } from '../../core/voice/voiceCallSession';
 import { PhoneCallOverlay, type PhoneCallDirection, type PhoneCallSummary } from './PhoneCallOverlay';
 import {
@@ -2422,15 +2422,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       return TTSManager.getInstance().prepare(speech, voice);
     },
     stopSpeech: () => TTSManager.getInstance().stop(),
-    sttOptions: {
-      engine: safetyConfig.sttEngine,
-      siliconflowApiKey: safetyConfig.siliconflowSttApiKey,
-      siliconflowModel: safetyConfig.siliconflowSttModel,
-      volcengineApiKey: safetyConfig.volcengineSttApiKey,
-      volcengineAppId: safetyConfig.volcengineSttAppId,
-      volcengineAccessKey: safetyConfig.volcengineSttAccessKey,
-      volcengineResourceId: safetyConfig.volcengineSttResourceId,
-    },
+    sttOptions: buildSttOptions(safetyConfig),
+    turnTiming: safetyConfig.voiceCallTurnTiming,
   });
 
   const startPhoneCall = (direction: PhoneCallDirection) => {
@@ -2521,15 +2514,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         setIsVoiceProcessing(processing === true);
         if (error) showFeatureNotice(error);
       },
-      {
-        engine: safetyConfig.sttEngine,
-        siliconflowApiKey: safetyConfig.siliconflowSttApiKey,
-        siliconflowModel: safetyConfig.siliconflowSttModel,
-        volcengineApiKey: safetyConfig.volcengineSttApiKey,
-        volcengineAppId: safetyConfig.volcengineSttAppId,
-        volcengineAccessKey: safetyConfig.volcengineSttAccessKey,
-        volcengineResourceId: safetyConfig.volcengineSttResourceId,
-      },
+      buildSttOptions(safetyConfig),
     );
   };
 
@@ -3093,6 +3078,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           openingLine={phoneCall === 'outgoing'
             ? '（📞 我给你打了语音电话，你刚刚接起）'
             : '（📞 你给我打了语音电话，我刚刚接起。请你先开口，说说为什么打来）'}
+          sttLabel={`实时语音 · ${describeSttEngine(buildSttOptions(safetyConfig))}`}
           onEnd={handlePhoneCallEnd}
           onEmergencyStop={() => void useAppStore.getState().triggerEmergencyStop()}
         />

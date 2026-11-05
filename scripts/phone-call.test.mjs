@@ -232,3 +232,143 @@ test('通话会话：浏览器不支持语音识别时给出可操作的提示',
     cleanupGlobals();
   }
 });
+
+// ================= 识别模型可选 + 降低通话延迟 =================
+
+test('OpenAI 兼容识别：请求 /audio/transcriptions，带模型与中文；本地服务可免 Key，云端缺 Key 直接提示', async () => {
+  const { STTManager, describeMissingSttCredentials, describeSttEngine, buildSttOptions } = await loadBundledModule('../src/core/voice/sttManager.ts');
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return new Response(JSON.stringify({ text: ' 你好呀 ' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    const stt = STTManager.getInstance();
+    const wav = new Blob([new Uint8Array(44)], { type: 'audio/wav' });
+    const text = await stt.transcribeAudio(wav, {
+      engine: 'openai', openaiBaseUrl: 'https://api.groq.com/openai/v1/', openaiApiKey: 'gsk-test', openaiModel: 'whisper-large-v3-turbo',
+    }, new AbortController().signal);
+    assert.equal(text, '你好呀');
+    assert.equal(calls[0].url, 'https://api.groq.com/openai/v1/audio/transcriptions');
+    assert.equal(calls[0].init.headers.Authorization, 'Bearer gsk-test');
+    assert.equal(calls[0].init.body.get('model'), 'whisper-large-v3-turbo');
+    assert.equal(calls[0].init.body.get('language'), 'zh');
+
+    await stt.transcribeAudio(wav, { engine: 'openai', openaiBaseUrl: 'http://192.168.1.10:8000/v1', openaiModel: 'Systran/faster-whisper-small' }, new AbortController().signal);
+    assert.equal(calls[1].init.headers.Authorization, undefined, '局域网服务不带 Key');
+
+    assert.match(describeMissingSttCredentials({ engine: 'openai', openaiBaseUrl: 'https://api.openai.com/v1', openaiModel: 'whisper-1' }), /API Key/);
+    assert.equal(describeSttEngine({ engine: 'openai', openaiBaseUrl: 'https://api.groq.com/openai/v1', openaiModel: 'whisper-large-v3-turbo' }), 'groq.com · whisper-large-v3-turbo');
+    assert.equal(describeSttEngine({ engine: 'siliconflow', siliconflowModel: 'TeleAI/TeleSpeechASR' }), '硅基流动 · TeleSpeechASR');
+    assert.deepEqual(
+      Object.entries(buildSttOptions({ sttEngine: 'openai', openaiSttBaseUrl: 'u', openaiSttApiKey: 'k', openaiSttModel: 'm' })).filter(([, v]) => v !== undefined),
+      [['engine', 'openai'], ['openaiBaseUrl', 'u'], ['openaiApiKey', 'k'], ['openaiModel', 'm']],
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+/** 云端识别模式的会话：直接喂合成音频帧（2048 采样 ≈ 42.7ms），时间戳也由测试控制 */
+const setupCloudSession = async (turnTiming = 'standard') => {
+  const { VoiceCallSession } = await loadBundledModule('../src/core/voice/voiceCallSession.ts');
+  const transcriptions = [];
+  const sent = [];
+  const session = new VoiceCallSession({
+    sttOptions: { engine: 'openai' },
+    turnTiming,
+    transcribe: (wav, _options, signal) => {
+      const call = { bytes: wav.size, aborted: false };
+      transcriptions.push(call);
+      signal.addEventListener('abort', () => { call.aborted = true; });
+      return new Promise((resolve) => setTimeout(() => resolve(`第${transcriptions.length}次识别`), 30));
+    },
+    sendTurn: async (text, hooks) => { sent.push(text); hooks.onVisibleText('嗯，我听到了你说的话。'); return '嗯，我听到了你说的话。'; },
+    interruptTurn: () => {},
+    prepareSpeech: (text) => ({ text, cancel: () => {}, play: async () => { await sleep(5); } }),
+    stopSpeech: () => {},
+  });
+  session.active = true;
+  session.setPhase('listening');
+  const FRAME_MS = (2048 / 48_000) * 1000;
+  let now = 1_000_000;
+  const loud = new Float32Array(2048).map((_, i) => (i % 2 ? 0.12 : -0.12));
+  const quiet = new Float32Array(2048).fill(0.001);
+  const feed = (kind, ms) => {
+    for (let elapsed = 0; elapsed < ms; elapsed += FRAME_MS) {
+      now += FRAME_MS;
+      session.processFrame(kind === 'loud' ? loud : quiet, now);
+    }
+  };
+  return { session, transcriptions, sent, feed };
+};
+
+test('提前识别：停顿一开始就送识别；接着又开口则作废；确认说完时直接用已在路上的结果', async () => {
+  const { session, transcriptions, sent, feed } = await setupCloudSession('standard');
+  try {
+    feed('quiet', 500);
+    feed('loud', 600);
+    assert.equal(session.getSnapshot().phase, 'user_speaking');
+    feed('quiet', 420); // 超过 350ms：提前识别
+    assert.equal(transcriptions.length, 1);
+    feed('loud', 400); // 又开口：第一次提前识别作废
+    assert.equal(transcriptions[0].aborted, true);
+    feed('quiet', 420); // 第二次停顿：再次提前识别
+    assert.equal(transcriptions.length, 2);
+    const bytesAtSpeculation = transcriptions[1].bytes;
+    feed('quiet', 500); // 达到 800ms：确认说完
+    assert.equal(transcriptions.length, 2, '确认说完时复用提前识别，不再重复请求');
+    assert.equal(transcriptions[1].aborted, false);
+    assert.ok(bytesAtSpeculation > transcriptions[0].bytes, '第二次提前识别包含了两段话的完整录音');
+    await sleep(80);
+    assert.deepEqual(sent, ['第2次识别']);
+    const latency = session.getSnapshot().latency;
+    assert.ok(latency && latency.recognizeMs !== null && latency.firstTextMs !== null && latency.firstAudioMs !== null, JSON.stringify(latency));
+  } finally {
+    session.hangUp();
+  }
+});
+
+test('断句快慢：「快」在约 0.55 秒停顿后就提交，「耐心」在 0.8 秒停顿时仍在等', async () => {
+  const fast = await setupCloudSession('fast');
+  const patient = await setupCloudSession('patient');
+  try {
+    for (const { feed } of [fast, patient]) {
+      feed('quiet', 300);
+      feed('loud', 500);
+      feed('quiet', 820);
+    }
+    assert.equal(fast.session.getSnapshot().phase === 'user_speaking', false, '快：已判定说完');
+    assert.equal(patient.session.getSnapshot().phase, 'user_speaking', '耐心：还在等');
+    patient.feed('quiet', 500);
+    assert.notEqual(patient.session.getSnapshot().phase, 'user_speaking');
+  } finally {
+    fast.session.hangUp();
+    patient.session.hangUp();
+  }
+});
+
+test('识别接口地址：只接受 HTTPS 或局域网 HTTP；非法地址保留上一次的有效值', async () => {
+  const storage = new Map();
+  globalThis.localStorage = { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, String(v)), removeItem: (k) => storage.delete(k) };
+  delete globalThis.__YCY_DEVICE_MANAGER__;
+  const { DeviceManager } = await loadBundledModule('../src/core/deviceManager.ts');
+  const manager = DeviceManager.getInstance();
+  try {
+    const base = manager.getSafetyConfig();
+    manager.updateSafetyConfig({ ...base, sttEngine: 'openai', openaiSttBaseUrl: 'https://api.groq.com/openai/v1/' });
+    assert.equal(manager.getSafetyConfig().sttEngine, 'openai');
+    assert.equal(manager.getSafetyConfig().openaiSttBaseUrl, 'https://api.groq.com/openai/v1');
+    manager.updateSafetyConfig({ ...manager.getSafetyConfig(), openaiSttBaseUrl: 'http://evil.example.com/v1' });
+    assert.equal(manager.getSafetyConfig().openaiSttBaseUrl, 'https://api.groq.com/openai/v1', '公网 HTTP 会明文传输录音与 Key，拒绝');
+    manager.updateSafetyConfig({ ...manager.getSafetyConfig(), openaiSttBaseUrl: 'http://192.168.1.10:8000/v1' });
+    assert.equal(manager.getSafetyConfig().openaiSttBaseUrl, 'http://192.168.1.10:8000/v1');
+    manager.updateSafetyConfig({ ...manager.getSafetyConfig(), voiceCallTurnTiming: 'bogus' });
+    assert.equal(manager.getSafetyConfig().voiceCallTurnTiming, 'standard');
+  } finally {
+    manager.simulator?.destroy?.();
+    delete globalThis.__YCY_DEVICE_MANAGER__;
+    delete globalThis.localStorage;
+  }
+});

@@ -3,6 +3,7 @@ import { encodeWav, STTManager, type STTOptions } from './sttManager';
 import { SpeechSegmenter } from './speechSegmenter';
 import { computeRms, VoiceActivityDetector } from './voiceActivity';
 import { normalizeForComparison } from '../tavern/tavernTextSanitizer';
+import type { VoiceCallTurnTiming } from '../../types';
 
 /**
  * 酒馆「打电话」的通话会话：全双工语音对话。
@@ -45,7 +46,26 @@ export interface VoiceCallDeps {
   stopSpeech(): void;
   sttOptions: STTOptions;
   transcribe?(wav: Blob, options: STTOptions, signal: AbortSignal): Promise<string>;
+  /** 断句快慢：停顿多久算说完 */
+  turnTiming?: VoiceCallTurnTiming;
 }
+
+/** 一轮对话的延迟，均从「你真正说完」那一刻算起（毫秒） */
+export interface CallTurnLatency {
+  recognizeMs: number | null;
+  firstTextMs: number | null;
+  firstAudioMs: number | null;
+}
+
+/**
+ * 断句时机。speculativeMs：停顿到这个时长就先把已录到的话送去识别（不等完全说完）；
+ * 若接着又开口则作废重来，确认说完时多数情况下识别结果已经回来了。
+ */
+export const CALL_TURN_TIMINGS: Record<VoiceCallTurnTiming, { endSilenceMs: number; speculativeMs: number }> = {
+  fast: { endSilenceMs: 550, speculativeMs: 300 },
+  standard: { endSilenceMs: 800, speculativeMs: 350 },
+  patient: { endSilenceMs: 1200, speculativeMs: 500 },
+};
 
 export interface VoiceCallSnapshot {
   phase: CallPhase;
@@ -57,6 +77,8 @@ export interface VoiceCallSnapshot {
   error: string | null;
   connectedAt: number | null;
   sttMode: 'cloud' | 'browser';
+  /** 最近一轮的延迟（接通开场那一轮没有） */
+  latency: CallTurnLatency | null;
 }
 
 type Listener = (snapshot: VoiceCallSnapshot) => void;
@@ -141,6 +163,7 @@ export class VoiceCallSession {
     error: null,
     connectedAt: null,
     sttMode: 'cloud',
+    latency: null,
   };
   private listeners = new Set<Listener>();
   private active = false;
@@ -159,6 +182,10 @@ export class VoiceCallSession {
   private preRoll: Float32Array[] = [];
   private utterance: Float32Array[] = [];
   private utteranceStartedAt = 0;
+  private sampleRate = 48_000;
+  private preRollFrames = 10;
+  private readonly timing: { endSilenceMs: number; speculativeMs: number };
+  private speculative: { controller: AbortController; result: Promise<string> } | null = null;
 
   // 浏览器识别
   private recognition: any = null;
@@ -167,6 +194,8 @@ export class VoiceCallSession {
 
   constructor(private readonly deps: VoiceCallDeps) {
     this.snapshot.sttMode = deps.sttOptions.engine === 'browser' || !deps.sttOptions.engine ? 'browser' : 'cloud';
+    this.timing = CALL_TURN_TIMINGS[deps.turnTiming || 'standard'] || CALL_TURN_TIMINGS.standard;
+    this.vad.setEndSilenceMs(this.timing.endSilenceMs);
   }
 
   subscribe(listener: Listener): () => void {
@@ -224,6 +253,7 @@ export class VoiceCallSession {
     this.set({ muted });
     if (muted) {
       this.vad.reset();
+      this.cancelSpeculative();
       this.utterance = [];
       if (this.snapshot.phase === 'user_speaking') this.set({ phase: 'listening' });
     }
@@ -240,6 +270,7 @@ export class VoiceCallSession {
     this.queue = null;
     this.transcribeController?.abort();
     this.transcribeController = null;
+    this.cancelSpeculative();
     this.deps.stopSpeech();
     this.deps.interruptTurn();
     if (toListening && this.active) this.set({ phase: 'listening' });
@@ -251,10 +282,26 @@ export class VoiceCallSession {
 
   // ================= 一轮对话 =================
 
-  private startTurn(text: string, showAsUser = true) {
+  /**
+   * @param speechEndAt 你说完的时刻；传入时统计本轮延迟
+   * @param recognizedAt 识别结果返回的时刻
+   */
+  private startTurn(text: string, showAsUser = true, speechEndAt?: number, recognizedAt?: number) {
     const turn = ++this.turnId;
     if (showAsUser) this.set({ userCaption: text });
-    this.set({ phase: 'thinking', aiCaption: '', error: null });
+    this.set({
+      phase: 'thinking',
+      aiCaption: '',
+      error: null,
+      latency: speechEndAt
+        ? { recognizeMs: recognizedAt ? Math.max(0, recognizedAt - speechEndAt) : null, firstTextMs: null, firstAudioMs: null }
+        : null,
+    });
+    const markLatency = (field: 'firstTextMs' | 'firstAudioMs') => {
+      const latency = this.snapshot.latency;
+      if (!speechEndAt || turn !== this.turnId || !latency || latency[field] !== null) return;
+      this.set({ latency: { ...latency, [field]: Math.max(0, Date.now() - speechEndAt) } });
+    };
     const previous = this.turnPromise;
     this.turnPromise = (async () => {
       await previous?.catch(() => undefined);
@@ -266,6 +313,7 @@ export class VoiceCallSession {
         (sentence) => this.deps.prepareSpeech(sentence),
         (spoken) => {
           if (turn !== this.turnId) return;
+          markLatency('firstAudioMs');
           this.set({ phase: 'speaking', aiCaption: spoken });
         },
       );
@@ -274,6 +322,7 @@ export class VoiceCallSession {
       const reply = await this.deps.sendTurn(text, {
         onVisibleText: (visible) => {
           if (turn !== this.turnId) return;
+          if (!streamed) markLatency('firstTextMs');
           streamed = true;
           segmenter.push(visible).forEach((sentence) => queue.enqueue(sentence));
         },
@@ -298,22 +347,48 @@ export class VoiceCallSession {
     })();
   }
 
-  private async submitUtterance(chunks: Float32Array[], sampleRate: number) {
+  private transcribeChunks(chunks: Float32Array[], signal: AbortSignal): Promise<string> {
+    const wav = encodeWav(chunks, this.sampleRate);
+    const transcribe = this.deps.transcribe
+      ?? ((audio: Blob, options: STTOptions, abortSignal: AbortSignal) => STTManager.getInstance().transcribeAudio(audio, options, abortSignal));
+    return transcribe(wav, this.deps.sttOptions, signal).then((text) => String(text || '').trim());
+  }
+
+  /** 停顿刚开始就先送识别；结果留着，确认说完时直接用 */
+  private startSpeculative() {
+    const controller = new AbortController();
+    const result = this.transcribeChunks([...this.utterance], controller.signal);
+    result.catch(() => undefined);
+    this.speculative = { controller, result };
+  }
+
+  private cancelSpeculative() {
+    this.speculative?.controller.abort();
+    this.speculative = null;
+  }
+
+  private async submitUtterance(chunks: Float32Array[], speechEndAt: number) {
     const turn = ++this.turnId;
     this.set({ phase: 'transcribing' });
-    const controller = new AbortController();
+    const speculative = this.speculative;
+    this.speculative = null;
+    const controller = speculative?.controller ?? new AbortController();
     this.transcribeController = controller;
     try {
-      const wav = encodeWav(chunks, sampleRate);
-      const transcribe = this.deps.transcribe
-        ?? ((audio: Blob, options: STTOptions, signal: AbortSignal) => STTManager.getInstance().transcribeAudio(audio, options, signal));
-      const text = (await transcribe(wav, this.deps.sttOptions, controller.signal)).trim();
+      let text: string;
+      try {
+        text = speculative ? await speculative.result : await this.transcribeChunks(chunks, controller.signal);
+      } catch (error) {
+        // 提前识别失败（非主动取消）时用完整录音再试一次
+        if (!speculative || controller.signal.aborted) throw error;
+        text = await this.transcribeChunks(chunks, controller.signal);
+      }
       if (turn !== this.turnId || !this.active || controller.signal.aborted) return;
       if (!text) {
         this.set({ phase: 'listening' });
         return;
       }
-      this.startTurn(text);
+      this.startTurn(text, true, speechEndAt, Date.now());
     } catch (error) {
       if (turn !== this.turnId || controller.signal.aborted) return;
       this.set({ phase: 'listening', error: error instanceof Error ? error.message : '语音识别失败' });
@@ -345,54 +420,74 @@ export class VoiceCallSession {
     this.source = source;
     this.processor = processor;
     this.sink = sink;
-    const frameMs = (2048 / context.sampleRate) * 1000;
-    const preRollFrames = Math.ceil(PRE_ROLL_MS / frameMs);
-
+    this.sampleRate = context.sampleRate;
+    this.preRollFrames = Math.ceil(PRE_ROLL_MS / ((2048 / context.sampleRate) * 1000));
     processor.onaudioprocess = (event) => {
-      if (!this.active) return;
-      const frame = new Float32Array(event.inputBuffer.getChannelData(0));
-      const rms = computeRms(frame);
-      this.set({ micLevel: this.snapshot.muted ? 0 : Math.min(1, rms * 12) });
-      if (this.snapshot.muted) return;
-      if (this.snapshot.phase === 'transcribing' || this.snapshot.phase === 'connecting') {
-        this.preRoll.push(frame);
-        if (this.preRoll.length > preRollFrames) this.preRoll.shift();
-        return;
-      }
-
-      const peerBusy = this.isPeerBusy();
-      // 不允许插话时，角色说话期间完全不收音（免提无回声消除时最稳妥）
-      if (peerBusy && !this.snapshot.bargeInEnabled) {
-        this.vad.reset();
-        this.preRoll = [];
-        return;
-      }
-      const now = Date.now();
-      const event_ = this.vad.feed(rms, now, peerBusy);
-
-      if (this.vad.isSpeaking() || event_ === 'speech_end') {
-        this.utterance.push(frame);
-      } else {
-        this.preRoll.push(frame);
-        if (this.preRoll.length > preRollFrames) this.preRoll.shift();
-      }
-
-      if (event_ === 'speech_start') {
-        if (peerBusy) this.interrupt(false);
-        this.utterance = [...this.preRoll, frame];
-        this.preRoll = [];
-        this.utteranceStartedAt = now;
-        this.set({ phase: 'user_speaking', userCaption: '' });
-      } else if (event_ === 'speech_end' || (this.vad.isSpeaking() && now - this.utteranceStartedAt > MAX_UTTERANCE_MS)) {
-        const chunks = this.utterance;
-        this.utterance = [];
-        this.vad.reset();
-        void this.submitUtterance(chunks, context.sampleRate);
-      }
+      this.processFrame(new Float32Array(event.inputBuffer.getChannelData(0)), Date.now());
     };
     source.connect(processor);
     processor.connect(sink);
     sink.connect(context.destination);
+  }
+
+  /**
+   * 处理一帧麦克风数据：语音活动检测、录音缓冲、提前识别与插话。
+   * 单独成方法便于测试直接喂入合成音频帧。
+   */
+  processFrame(frame: Float32Array, now: number) {
+    if (!this.active) return;
+    const rms = computeRms(frame);
+    this.set({ micLevel: this.snapshot.muted ? 0 : Math.min(1, rms * 12) });
+    if (this.snapshot.muted) return;
+    const keepPreRoll = () => {
+      this.preRoll.push(frame);
+      if (this.preRoll.length > this.preRollFrames) this.preRoll.shift();
+    };
+    if (this.snapshot.phase === 'transcribing' || this.snapshot.phase === 'connecting') {
+      keepPreRoll();
+      return;
+    }
+
+    const peerBusy = this.isPeerBusy();
+    // 不允许插话时，角色说话期间完全不收音（免提无回声消除时最稳妥）
+    if (peerBusy && !this.snapshot.bargeInEnabled) {
+      this.vad.reset();
+      this.preRoll = [];
+      return;
+    }
+    const event = this.vad.feed(rms, now, peerBusy);
+
+    if (this.vad.isSpeaking() || event === 'speech_end') this.utterance.push(frame);
+    else keepPreRoll();
+
+    if (event === 'speech_start') {
+      if (peerBusy) this.interrupt(false);
+      this.utterance = [...this.preRoll, frame];
+      this.preRoll = [];
+      this.utteranceStartedAt = now;
+      this.set({ phase: 'user_speaking', userCaption: '' });
+      return;
+    }
+
+    if (event === 'speech_end' || (this.vad.isSpeaking() && now - this.utteranceStartedAt > MAX_UTTERANCE_MS)) {
+      const speechEndAt = this.vad.getLastVoiceAt() || now;
+      const chunks = this.utterance;
+      this.utterance = [];
+      this.vad.reset();
+      if (event !== 'speech_end') this.cancelSpeculative(); // 超长被截断：提前识别的内容不完整
+      void this.submitUtterance(chunks, speechEndAt);
+      return;
+    }
+
+    if (this.vad.isSpeaking()) {
+      const silence = this.vad.getSilenceMs(now);
+      if (silence === 0) {
+        // 又开口了：之前提前送出的识别作废
+        if (this.speculative) this.cancelSpeculative();
+      } else if (silence >= this.timing.speculativeMs && !this.speculative) {
+        this.startSpeculative();
+      }
+    }
   }
 
   private stopMicrophone() {
@@ -409,6 +504,7 @@ export class VoiceCallSession {
     this.sink = null;
     this.preRoll = [];
     this.utterance = [];
+    this.cancelSpeculative();
     this.vad.reset();
   }
 
@@ -445,11 +541,12 @@ export class VoiceCallSession {
       if (this.finalTimer) clearTimeout(this.finalTimer);
       if (this.finalBuffer.trim()) {
         // 停顿片刻再提交，把一口气说的几段最终结果合成一句
+        const lastResultAt = Date.now();
         this.finalTimer = setTimeout(() => {
           const text = this.finalBuffer.trim();
           this.finalBuffer = '';
           this.finalTimer = null;
-          if (text && this.active) this.startTurn(text);
+          if (text && this.active) this.startTurn(text, true, lastResultAt, Date.now());
         }, 600);
       }
     };

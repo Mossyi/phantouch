@@ -24,6 +24,8 @@ interface PhoneCallOverlayProps {
   createDeps: () => VoiceCallDeps;
   /** 接通后角色先说的那一轮（会作为一条消息进入聊天记录） */
   openingLine: string;
+  /** 顶部显示的识别方式，如「硅基流动 · SenseVoice」 */
+  sttLabel?: string;
   onEnd: (summary: PhoneCallSummary) => void;
   onEmergencyStop: () => void;
 }
@@ -34,6 +36,8 @@ const formatDuration = (seconds: number) => {
   const minutes = Math.floor(seconds / 60);
   return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 };
+
+const formatSeconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 
 const PHASE_LABELS: Partial<Record<VoiceCallSnapshot['phase'], string>> = {
   connecting: '正在接通…',
@@ -50,6 +54,7 @@ export const PhoneCallOverlay: React.FC<PhoneCallOverlayProps> = ({
   direction,
   createDeps,
   openingLine,
+  sttLabel: sttLabelProp,
   onEnd,
   onEmergencyStop,
 }) => {
@@ -58,6 +63,7 @@ export const PhoneCallOverlay: React.FC<PhoneCallOverlayProps> = ({
   const session = sessionRef.current;
   const [snapshot, setSnapshot] = React.useState<VoiceCallSnapshot>(() => session.getSnapshot());
   const [now, setNow] = React.useState(() => Date.now());
+  const sttLabel = sttLabelProp || (snapshot.sttMode === 'cloud' ? '实时语音 · 云端识别' : '实时语音 · 浏览器识别');
   const [showCaptions, setShowCaptions] = React.useState(true);
   const endedRef = React.useRef(false);
   const stopToneRef = React.useRef<(() => void) | null>(null);
@@ -150,7 +156,7 @@ export const PhoneCallOverlay: React.FC<PhoneCallOverlayProps> = ({
       {/* 顶部：急停始终可达（通话界面会盖住全局急停按钮） */}
       <div className="flex w-full max-w-md items-center justify-between px-4 pt-safe-header">
         <span className="rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.75)' }}>
-          {snapshot.sttMode === 'cloud' ? '实时语音 · 云端识别' : '实时语音 · 浏览器识别'}
+          {sttLabel}
         </span>
         <button type="button" onClick={onEmergencyStop} className="estop-button" aria-label="紧急停止全部输出">
           <OctagonX className="h-4 w-4" strokeWidth={2.4} />
@@ -179,6 +185,17 @@ export const PhoneCallOverlay: React.FC<PhoneCallOverlayProps> = ({
         {snapshot.connectedAt && phase !== 'ended' && phase !== 'error' && (
           <p className="mt-1 text-xs" style={{ color: peerTalking ? '#f9a8c8' : 'rgba(255,255,255,0.5)' }}>
             {snapshot.muted ? '麦克风已静音' : PHASE_LABELS[phase]}
+          </p>
+        )}
+
+        {/* 本轮延迟：从你说完开始计时，方便对比不同识别 / 合成模型 */}
+        {snapshot.latency && snapshot.connectedAt && phase !== 'ended' && (
+          <p className="mt-2 font-mono text-[11px]" style={{ color: 'rgba(255,255,255,0.45)' }} aria-label="本轮响应延迟">
+            {[
+              snapshot.latency.recognizeMs !== null ? `识别 ${formatSeconds(snapshot.latency.recognizeMs)}` : null,
+              snapshot.latency.firstTextMs !== null ? `首字 ${formatSeconds(snapshot.latency.firstTextMs)}` : null,
+              snapshot.latency.firstAudioMs !== null ? `开口 ${formatSeconds(snapshot.latency.firstAudioMs)}` : null,
+            ].filter(Boolean).join(' · ')}
           </p>
         )}
 

@@ -16,7 +16,7 @@ import { DeviceManager } from '../core/deviceManager';
 import { LLMClient } from '../core/ai/llmClient';
 import { PRESET_PERSONAS } from '../core/ai/personaPrompts';
 import { TTSManager } from '../core/voice/ttsManager';
-import { STTManager } from '../core/voice/sttManager';
+import { buildSttOptions, STTManager } from '../core/voice/sttManager';
 import { ContractEngine } from '../core/discipline/contractEngine';
 import { EdgingEngine } from '../core/discipline/edgingEngine';
 import { HeartRateEngine } from '../core/biometrics/heartRateEngine';
@@ -148,6 +148,10 @@ const DEFAULT_SAFETY_CONFIG: SafetyConfig = {
   volcengineSttAppId: '',
   volcengineSttAccessKey: '',
   volcengineSttResourceId: 'volc.bigasr.auc_turbo',
+  openaiSttBaseUrl: 'https://api.openai.com/v1',
+  openaiSttApiKey: '',
+  openaiSttModel: 'gpt-4o-mini-transcribe',
+  voiceCallTurnTiming: 'standard',
   ttsEngine: 'siliconflow',
   siliconflowTtsApiKey: '',
   siliconflowTtsModel: 'FunAudioLLM/CosyVoice2-0.5B',
@@ -714,15 +718,8 @@ export const useAppStore = create<AppStore>((set, get) => {
               console.warn('STT Error:', error);
             }
           },
-        {
-          engine: get().safetyConfig.sttEngine,
-          siliconflowApiKey: get().safetyConfig.siliconflowSttApiKey,
-          siliconflowModel: get().safetyConfig.siliconflowSttModel,
-          volcengineApiKey: get().safetyConfig.volcengineSttApiKey,
-          volcengineAppId: get().safetyConfig.volcengineSttAppId,
-          volcengineAccessKey: get().safetyConfig.volcengineSttAccessKey,
-          volcengineResourceId: get().safetyConfig.volcengineSttResourceId,
-        })
+          buildSttOptions(get().safetyConfig),
+        )
         .catch((e: any) => console.warn('开启语音识别失败:', e.message))
         .finally(() => {
           isStartingVoiceInput = false;
