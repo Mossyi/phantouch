@@ -214,6 +214,10 @@
   scroll-behavior: smooth;
 }
 .segmented-track::-webkit-scrollbar { display: none; }
+/* 标签溢出时边缘渐隐，提示可以横向滑动 */
+.segmented-track--more-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent); }
+.segmented-track--more-left { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 2.5rem), transparent); }
+.segmented-track--more-left.segmented-track--more-right { -webkit-mask-image: linear-gradient(to right, transparent, #000 2.5rem, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to right, transparent, #000 2.5rem, #000 calc(100% - 2.5rem), transparent); }
 
 .segmented-item {
   position: relative;
