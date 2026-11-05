@@ -161,6 +161,7 @@ import {
   CalendarDays,
 } from 'lucide-react';
 import { TavernRpgChoices, TavernRpgHud, TavernRpgPanel, type RpgPanelTab, type RpgSystemAction } from './TavernRpgPanel';
+import { buildLocationArtPrompt, clearRpgArt, isRpgArtAutoEnabled, loadRpgArt, saveRpgArt, setRpgArtAutoEnabled } from '../../core/tavern/tavernRpgArt';
 import {
   RPG_HIGH_STRESS,
   STAGES,
@@ -485,6 +486,24 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [rpgPanelTab, setRpgPanelTab] = useState<RpgPanelTab | null>(null);
   // 日程模式在酒馆设置里开关，默认关闭；关闭时不显示入口、不注入提示词，进度保留
   const [rpgEnabled] = useState(isRpgModeEnabled);
+  // 地点插画：{ 地点 id: dataURL }，存在 IndexedDB
+  const [rpgArt, setRpgArt] = useState<Record<string, string>>({});
+  const [rpgArtLoaded, setRpgArtLoaded] = useState(false);
+  const [rpgArtBusyId, setRpgArtBusyId] = useState<string | null>(null);
+  const [rpgArtAuto, setRpgArtAuto] = useState(isRpgArtAutoEnabled);
+  const rpgArtControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void loadRpgArt(activeCard.id).then((art) => {
+      if (cancelled) return;
+      setRpgArt(art);
+      setRpgArtLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+      rpgArtControllerRef.current?.abort();
+    };
+  }, [activeCard.id]);
   useEffect(() => {
     characterStatsRef.current = characterStats;
   }, [characterStats]);
@@ -2137,6 +2156,41 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     void handleSendRef.current?.(text, false);
   };
 
+  /** 用生图模型给地点画一张插画（只画场景，不画人物），压缩后存进 IndexedDB */
+  const generateRpgArt = async (locationId: string, silent = false) => {
+    const current = rpgStateRef.current;
+    const location = current?.locations.find((entry) => entry.id === locationId);
+    if (!current || !location || rpgArtControllerRef.current) return;
+    const controller = new AbortController();
+    rpgArtControllerRef.current = controller;
+    const cardId = activeCard.id;
+    setRpgArtBusyId(locationId);
+    if (!silent) showFeatureNotice(`正在给「${location.name}」画插画…`);
+    try {
+      const imageUrl = await generateWithConfiguredImageModel(buildLocationArtPrompt(location, current.worldName, current.period), controller.signal);
+      const stored = await compressImageForSession(imageUrl, 320_000).catch(() => imageUrl);
+      if (controller.signal.aborted || activeCardIdRef.current !== cardId) return;
+      if (!stored.startsWith('data:image/')) throw new Error('生图结果无法保存到本地，请换用返回图片数据的生图模型');
+      await saveRpgArt(cardId, locationId, stored);
+      setRpgArt((art) => ({ ...art, [locationId]: stored }));
+      showFeatureNotice(`「${location.name}」的插画画好了`);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      showFeatureNotice(error instanceof Error ? `插画生成失败：${error.message}` : '插画生成失败');
+    } finally {
+      if (rpgArtControllerRef.current === controller) rpgArtControllerRef.current = null;
+      setRpgArtBusyId(null);
+    }
+  };
+
+  // 打开自动插画时，进入还没有插画的地点就画一张
+  const rpgCurrentLocationId = rpgActive ? rpgState?.currentId : undefined;
+  useEffect(() => {
+    if (!rpgCurrentLocationId || !rpgArtAuto || !rpgArtLoaded || rpgArt[rpgCurrentLocationId] || rpgArtControllerRef.current) return;
+    void generateRpgArt(rpgCurrentLocationId, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rpgCurrentLocationId, rpgArtAuto, rpgArtLoaded]);
+
   const addRpgRule = (text: string) => {
     const current = rpgStateRef.current;
     if (!current) return '还没有开始训练。';
@@ -2749,6 +2803,36 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     }, 0);
   };
 
+  /** 用酒馆设置里的生图通道画一张图（对话生图和训练日程的地点插画共用） */
+  const generateWithConfiguredImageModel = (prompt: string, signal: AbortSignal, sourceImage?: string) => {
+    const imageConfig = store.getTavernImageModelConfig();
+    const useCustomImageApi = imageConfig.provider === 'custom';
+    const useVolcenginePlanImageApi = imageConfig.provider === 'volcengine_plan';
+    const useLocalSdImageApi = imageConfig.provider === 'local_sd';
+    const useDedicatedImageApi = useCustomImageApi || imageConfig.provider === 'siliconflow' || useLocalSdImageApi;
+    return generateTavernAiImage({
+      baseUrl: useDedicatedImageApi || useVolcenginePlanImageApi ? imageConfig.baseUrl : llmConfig.baseUrl,
+      apiKey: resolveTavernImageApiKey(imageConfig.provider, imageConfig.apiKey, llmConfig.baseUrl, llmConfig.apiKey),
+      model: imageConfig.model,
+      imageSize: imageConfig.imageSize,
+      numInferenceSteps: imageConfig.numInferenceSteps,
+      seed: imageConfig.seed,
+      negativePrompt: imageConfig.negativePrompt,
+      localSdBackend: imageConfig.localSdBackend,
+      sdSampler: imageConfig.sdSampler,
+      sdScheduler: imageConfig.sdScheduler,
+      sdCfgScale: imageConfig.sdCfgScale,
+      sdWidth: imageConfig.sdWidth,
+      sdHeight: imageConfig.sdHeight,
+      ...(useVolcenginePlanImageApi
+        ? { provider: 'volcengine_plan' as const }
+        : useLocalSdImageApi ? { provider: 'local_sd' as const } : {}),
+      sourceImage,
+      prompt,
+      signal,
+    });
+  };
+
   const generateAiImageForMessage = async (sourceMessage: ChatMsg) => {
     if (aiImageGeneratingId) return;
     aiImageControllerRef.current?.abort();
@@ -2758,11 +2842,6 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     setAiImageGeneratingId(sourceMessage.id);
     try {
       const tavernModelConfig = store.getTavernModelConfig();
-      const imageConfig = store.getTavernImageModelConfig();
-      const useCustomImageApi = imageConfig.provider === 'custom';
-      const useVolcenginePlanImageApi = imageConfig.provider === 'volcengine_plan';
-      const useLocalSdImageApi = imageConfig.provider === 'local_sd';
-      const useDedicatedImageApi = useCustomImageApi || imageConfig.provider === 'siliconflow' || useLocalSdImageApi;
       const promptRequest = buildTavernImagePromptRequest(activeCard, messages, sourceMessage.id);
       let positivePrompt = createFallbackTavernImagePrompt(activeCard, messages, sourceMessage.id);
       try {
@@ -2807,27 +2886,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         activeCard.avatar,
         ...(activeCard.galleryImages || []),
       ].find((value) => typeof value === 'string' && /^(?:https:|data:image\/)/i.test(value.trim()));
-      const imageUrl = await generateTavernAiImage({
-        baseUrl: useDedicatedImageApi || useVolcenginePlanImageApi ? imageConfig.baseUrl : llmConfig.baseUrl,
-        apiKey: resolveTavernImageApiKey(imageConfig.provider, imageConfig.apiKey, llmConfig.baseUrl, llmConfig.apiKey),
-        model: imageConfig.model,
-        imageSize: imageConfig.imageSize,
-        numInferenceSteps: imageConfig.numInferenceSteps,
-        seed: imageConfig.seed,
-        negativePrompt: imageConfig.negativePrompt,
-        localSdBackend: imageConfig.localSdBackend,
-        sdSampler: imageConfig.sdSampler,
-        sdScheduler: imageConfig.sdScheduler,
-        sdCfgScale: imageConfig.sdCfgScale,
-        sdWidth: imageConfig.sdWidth,
-        sdHeight: imageConfig.sdHeight,
-        ...(useVolcenginePlanImageApi
-          ? { provider: 'volcengine_plan' as const }
-          : useLocalSdImageApi ? { provider: 'local_sd' as const } : {}),
-        sourceImage,
-        prompt: positivePrompt,
-        signal: controller.signal,
-      });
+      const imageUrl = await generateWithConfiguredImageModel(positivePrompt, controller.signal, sourceImage);
       if (controller.signal.aborted || activeCardIdRef.current !== requestCardId) return;
       const persistedImageUrl = await compressImageForSession(imageUrl).catch(() => imageUrl);
       const aiImageMsg: ChatMsg = {
@@ -3319,6 +3378,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       {rpgPanelTab && (
         <TavernRpgPanel
           state={isGroupScene ? null : rpgState}
+          portrait={{ avatar: activeCard.avatar, expressions: activeCard.expressions }}
+          art={rpgArt}
+          artBusyId={rpgArtBusyId}
+          artAuto={rpgArtAuto}
+          onGenerateArt={(locationId) => void generateRpgArt(locationId)}
+          onToggleArtAuto={(enabled) => { setRpgArtAuto(enabled); setRpgArtAutoEnabled(enabled); }}
           charName={rpgCharName}
           userName={store.getTavernModelConfig().userName || '你'}
           busy={isLoading}
@@ -3328,7 +3393,14 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           onAction={runRpgAction}
           onAddRule={addRpgRule}
           onRemoveRule={(index) => { if (rpgStateRef.current) updateRpgState(removeRule(rpgStateRef.current, index)); }}
-          onEnd={() => { updateRpgState(null); setRpgPanelTab(null); showFeatureNotice('训练已结束，聊天记录保留'); }}
+          onEnd={() => {
+            updateRpgState(null);
+            setRpgPanelTab(null);
+            rpgArtControllerRef.current?.abort();
+            setRpgArt({});
+            void clearRpgArt(activeCard.id);
+            showFeatureNotice('训练已结束，聊天记录保留');
+          }}
           onUpdateHardware={(hardware) => { if (rpgStateRef.current) updateRpgState({ ...rpgStateRef.current, hardware }); }}
           onClose={() => setRpgPanelTab(null)}
         />
@@ -3369,7 +3441,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         onUpdateStats={handleUpdateStats}
         onResetStats={handleResetStats}
       />
-      {rpgActive && rpgState && <TavernRpgHud state={rpgState} onOpen={() => setRpgPanelTab('map')} />}
+      {rpgActive && rpgState && <TavernRpgHud state={rpgState} art={rpgArt[rpgState.currentId]} onOpen={() => setRpgPanelTab('today')} />}
 
       {/* 消息展示区域（相对定位，容纳消息流与浮动立绘） */}
       <div className="relative z-10 flex-1 min-h-0 flex flex-col">

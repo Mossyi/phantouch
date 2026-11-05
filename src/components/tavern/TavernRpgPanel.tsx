@@ -1,9 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  BatteryLow, BedDouble, BookOpen, CalendarDays, CheckCircle2, Circle, Dices, Footprints, Gift, Gavel, HeartPulse, Lock,
-  Map as MapIcon, MessageCircleHeart, NotebookText, Plus, ScrollText, Settings2, Star, Trophy, UserRound, Wrench, X, Zap,
+  BatteryLow, BedDouble, CalendarDays, CheckCircle2, Circle, Dices, Footprints, Gift, Gavel, HeartPulse, ImagePlus, Loader2, Lock,
+  Map as MapIcon, MessageCircleHeart, NotebookText, Plus, RefreshCw, ScrollText, Settings2, Star, Trophy, UserRound, Wrench, X, Zap,
 } from 'lucide-react';
+import { RPG_ICON_CREDIT, RPG_ICON_PATHS } from '../../core/tavern/rpgIcons';
+import type { TavernCharacterExpressions, TavernEmotionKey } from '../../core/tavern/tavernTypes';
+import { KIND_ICONS, PERIOD_ICONS, RpgIcon, STAGE_ICONS, courseIcon, itemIcon, traitIcon } from './RpgIcon';
 import {
   LEVEL_NAMES,
   RPG_CHECK_LABELS,
@@ -48,6 +51,50 @@ export type RpgSystemAction =
 
 const dayLabel = (state: TavernRpgState) => (state.dayLimit ? `第${state.day}/${state.dayLimit}天` : `第${state.day}天`);
 const signed = (value: number) => (value > 0 ? `+${value}` : `${value}`);
+const isImageSource = (value?: string) => Boolean(value && /^(?:https:|data:image\/|blob:)/i.test(value.trim()));
+
+export interface RpgPortrait {
+  avatar?: string;
+  expressions?: TavernCharacterExpressions;
+}
+
+/** 调教者头像：有对应表情差分时用差分，否则用头像；头像是 emoji 时直接显示文字 */
+const TrainerPortrait: React.FC<{ portrait: RpgPortrait; mood?: TavernEmotionKey; className?: string }> = ({ portrait, mood = 'neutral', className = 'h-12 w-12' }) => {
+  const src = portrait.expressions?.[mood] || portrait.expressions?.neutral || portrait.avatar;
+  return (
+    <span className={`flex shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-pink-200 bg-pink-50 text-2xl ${className}`}>
+      {isImageSource(src) ? <img src={src} alt="" className="h-full w-full object-cover" /> : <span aria-hidden>{src || '🙂'}</span>}
+    </span>
+  );
+};
+
+/** 地点插画横幅：有图显示图，没有就显示图标和生成按钮 */
+const LocationBanner: React.FC<{
+  location: RpgLocation;
+  art?: string;
+  busy: boolean;
+  onGenerate?: () => void;
+  className?: string;
+}> = ({ location, art, busy, onGenerate, className = 'aspect-[16/9]' }) => (
+  <div className={`relative w-full overflow-hidden rounded-2xl border border-pink-100 bg-gradient-to-br from-pink-50 via-white to-violet-50 ${className}`}>
+    {art ? (
+      <img src={art} alt={`${location.name}插画`} className="h-full w-full object-cover" />
+    ) : (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-pink-300">
+        <RpgIcon name={KIND_ICONS[location.kind]} className="h-12 w-12" />
+        {onGenerate && <span className="text-[10px] text-slate-400">还没有插画</span>}
+      </div>
+    )}
+    <span className="absolute bottom-2 left-2 rounded-full bg-black/45 px-2 py-0.5 text-[10.5px] font-bold text-white backdrop-blur-sm">{location.name}</span>
+    {onGenerate && (
+      <button type="button" disabled={busy} onClick={onGenerate}
+        className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-bold text-pink-600 shadow-sm backdrop-blur-sm disabled:opacity-60">
+        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : art ? <RefreshCw className="h-3 w-3" /> : <ImagePlus className="h-3 w-3" />}
+        {busy ? '正在画…' : art ? '重画' : 'AI 画插画'}
+      </button>
+    )}
+  </div>
+);
 
 const Bar: React.FC<{ value: number; tone: 'stamina' | 'stress' | 'stat' | 'shame'; className?: string }> = ({ value, tone, className = 'w-12' }) => {
   const color = tone === 'stamina'
@@ -71,7 +118,7 @@ const courseCheckText = (state: TavernRpgState, entry: CourseAvailability) => {
 
 // ─── 顶部状态条 ────────────────────────────────────────────────────────────────
 
-export const TavernRpgHud: React.FC<{ state: TavernRpgState; onOpen: () => void }> = ({ state, onOpen }) => {
+export const TavernRpgHud: React.FC<{ state: TavernRpgState; art?: string; onOpen: () => void }> = ({ state, art, onOpen }) => {
   const location = getLocation(state, state.currentId);
   return (
     <div className="relative z-10 w-full px-3 pb-0.5">
@@ -81,8 +128,12 @@ export const TavernRpgHud: React.FC<{ state: TavernRpgState; onOpen: () => void 
         aria-label="打开训练日程"
         className="liquid-glass flex w-full items-center gap-2.5 rounded-2xl px-3 py-1.5 text-left text-[10px] text-slate-700"
       >
-        <span className="flex max-w-[6.5rem] shrink-0 items-center gap-1 font-bold text-slate-800">
-          <span aria-hidden>{location ? RPG_KIND_META[location.kind].icon : '📍'}</span>
+        <span className="flex max-w-[7rem] shrink-0 items-center gap-1.5 font-bold text-slate-800">
+          {art ? (
+            <img src={art} alt="" className="h-5 w-7 shrink-0 rounded-md object-cover" />
+          ) : location ? (
+            <RpgIcon name={KIND_ICONS[location.kind]} className="h-3.5 w-3.5 shrink-0 text-pink-500" />
+          ) : null}
           <span className="truncate">{location?.name ?? '未知'}</span>
         </span>
         <span className="flex shrink-0 items-center gap-1" title={`你的体力 ${state.stamina}/100`}>
@@ -143,7 +194,7 @@ export const TavernRpgChoices: React.FC<{
       })}
       {courses.map((entry) => (
         <button key={entry.course.id} type="button" disabled={disabled} onClick={() => onAction({ type: 'course', courseId: entry.course.id })} className={`${chip} border-violet-200 bg-violet-50/90 text-violet-800`}>
-          <BookOpen className="h-3 w-3" />{entry.course.name}
+          <RpgIcon name={courseIcon(entry.course.id)} className="h-3.5 w-3.5" />{entry.course.name}
           {planned.has(entry.course.id) && <span className="rounded-full bg-violet-200/70 px-1 text-[8.5px]">课表</span>}
           <span className="font-medium opacity-80">{courseCheckText(state, entry)}</span>
         </button>
@@ -177,7 +228,7 @@ export const TavernRpgChoices: React.FC<{
 const CELL = 78;
 const PAD = 46;
 
-const RpgMap: React.FC<{ state: TavernRpgState; selectedId: string; onSelect: (id: string) => void }> = ({ state, selectedId, onSelect }) => {
+const RpgMap: React.FC<{ state: TavernRpgState; art: Record<string, string>; selectedId: string; onSelect: (id: string) => void }> = ({ state, art, selectedId, onSelect }) => {
   const visible = state.locations.filter((loc) => loc.discovered);
   const reachableIds = new Set(getReachableLocations(state).map((loc) => loc.id));
   const xs = visible.map((loc) => loc.x);
@@ -192,6 +243,12 @@ const RpgMap: React.FC<{ state: TavernRpgState; selectedId: string; onSelect: (i
   return (
     <div className="overflow-auto rounded-2xl border border-pink-100 bg-[radial-gradient(circle_at_1px_1px,rgba(190,24,93,0.08)_1px,transparent_0)] [background-size:16px_16px]" data-allow-scroll>
       <svg role="img" aria-label="日程地图" viewBox={`0 0 ${width} ${height}`} width={Math.max(width, 280)} height={height} className="mx-auto block max-w-none">
+        <defs>
+          {visible.filter((loc) => art[loc.id]).map((loc) => {
+            const { cx, cy } = pos(loc);
+            return <clipPath key={loc.id} id={`rpg-node-${loc.id}`}><circle cx={cx} cy={cy} r={18} /></clipPath>;
+          })}
+        </defs>
         {state.edges.map(([a, b]) => {
           const from = byId.get(a);
           const to = byId.get(b);
@@ -221,7 +278,13 @@ const RpgMap: React.FC<{ state: TavernRpgState; selectedId: string; onSelect: (i
               <circle cx={cx} cy={cy} r={20} fill={current ? 'var(--brand, #db2777)' : '#ffffff'}
                 stroke={selected ? '#7c3aed' : reachable ? 'var(--brand, #db2777)' : 'rgba(100,116,139,0.45)'}
                 strokeWidth={selected ? 3 : 2} strokeDasharray={reachable && !current ? '3 3' : undefined} />
-              <text x={cx} y={cy + 6} textAnchor="middle" fontSize={17}>{RPG_KIND_META[loc.kind].icon}</text>
+              {art[loc.id] ? (
+                <image href={art[loc.id]} x={cx - 18} y={cy - 18} width={36} height={36} preserveAspectRatio="xMidYMid slice" clipPath={`url(#rpg-node-${loc.id})`} />
+              ) : (
+                <g transform={`translate(${cx - 11} ${cy - 11}) scale(${22 / 512})`}>
+                  <path d={RPG_ICON_PATHS[KIND_ICONS[loc.kind]]} fill={current ? '#ffffff' : 'var(--brand, #db2777)'} />
+                </g>
+              )}
               {loc.services.length > 0 && <circle cx={cx + 15} cy={cy - 15} r={4} fill="#f59e0b" stroke="#fff" strokeWidth={1.5} />}
               {!open && <text x={cx - 16} y={cy - 12} fontSize={11}>🌙</text>}
               <text x={cx} y={cy + 34} textAnchor="middle" fontSize={11} fontWeight={700} fill="var(--ink, #1f2937)">{loc.name}</text>
@@ -322,8 +385,13 @@ const QuestCard: React.FC<{ quest: RpgQuest; stats: RpgTraineeStats }> = ({ ques
   );
 };
 
-const ReportCard: React.FC<{ report: RpgDailyReport }> = ({ report }) => (
-  <div className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-3 text-[10.5px] text-slate-700">
+const reportMood = (report: RpgDailyReport): TavernEmotionKey =>
+  report.violations > 0 || report.failed > report.passed ? 'angry' : report.planTotal > 0 && report.planDone === report.planTotal ? 'smug' : 'smile';
+
+const ReportCard: React.FC<{ report: RpgDailyReport; portrait?: RpgPortrait }> = ({ report, portrait }) => (
+  <div className="flex gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/40 p-3 text-[10.5px] text-slate-700">
+    {portrait && <TrainerPortrait portrait={portrait} mood={reportMood(report)} />}
+    <div className="min-w-0 flex-1">
     <p className="mb-1 flex items-center justify-between text-[11.5px] font-black text-slate-800">
       <span>第 {report.day} 天日报</span>
       <span className={report.points >= 0 ? 'text-emerald-600' : 'text-rose-600'}>积分 {signed(report.points)}</span>
@@ -333,6 +401,7 @@ const ReportCard: React.FC<{ report: RpgDailyReport }> = ({ report }) => (
     {Object.keys(report.deltas).length > 0 && (
       <p className="mt-0.5 text-violet-700">{Object.entries(report.deltas).map(([key, value]) => `${RPG_STAT_LABELS[key as RpgStatKey]} ${signed(value!)}`).join('　')}</p>
     )}
+    </div>
   </div>
 );
 
@@ -342,6 +411,12 @@ export type RpgPanelTab = 'map' | 'today' | 'status' | 'rules' | 'log' | 'settin
 
 export interface TavernRpgPanelProps {
   state: TavernRpgState | null;
+  portrait: RpgPortrait;
+  art: Record<string, string>;
+  artBusyId: string | null;
+  artAuto: boolean;
+  onGenerateArt: (locationId: string) => void;
+  onToggleArtAuto: (enabled: boolean) => void;
   charName: string;
   userName: string;
   busy: boolean;
@@ -357,7 +432,8 @@ export interface TavernRpgPanelProps {
 }
 
 export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
-  state, charName, userName, busy, emsCeiling, initialTab = 'map', onStart, onAction, onAddRule, onRemoveRule, onEnd, onUpdateHardware, onClose,
+  state, portrait, art, artBusyId, artAuto, onGenerateArt, onToggleArtAuto,
+  charName, userName, busy, emsCeiling, initialTab = 'map', onStart, onAction, onAddRule, onRemoveRule, onEnd, onUpdateHardware, onClose,
 }) => {
   const [tab, setTab] = useState<RpgPanelTab>(initialTab);
   const [selectedId, setSelectedId] = useState(state?.currentId ?? '');
@@ -393,7 +469,9 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   const courseButton = (entry: CourseAvailability) => (
     <div key={entry.course.id} className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${entry.available ? 'border-violet-100 bg-white' : 'border-slate-100 bg-slate-50'}`}>
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1 text-[11.5px] font-bold text-slate-800">{!entry.available && <Lock className="h-3 w-3 text-slate-400" />}{entry.course.name}</span>
+        <span className="flex items-center gap-1 text-[11.5px] font-bold text-slate-800">
+          {entry.available ? <RpgIcon name={courseIcon(entry.course.id)} className="h-4 w-4 text-violet-500" /> : <Lock className="h-3 w-3 text-slate-400" />}{entry.course.name}
+        </span>
         <span className="block text-[9.5px] text-slate-500">{entry.course.description}</span>
         <span className="block text-[9.5px] text-violet-600">
           {state && courseCheckText(state, entry)} · 体力 {signed(-entry.course.stamina)} · 压力 {signed(entry.course.stress)}{entry.course.points ? ` · 成功 +${entry.course.points} 积分` : ''}
@@ -410,9 +488,12 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
       <div role="dialog" aria-modal="true" aria-label="训练日程" onClick={(event) => event.stopPropagation()}
         className="flex max-h-[88vh] w-full max-w-md flex-col rounded-t-3xl border border-pink-200 bg-white shadow-2xl sm:rounded-3xl">
         <div className="flex shrink-0 items-center justify-between border-b border-pink-100 px-4 py-3">
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <TrainerPortrait portrait={portrait} mood={state && state.stress >= RPG_HIGH_STRESS ? 'sad' : 'neutral'} className="h-10 w-10" />
+            <div className="min-w-0">
             <h3 className="flex items-center gap-1.5 text-[13px] font-black text-slate-800"><CalendarDays className="h-4 w-4 text-pink-500" />{state ? state.worldName : '训练日程'}</h3>
             {state && <p className="text-[10px] text-slate-500">{dayLabel(state)} · {RPG_PERIOD_LABELS[state.period]} · {STAGES[state.stage]?.name} · 积分 {state.points}</p>}
+            </div>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭" className="rounded-full p-1.5 text-slate-500 hover:bg-pink-50"><X className="h-4 w-4" /></button>
         </div>
@@ -432,7 +513,10 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" data-allow-scroll>
               {state.ending && (
                 <div className="space-y-2 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-pink-50 p-3">
-                  <p className="flex items-center gap-1.5 text-[13px] font-black text-amber-800"><Trophy className="h-4 w-4" />结局：{state.ending.title}</p>
+                  <div className="flex items-center gap-3">
+                    <TrainerPortrait portrait={portrait} mood="smile" className="h-14 w-14" />
+                    <p className="flex items-center gap-1.5 text-[13px] font-black text-amber-800"><RpgIcon name="trophy" className="h-5 w-5" />结局：{state.ending.title}</p>
+                  </div>
                   <p className="text-[11px] leading-5 text-slate-700">{state.ending.summary}</p>
                   <div className="flex gap-2">
                     <button type="button" disabled={busy} onClick={() => act({ type: 'renew' })} className="flex-1 rounded-xl bg-amber-500 px-3 py-1.5 text-[11px] font-black text-white disabled:opacity-50">续约 30 天</button>
@@ -446,12 +530,13 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
 
               {tab === 'map' && (
                 <>
-                  <RpgMap state={state} selectedId={selected?.id ?? ''} onSelect={setSelectedId} />
+                  <RpgMap state={state} art={art} selectedId={selected?.id ?? ''} onSelect={setSelectedId} />
                   {selected && (
                     <div className="space-y-2 rounded-2xl border border-pink-100 bg-white p-3">
+                      <LocationBanner location={selected} art={art[selected.id]} busy={artBusyId === selected.id} onGenerate={artBusyId && artBusyId !== selected.id ? undefined : () => onGenerateArt(selected.id)} />
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="text-[13px] font-black text-slate-800">{RPG_KIND_META[selected.kind].icon} {selected.name}</p>
+                          <p className="flex items-center gap-1 text-[13px] font-black text-slate-800"><RpgIcon name={KIND_ICONS[selected.kind]} className="h-4 w-4 text-pink-500" />{selected.name}</p>
                           <p className="text-[10px] text-slate-500">
                             {RPG_KIND_META[selected.kind].label}
                             {selected.services.length ? ` · 可${selected.services.map((service) => RPG_SERVICE_LABELS[service]).join('、')}` : ''}
@@ -484,6 +569,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                         <div className="space-y-1.5">
                           {selected.catalog.map((item) => (
                             <div key={item.name} className="flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50/50 px-3 py-1.5">
+                              <RpgIcon name={itemIcon(item.name)} className="h-6 w-6 shrink-0 text-amber-500" />
                               <span className="min-w-0 flex-1">
                                 <span className="block text-[11px] font-bold text-slate-800">{item.name}</span>
                                 <span className="block text-[9.5px] text-slate-500">{item.note}</span>
@@ -504,6 +590,9 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
 
               {tab === 'today' && (
                 <>
+                  {getLocation(state, state.currentId) && (
+                    <LocationBanner location={getLocation(state, state.currentId)!} art={art[state.currentId]} busy={artBusyId === state.currentId} className="aspect-[21/9]" />
+                  )}
                   <div className="rounded-2xl border border-violet-100 bg-violet-50/30 p-3">
                     <p className="mb-2 text-[11.5px] font-black text-slate-800">今日课表 · 第 {state.day} 天</p>
                     {state.plan.length ? (
@@ -514,8 +603,8 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                           return (
                             <li key={`${slot.courseId}-${index}`} className={`flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[11px] ${now ? 'bg-white shadow-sm ring-1 ring-violet-200' : ''}`}>
                               {slot.done ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" /> : <Circle className="h-4 w-4 shrink-0 text-slate-300" />}
-                              <span className="w-8 shrink-0 text-[10px] text-slate-500">{RPG_PERIOD_LABELS[slot.period]}</span>
-                              <span className={`min-w-0 flex-1 font-bold ${slot.done ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{course?.name}</span>
+                              <span className="flex w-11 shrink-0 items-center gap-0.5 text-[10px] text-slate-500"><RpgIcon name={PERIOD_ICONS[slot.period]} className="h-3.5 w-3.5 text-amber-500" />{RPG_PERIOD_LABELS[slot.period]}</span>
+                              <span className={`flex min-w-0 flex-1 items-center gap-1 font-bold ${slot.done ? 'text-slate-400 line-through' : 'text-slate-800'}`}><RpgIcon name={courseIcon(slot.courseId)} className="h-3.5 w-3.5 shrink-0 text-violet-500" />{course?.name}</span>
                               <span className="shrink-0 text-[9.5px] text-slate-500">{course?.kinds.map((kind) => RPG_KIND_META[kind].label).slice(0, 2).join('/')}</span>
                             </li>
                           );
@@ -528,7 +617,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                     <p className="mb-1.5 text-[11px] font-black text-slate-700">这里可以进行的课程</p>
                     {coursesHere.length ? <div className="space-y-1.5">{coursesHere.map(courseButton)}</div> : <p className="text-[11px] text-slate-500">这里没有课程，去训练室、客厅或卧室看看。</p>}
                   </div>
-                  {state.reports.length > 0 && <ReportCard report={state.reports[state.reports.length - 1]} />}
+                  {state.reports.length > 0 && <ReportCard report={state.reports[state.reports.length - 1]} portrait={portrait} />}
                   <div>
                     <p className="mb-1.5 text-[11px] font-black text-slate-700">目标</p>
                     {state.quests.length ? <div className="space-y-2">{state.quests.map((quest) => <QuestCard key={quest.title} quest={quest} stats={state.trainee} />)}</div> : <p className="text-[11px] text-slate-500">还没有目标。</p>}
@@ -539,8 +628,8 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
               {tab === 'status' && (
                 <>
                   <div className="rounded-2xl border border-pink-100 bg-gradient-to-br from-pink-50 to-violet-50 p-3">
-                    <p className="text-[10px] text-slate-500">训练阶段</p>
-                    <p className="text-[15px] font-black text-slate-800">{STAGES[state.stage]?.name}</p>
+                    <p className="text-[10px] text-slate-500">训练阶段 {state.stage + 1}/{STAGES.length}</p>
+                    <p className="flex items-center gap-1.5 text-[15px] font-black text-slate-800"><RpgIcon name={STAGE_ICONS[state.stage] ?? 'crown'} className="h-5 w-5 text-pink-500" />{STAGES[state.stage]?.name}</p>
                     <p className="text-[10px] text-slate-600">{STAGES[state.stage]?.hint}</p>
                     {state.traits.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
@@ -548,7 +637,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                           const trait = getTrait(id);
                           if (!trait) return null;
                           const mods = Object.entries(trait.modifiers).map(([key, value]) => `${RPG_CHECK_LABELS[key as RpgStatKey]}${signed(value!)}`).join(' ');
-                          return <span key={id} title={trait.description} className="rounded-full border border-violet-200 bg-white px-2 py-0.5 text-[10px] font-bold text-violet-700">🏅 {trait.name} <span className="font-normal text-violet-500">{mods}</span></span>;
+                          return <span key={id} title={trait.description} className="flex items-center gap-1 rounded-full border border-violet-200 bg-white px-2 py-0.5 text-[10px] font-bold text-violet-700"><RpgIcon name={traitIcon(id)} className="h-3.5 w-3.5" />{trait.name} <span className="font-normal text-violet-500">{mods}</span></span>;
                         })}
                       </div>
                     )}
@@ -593,7 +682,8 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                       <div className="space-y-1.5">
                         {state.inventory.map((item) => (
                           <div key={item.name} className="flex items-center justify-between gap-2 rounded-xl border border-pink-100 bg-white px-3 py-1.5">
-                            <span className="text-[11px] text-slate-700">
+                            <span className="flex items-center gap-1.5 text-[11px] text-slate-700">
+                              <RpgIcon name={itemIcon(item.name)} className="h-5 w-5 shrink-0 text-pink-400" />
                               {item.name}{item.qty > 1 ? ` ×${item.qty}` : ''}
                               {item.effect?.stamina ? <span className="ml-1 text-[9.5px] text-emerald-600">体力 +{item.effect.stamina}</span> : null}
                               {item.effect?.stress ? <span className="ml-1 text-[9.5px] text-sky-600">压力 -{item.effect.stress}</span> : null}
@@ -652,7 +742,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                   {state.reports.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[11px] font-black text-slate-700">日报</p>
-                      {state.reports.slice().reverse().slice(0, 7).map((report) => <ReportCard key={report.day} report={report} />)}
+                      {state.reports.slice().reverse().slice(0, 7).map((report) => <ReportCard key={report.day} report={report} portrait={portrait} />)}
                     </div>
                   )}
                   <div>
@@ -696,6 +786,13 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                       <input type="checkbox" checked={state.hardware.rewardOnSuccess} onChange={(event) => onUpdateHardware({ ...state.hardware, rewardOnSuccess: event.target.checked })} className="h-4 w-4 accent-pink-500" />
                     </label>
                   </div>
+                  <label className="flex items-center justify-between gap-3 rounded-2xl border border-pink-100 bg-white p-3">
+                    <span>
+                      <span className="flex items-center gap-1 text-[11.5px] font-bold text-slate-800"><ImagePlus className="h-3.5 w-3.5 text-pink-500" />进入新地点时自动画插画</span>
+                      <span className="block text-[10px] text-slate-500">用酒馆设置里的生图模型，每个地点画一次，会消耗生图额度。也可以在地图上手动画。</span>
+                    </span>
+                    <input type="checkbox" checked={artAuto} onChange={(event) => onToggleArtAuto(event.target.checked)} className="h-4 w-4 accent-pink-500" />
+                  </label>
                   {confirmEnd ? (
                     <div className="flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3">
                       <span className="flex-1 text-[11px] text-rose-800">结束后地图、训练属性、家规和背包都会清空，聊天记录保留。</span>
@@ -705,6 +802,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                   ) : (
                     <button type="button" onClick={() => setConfirmEnd(true)} className="w-full rounded-2xl border border-rose-200 px-3 py-2 text-[11px] font-bold text-rose-600 hover:bg-rose-50">结束这段训练</button>
                   )}
+                  <p className="text-center text-[9.5px] text-slate-400">{RPG_ICON_CREDIT}</p>
                 </>
               )}
             </div>
