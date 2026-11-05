@@ -5,6 +5,8 @@
  * 内部硬件指令、多重状态标签，并消除大模型在局部生成或无缝续写中的循环重复内容。
  */
 
+import { stripRpgTags } from './tavernRpg';
+
 // 匹配成对的思考/推理块（支持多重尖括号，如 <<think>...</think>>，HTML实体 &lt;think&gt;，以及特殊模型令牌）
 const THINK_BLOCK_REGEX = /<+(?:think|thought|reasoning)(?:_never_used_[a-zA-Z0-9_-]*)?[^>]*>[\s\S]*?<\/*\s*(?:think|thought|reasoning)(?:_never_used_[a-zA-Z0-9_-]*)?>*/gi;
 const ESCAPED_THINK_BLOCK_REGEX = /&lt;+(?:think|thought|reasoning)[^&]*&gt;[\s\S]*?&lt;\/*\s*(?:think|thought|reasoning)[^&]*&gt;/gi;
@@ -84,6 +86,7 @@ export function stripInternalControlTags(raw: string, isStreaming = false): stri
   text = text.replace(HARDWARE_MARKER_REGEX, '');
   text = text.replace(STATUS_BLOCK_REGEX, '');
   text = text.replace(UNCLOSED_STATUS_BLOCK_REGEX, '');
+  text = stripRpgTags(text, isStreaming);
 
   return text;
 }
