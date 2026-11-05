@@ -287,13 +287,13 @@ export const TavernMessageContent: React.FC<TavernMessageContentProps> = React.m
           )
         ));
 
-        // 1. 肢体动作 (*...* / **...** / _..._)：高辨识度天幕湛蓝 (text-[#0284c7] / text-sky-700，font-semibold italic)
+        // 1. 肢体动作 (*...* / **...** / _..._)：低饱和钢蓝斜体，作为次要叙述退后一层
         if (token.type === 'action') {
           const actionClass = isUser
             ? 'italic font-medium text-sky-100'
             : isDark
             ? 'italic font-semibold text-sky-300 tracking-wide'
-            : 'italic font-semibold text-[#0284c7] tracking-wide';
+            : 'italic text-[#4a6f94]';
           return (
             <span key={tokenIdx} className={actionClass}>
               {renderedText}
@@ -301,13 +301,13 @@ export const TavernMessageContent: React.FC<TavernMessageContentProps> = React.m
           );
         }
 
-        // 2. 心理活动/神态细节 (（...） / (...))：深邃紫罗兰星云色 (text-[#7e22ce] / text-purple-700，font-semibold italic)
+        // 2. 心理活动/神态细节 (（...） / (...))：柔和紫罗兰斜体
         if (token.type === 'thought') {
           const thoughtClass = isUser
             ? 'italic font-medium text-purple-200'
             : isDark
             ? 'italic font-semibold text-purple-300 tracking-wide'
-            : 'italic font-semibold text-[#7e22ce] tracking-wide';
+            : 'italic text-[#7c55a8]';
           return (
             <span key={tokenIdx} className={thoughtClass}>
               {renderedText}
@@ -315,13 +315,13 @@ export const TavernMessageContent: React.FC<TavernMessageContentProps> = React.m
           );
         }
 
-        // 3. 对话台词 (“...” / "..." / 「...」)：晶莹明艳瑰丽玫红 (text-[#e11d48] font-bold)，契合白粉唯美色调且与动作湛蓝形成极高对比度！
+        // 3. 对话台词 (“...” / "..." / 「...」)：深玫红半粗，是阅读主体；不加字距、不用粗体，长段落读起来不累
         if (token.type === 'dialogue') {
           const dialogueClass = isUser
             ? 'font-bold text-rose-200 tracking-wide'
             : isDark
             ? 'font-bold text-rose-300 tracking-wide'
-            : 'font-bold text-[#e11d48] tracking-wide';
+            : 'font-semibold text-[#c0265f]';
           return (
             <span key={tokenIdx} className={dialogueClass}>
               {renderedText}
@@ -329,13 +329,13 @@ export const TavernMessageContent: React.FC<TavernMessageContentProps> = React.m
           );
         }
 
-        // 4. 场景状态/判定提示 (【...】 / [...])：高对比度清透翡翠绿 (text-[#047857])
+        // 4. 场景状态/判定提示 (【...】 / [...])：沉稳墨绿
         if (token.type === 'bracket') {
           const bracketClass = isUser
             ? 'font-mono font-medium text-emerald-200 text-[0.95em]'
             : isDark
             ? 'font-mono font-semibold text-emerald-400 text-[0.95em]'
-            : 'font-mono font-semibold text-[#047857] text-[0.95em]';
+            : 'font-medium text-[#2f7a62] text-[0.95em]';
           return (
             <span key={tokenIdx} className={bracketClass}>
               {renderedText}

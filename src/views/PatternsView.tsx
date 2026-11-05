@@ -1,3 +1,4 @@
+import { SegmentedTabs } from '../components/SegmentedTabs';
 import React, { useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import { DeviceManager } from '../core/deviceManager';
@@ -51,38 +52,16 @@ export const PatternsView: React.FC = () => {
   return (
     <div className="max-w-md mx-auto px-3.5 py-4 pb-28 space-y-4">
       {/* 顶部三大设备模式切换 */}
-      <div className="flex items-center gap-1.5 p-1.5 bg-white/95 rounded-2xl border border-pink-100/90 shadow-[0_2px_10px_rgba(233,104,146,0.05)] backdrop-blur-md">
-        <button
-          onClick={() => setDeviceTab('toy')}
-          className={`flex-1 py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
-            deviceTab === 'toy'
-              ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm font-black'
-              : 'text-slate-600 hover:text-pink-600 hover:bg-pink-50/50'
-          }`}
-        >
-          <Waves className="w-3.5 h-3.5" /> 飞机杯 ({toyPatterns.length})
-        </button>
-        <button
-          onClick={() => setDeviceTab('ems')}
-          className={`flex-1 py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
-            deviceTab === 'ems'
-              ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-sm font-black'
-              : 'text-slate-600 hover:text-amber-600 hover:bg-amber-50/50'
-          }`}
-        >
-          <Zap className="w-3.5 h-3.5" /> 电击波形 ({emsWaves.length})
-        </button>
-        <button
-          onClick={() => setDeviceTab('enema')}
-          className={`flex-1 py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
-            deviceTab === 'enema'
-              ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-sm font-black'
-              : 'text-slate-600 hover:text-emerald-600 hover:bg-emerald-50/50'
-          }`}
-        >
-          <Shield className="w-3.5 h-3.5" /> 灌肠流程 ({enemaPatterns.length})
-        </button>
-      </div>
+      <SegmentedTabs
+        ariaLabel="模式类别"
+        value={deviceTab}
+        onChange={setDeviceTab}
+        items={[
+          { id: 'toy', label: `飞机杯 ${toyPatterns.length}`, icon: Waves },
+          { id: 'ems', label: `电击波形 ${emsWaves.length}`, icon: Zap },
+          { id: 'enema', label: `灌肠流程 ${enemaPatterns.length}`, icon: Shield },
+        ]}
+      />
 
       {(contractState.isActive || actionError) && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-3.5 py-2.5 text-xs text-amber-800 font-medium shadow-xs">

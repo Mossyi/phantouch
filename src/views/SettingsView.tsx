@@ -4,6 +4,8 @@ import { DataManagementPanel } from '../components/DataManagementPanel';
 import { ModelCapabilityPanel } from '../components/ModelCapabilityPanel';
 import { ModelProfilesPanel } from '../components/ModelProfilesPanel';
 import { ThemePicker } from '../components/ThemePicker';
+import { SegmentedTabs } from '../components/SegmentedTabs';
+import { AudioLines, Heart, Settings2 } from 'lucide-react';
 import { BuildInfoPanel } from '../components/BuildInfoPanel';
 import { AppDiagnosticsPanel } from '../components/AppDiagnosticsPanel';
 import { TavernMessageContent } from '../components/tavern/TavernMessageContent';
@@ -305,26 +307,18 @@ export const SettingsView: React.FC = () => {
 
   return (
     <div className="max-w-md mx-auto px-3.5 py-4 pb-10 space-y-4">
-      {/* 优雅的一体化子标签导航 (消除原本重复的巨型 SETTINGS 设置中心卡片) */}
-      <div className="frosted-feather-glass sticky top-0 z-20 flex items-center p-1 rounded-2xl shadow-xs">
-        {([
-          ['sponsor', '💖 赞助'],
-          ['ai', 'AI 人工智能'],
-          ['voice', '语音'],
-          ['general', '通用'],
-        ] as const).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setActiveSection(id)}
-            className={`flex-1 py-1.5 px-0.5 rounded-xl text-[10.5px] font-black transition text-center truncate ${
-              activeSection === id ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm font-black' : 'text-slate-600 hover:text-pink-600 hover:bg-white/60'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* 设置分区：与顶部导航同一套分段样式；不吸顶，避免滚动时盖住上方的「系统设置 / 设备连接 / 成就殿堂」 */}
+      <SegmentedTabs
+        ariaLabel="设置分区"
+        value={activeSection}
+        onChange={setActiveSection}
+        items={[
+          { id: 'sponsor', label: '赞助', icon: Heart },
+          { id: 'ai', label: 'AI 模型', icon: Sparkles },
+          { id: 'voice', label: '语音', icon: AudioLines },
+          { id: 'general', label: '通用', icon: Settings2 },
+        ]}
+      />
 
       {/* ================= 赞助支持页面 ================= */}
       {activeSection === 'sponsor' && <SponsorPanel onGoToAi={() => setActiveSection('ai')} />}
