@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Buffer } from 'node:buffer';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { Buffer } from 'node:buffer';
 import { build } from 'esbuild';
 
 /** 调教者课题：接受、拒绝、暂停和界限只改虚构进度，旧档迁移不能丢天数和属性。 */
@@ -167,3 +168,41 @@ test('暂停后仍可交代；安抚课不完成练习；轻一天只持续一�
   assert.equal(next.state.guidance.easeToday, true);
   assert.match(m.courseRefusal(next.state.guidance, { name: '耐力保持', stamina: 20 }, 'bedroom'), /改轻/);
 });
+
+test('练习必须在课题地点完成；连点报到不重复加信任；坏地点会改到真实地点', async () => {
+  const m = await load();
+  const strict = m.createRpgState('contract', names, { trainerStyle: 'strict' });
+  assert.equal(strict.guidance.assignment.placeName, '客厅');
+  const away = m.runCourse(strict, 'recite', () => 0.99);
+  assert.equal(practice(away.state).status, 'todo');
+  assert.equal(away.state.guidance.trust, strict.guidance.trust);
+  assert.notEqual(away.state.trainee.obedience, strict.trainee.obedience);
+
+  const living = strict.locations.find((loc) => loc.name === '客厅');
+  const there = { ...strict, currentId: living.id };
+  const did = m.runCourse(there, 'recite', () => 0.99);
+  assert.equal(practice(did.state).status, 'done');
+  assert.equal(did.state.guidance.assignment.steps.find((step) => step.id === 'arrive').status, 'done');
+  assert.equal(did.state.guidance.trust, strict.guidance.trust + 3);
+
+  const once = m.applyGuidanceAction(m.createRpgState('contract', names), { type: 'arrive' });
+  const twice = m.applyGuidanceAction(once.state, { type: 'arrive' });
+  assert.ok(twice.error);
+  assert.equal(twice.state.guidance.trust, once.state.guidance.trust);
+
+  const broken = m.normalizeRpgState({
+    ...strict,
+    guidance: { ...strict.guidance, assignment: { ...strict.guidance.assignment, placeId: 'missing-room', placeName: '不存在的房间' } },
+  });
+  assert.ok(broken.locations.some((loc) => loc.id === broken.guidance.assignment.placeId));
+  assert.notEqual(broken.guidance.assignment.placeId, 'missing-room');
+  assert.equal(broken.day, strict.day);
+  assert.equal(broken.points, strict.points);
+});
+
+test('课题发出的玩家消息不会命中硬件世界书', () => {
+  const child = fileURLToPath(new URL('./tavern-rpg-guidance-lore-child.mjs', import.meta.url));
+  const result = spawnSync(process.execPath, [child], { encoding: 'utf8', timeout: 20000 });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+

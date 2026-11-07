@@ -280,7 +280,8 @@ const assignmentOrRebuild = (
   const steps = Array.isArray(raw.steps) ? raw.steps : [];
   const ids: TrainingStepId[] = ['arrive', 'practice', 'report'];
   const valid = ids.every((id) => steps.some((item) => item && item.id === id && typeof item.title === 'string'));
-  if (!valid || typeof raw.placeId !== 'string' || typeof raw.placeName !== 'string') {
+  const usableIds = new Set(locations.filter((loc) => loc && loc.id && loc.discovered !== false).map((loc) => loc.id));
+  if (!valid || typeof raw.placeId !== 'string' || typeof raw.placeName !== 'string' || (usableIds.size > 0 && !usableIds.has(raw.placeId))) {
     return buildAssignment(locations, style, day, noPublic, lastReport);
   }
   return {
@@ -338,10 +339,14 @@ export const noteArrival = <T extends GuidanceCarrier>(state: T): T => {
 
 export const notePractice = <T extends GuidanceCarrier>(state: T, success: boolean, course?: { relief?: boolean }): T => {
   if (!state.guidance?.assignment || state.guidance.boundaries.paused || course?.relief) return state;
+  if (state.currentId !== state.guidance.assignment.placeId) return state;
   const practice = step(state.guidance, 'practice');
   if (!practice || practice.status !== 'todo') return state;
   const delta = success ? 3 : 1;
-  const guidance = remember(withTrust(replaceStep(state.guidance, 'practice', 'done'), delta), state.day, success ? '完成了今天的练习' : '练习没有达标，但做了');
+  const arrived = step(state.guidance, 'arrive')?.status === 'todo'
+    ? replaceStep(state.guidance, 'arrive', 'done')
+    : state.guidance;
+  const guidance = remember(withTrust(replaceStep(arrived, 'practice', 'done'), delta), state.day, success ? '完成了今天的练习' : '练习没有达标，但做了');
   return pushLog({ ...state, guidance }, `课题：练习已记录（信任 +${delta}）`, success ? 'good' : 'info');
 };
 
@@ -355,7 +360,8 @@ export const acknowledgeArrival = <T extends GuidanceCarrier>(state: T): { state
     return unchanged(state, `先去「${place}」。这只是今天的报到地点，不去也不会被记成违规。`);
   }
   const next = noteArrival(state);
-  return { state: next, message: `🧭 训练课题：我已在「${place}」报到，等你安排接下来的练习。我也可以拒绝这项。` };
+  // 不把地点名写进会交给硬件世界书扫描的玩家消息。地点已经在系统状态里。
+  return { state: next, message: '🧭 课题：我已经到指定地点报到，等你安排接下来的练习。这项也可以不做。' };
 };
 
 export const declinePractice = <T extends GuidanceCarrier>(state: T): { state: T; message?: string; error?: string } => {
@@ -375,7 +381,7 @@ export const declinePractice = <T extends GuidanceCarrier>(state: T): { state: T
     guidance,
     pendingEvents: [...state.pendingEvents, '{{user}}拒绝了今天的练习。请用调教者的身份接受，并改成更轻松的安排或改到明天。不要责罚，不要把拒绝写成同意，不要要求任何设备输出。'].slice(-6),
   }, `课题：拒绝了今天的练习（信任 +${delta}，压力 -4，不是违规）`, 'good');
-  return { state: next, message: '🧭 训练课题：这项练习我先不做，请改到以后或换成更轻松的安排。这不是违规。' };
+  return { state: next, message: '🧭 课题：这项练习我先不做，请改到以后或换成更轻松的安排。这不是违规。' };
 };
 
 export const pauseTraining = <T extends GuidanceCarrier>(state: T): { state: T; message?: string; error?: string } => {
@@ -393,7 +399,7 @@ export const pauseTraining = <T extends GuidanceCarrier>(state: T): { state: T; 
     guidance,
     pendingEvents: [...state.pendingEvents, '{{user}}叫停了今天剩下的练习。请停止安排新的练习，可以照顾 TA。不要责罚，不要把暂停写成还在训练。'].slice(-6),
   }, `课题：今天到此为止（信任 +${delta}，压力 -8）`, 'good');
-  return { state: next, message: '🧭 训练课题：今天到此为止，请停止安排新的练习。' };
+  return { state: next, message: '🧭 课题：今天到此为止，请停止安排新的练习。' };
 };
 
 export const setTrainingBoundary = <T extends GuidanceCarrier>(
@@ -430,10 +436,10 @@ export const reportTraining = <T extends GuidanceCarrier>(
   const stressDelta = report === 'care' ? -6 : 0;
   const label = report === 'honest' ? '如实交代了今天' : report === 'polished' ? '把今天说得比较好听' : '请求先被照顾';
   const message = report === 'honest'
-    ? '🧭 训练课题：我按实际发生的情况交代今天。'
+    ? '🧭 课题：我按实际发生的情况交代今天。'
     : report === 'polished'
-      ? '🧭 训练课题：我把今天说得顺利一些。'
-      : '🧭 训练课题：我请求先被照顾，今天的练习可以停在这里。';
+      ? '🧭 课题：我把今天说得顺利一些。'
+      : '🧭 课题：我请求先被照顾，今天的练习可以停在这里。';
   const reported = replaceStep({ ...state.guidance, lastReport: report, easeNext: report === 'care' ? true : state.guidance.easeNext }, 'report', 'done');
   const guidance = remember(withTrust(reported, delta), state.day, label);
   const next = pushLog({

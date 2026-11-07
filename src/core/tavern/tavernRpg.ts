@@ -943,7 +943,7 @@ export const travelTo = (state: TavernRpgState, locationId: string, random: () =
   const { state: next, event } = rollLocationEvent(arrived, random);
   const lines = [`🧭 前往：${target.name}`];
   if (summoned) lines.push('（按调教者的传唤按时报到）');
-  if (arrived !== reported) lines.push(`（按今天的课题在「${target.name}」报到）`);
+  if (arrived !== reported) lines.push('（已按今天的课题报到）');
   if (event) lines.push(`✨ 地点事件：${event.title}`);
   return { state: evaluateProgress(next).state, message: lines.join('\n') };
 };
@@ -1130,7 +1130,7 @@ export const restUntilMorning = (state: TavernRpgState, random: () => number = M
     Object.entries(deltas).map(([key, value]) => `${RPG_STAT_LABELS[key as RpgStatKey]} ${formatSigned(value!)}`).join('、'),
     `积分 ${formatSigned(report.points)}${bonus ? `（含课表奖励 ${bonus}）` : ''}`,
   ].filter(Boolean).join('；');
-  return { state: next, message: `🧭 休息：第 ${finished} 天结束。今日小结：${summary}。第 ${next.day} 天清晨，我的体力已恢复。今天的课题在「${next.guidance.assignment.placeName}」` };
+  return { state: next, message: `🧭 休息：第 ${finished} 天结束。今日小结：${summary}。第 ${next.day} 天清晨，我的体力已恢复。今天的课题已重新安排` };
 };
 
 /** 续约：期限再延长 30 天 */
