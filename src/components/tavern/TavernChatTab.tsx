@@ -170,6 +170,7 @@ import {
   RPG_PERIOD_LABELS,
   STAGES,
   addRule,
+  applyGuidanceAction,
   applyRpgUpdate,
   buildRpgPrompt,
   buyItem,
@@ -2149,7 +2150,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     return { state: next, note };
   };
 
-  const startRpg = (templateId: string, custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number }) => {
+  const startRpg = (templateId: string, custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number; trainerStyle?: 'gentle' | 'strict' | 'observer'; gameMode?: 'normal' | 'hardcore' | 'reversal'; inheritedTraits?: string[]; inheritedPoints?: number }) => {
     const next = createRpgState(templateId, rpgNames(), custom);
     updateRpgState(next);
     setRpgPanelTab(null);
@@ -2173,6 +2174,22 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         });
         return;
       }
+    }
+
+    if (action.type === 'guidance' || action.type === 'boundary') {
+      const guided = applyGuidanceAction(current, action.type === 'boundary'
+        ? { type: 'boundary', key: action.key, value: action.value }
+        : action.verb === 'report'
+          ? { type: 'report', report: action.report }
+          : { type: action.verb });
+      if (guided.error) {
+        showFeatureNotice(guided.error);
+        return;
+      }
+      updateRpgState(guided.state);
+      if (guided.message) void handleSendRef.current?.(guided.message, false);
+      else showFeatureNotice('界限已记下。下一条对话会按这个界限进行，不会因此惩罚你。');
+      return;
     }
 
     let result: RpgActionResult;
@@ -2311,8 +2328,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     }
   };
 
-  const startGeneratedRpg = (world: GeneratedWorld) => {
-    const next = createRpgStateFromTemplate(world.template, rpgNames(), { courses: world.courses, events: world.events });
+  const startGeneratedRpg = (world: GeneratedWorld, custom?: { trainerStyle?: 'gentle' | 'strict' | 'observer' }) => {
+    const next = createRpgStateFromTemplate(world.template, rpgNames(), { courses: world.courses, events: world.events }, custom);
     updateRpgState(next);
     setRpgPanelTab(null);
     const home = next.locations.find((location) => location.id === next.homeId)?.name ?? '住处';

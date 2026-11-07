@@ -179,10 +179,11 @@ test('二周目继承 (New Game+)：特质继承、积分 30% 继承、硬核与
   assert.equal(ngpState.gameMode, 'hardcore');
   assert.equal(ngpState.stamina, 80); // 硬核模式体力上限 80
 
-  // 2. 身份反转模式提示词构建测试
+  // 2. 身份反转不再作为可玩模式：传入后回到普通，提示词仍由调教者安排训练
   const reversalState = m.createRpgState('contract', names, { gameMode: 'reversal' });
-  assert.equal(reversalState.gameMode, 'reversal');
+  assert.equal(reversalState.gameMode, 'normal');
   const prompt = m.buildRpgPrompt(reversalState, names);
-  assert.match(prompt, /身份反转模式/);
+  assert.match(prompt, /调教者/);
+  assert.doesNotMatch(prompt, /身份反转模式/);
   assert.match(prompt, /天气：/);
 });
