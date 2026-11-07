@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { draftKey, loadDraft, writePreference } from '../../core/ui/localPreferences';
 import { highlightMessage, loadMessageBookmarks, toggleMessageBookmark } from '../../core/tavern/messageFinder';
 import { MessageFinderPanel, ArchiveMessageMatches } from './MessageFinderPanel';
@@ -3682,10 +3683,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           <span>{lorebookToast}</span>
         </div>
       )}
-      {featureNotice && (
-        <div className="absolute top-12 left-1/2 z-50 w-max max-w-[88%] -translate-x-1/2 rounded-full border border-pink-200 bg-white/95 px-3.5 py-1.5 text-center text-[10px] font-bold text-pink-700 shadow-xl backdrop-blur-md">
+      {featureNotice && typeof document !== 'undefined' && createPortal(
+        <div className="fixed top-16 left-1/2 z-[10050] w-max max-w-[88%] -translate-x-1/2 rounded-full border border-pink-200 bg-white/95 px-3.5 py-1.5 text-center text-[10px] font-bold text-pink-700 shadow-xl backdrop-blur-md">
           {featureNotice}
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* RPG 属性/好感度状态栏 HUD */}
