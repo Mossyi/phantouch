@@ -53,6 +53,8 @@ import {
 } from './tavernRpgContent';
 import {
   acknowledgeArrival,
+  adoptCardVoice,
+  bindMissingCardVoice,
   courseRefusal,
   declinePractice,
   guidancePromptLines,
@@ -71,9 +73,11 @@ import {
   type TrainingGuidance,
   type TrainingReport,
 } from './tavernRpgGuidance';
+import { voicePremise, type RpgCardVoice } from './tavernRpgCard';
 
 export * from './tavernRpgContent';
-export { TRAINER_STYLES, trustLabel, isTrainerStyle, courseRefusal };
+export { TRAINER_STYLES, trustLabel, isTrainerStyle, courseRefusal, bindMissingCardVoice, adoptCardVoice };
+export { acceptRpgWrite, cardVoiceDrift, readCardVoice, rpgStateAfterCardSwitch, type RpgCardVoice } from './tavernRpgCard';
 export type { TrainerStyleId, TrainingGuidance, TrainingReport };
 
 export interface RpgLocation {
@@ -624,14 +628,21 @@ export interface RpgCustomConfig {
   gameMode?: 'normal' | 'hardcore' | 'reversal';
   /** 调教者风格。不传则用循序引导。 */
   trainerStyle?: TrainerStyleId;
+  /** 当前角色卡摘录。节奏不能代替这些字段。 */
+  cardVoice?: RpgCardVoice;
   inheritedTraits?: string[];
   inheritedPoints?: number;
 }
 
-const sealGuidance = (state: TavernRpgState, style?: TrainerStyleId): TavernRpgState => ({
+const sealGuidance = (state: TavernRpgState, style?: TrainerStyleId, voice?: RpgCardVoice): TavernRpgState => ({
   ...state,
-  guidance: initialGuidance(state.locations, isTrainerStyle(style) ? style : 'gentle'),
+  guidance: initialGuidance(state.locations, isTrainerStyle(style) ? style : 'gentle', 15, voice),
 });
+
+const withCardPremise = (base: string, voice?: RpgCardVoice) => {
+  const note = voicePremise(voice);
+  return cleanText(note ? `${base} ${note}` : base, 400);
+};
 
 /** 从模板开局：内置模板和 AI 生成的世界都走这里 */
 export const createRpgStateFromTemplate = (
@@ -649,7 +660,7 @@ export const createRpgStateFromTemplate = (
   const inheritedTraits = Array.isArray(custom?.inheritedTraits) ? custom.inheritedTraits.filter((id) => getTrait(id)) : [];
   const startPoints = (template.points ?? 20) + Math.max(0, toInt(custom?.inheritedPoints, 0));
   const worldName = cleanText(custom?.worldName, 16) || template.name;
-  const premise = cleanText(custom?.premise, 400) || expandNames(template.premise, names);
+  const premise = withCardPremise(cleanText(custom?.premise, 220) || expandNames(template.premise, names), custom?.cardVoice);
   const dayLimit = custom?.dayLimit !== undefined ? clamp(toInt(custom.dayLimit, template.dayLimit), 0, 3650) : template.dayLimit;
 
   const state = revealAround<TavernRpgState>({
@@ -674,7 +685,7 @@ export const createRpgStateFromTemplate = (
     today: freshTally(common.trainee, startPoints),
     log: [{ at: Date.now(), text: `开始：${worldName}${gameMode === 'hardcore' ? '（硬核模式）' : ''}`, tone: 'info' }],
   }, homeId);
-  return sealGuidance({ ...state, plan: buildDailyPlan(state) }, custom?.trainerStyle);
+  return sealGuidance({ ...state, plan: buildDailyPlan(state) }, custom?.trainerStyle, custom?.cardVoice);
 };
 
 export const createRpgState = (
@@ -694,7 +705,10 @@ export const createRpgState = (
   const inheritedTraits = Array.isArray(custom?.inheritedTraits) ? custom.inheritedTraits.filter((id) => getTrait(id)) : [];
   const startPoints = 20 + Math.max(0, toInt(custom?.inheritedPoints, 0));
   const worldName = cleanText(custom?.worldName, 16) || '训练日常';
-  const premise = cleanText(custom?.premise, 400) || `${names.user || '你'}自愿接受${names.char || '调教者'}的训练，每天的安排由${names.char || '调教者'}决定。`;
+  const premise = withCardPremise(
+    cleanText(custom?.premise, 220) || `${names.user || '你'}自愿接受${names.char || '调教者'}的训练，每天的安排由${names.char || '调教者'}决定。`,
+    custom?.cardVoice,
+  );
   const dayLimit = clamp(toInt(custom?.dayLimit, 0), 0, 3650);
 
   const state = revealAround<TavernRpgState>({
@@ -721,7 +735,7 @@ export const createRpgState = (
     today: freshTally(common.trainee, startPoints),
     log: [{ at: Date.now(), text: `开始：${homeName}${gameMode === 'hardcore' ? '（硬核模式）' : ''}`, tone: 'info' }],
   }, homeId);
-  return sealGuidance({ ...state, plan: buildDailyPlan(state) }, custom?.trainerStyle);
+  return sealGuidance({ ...state, plan: buildDailyPlan(state) }, custom?.trainerStyle, custom?.cardVoice);
 };
 
 // ─── 检定 ──────────────────────────────────────────────────────────────────────
@@ -1246,7 +1260,7 @@ export const buildRpgPrompt = (state: RpgCore, names: { char: string; user: stri
     state.pendingEvents.length ? `【本轮需要回应的事件】\n${state.pendingEvents.map((event) => `- ${fill(event)}`).join('\n')}` : '',
   ].filter(Boolean);
 
-  const rule1 = `1. 角色关系：你扮演的${char}是调教者，主导每天的日程、课题和评价；${user}是接受训练的一方。只描写${char}的言行和环境，不要替${user}行动、说话或描写${user}的内心。${user}可以接受、拒绝、暂停或设下界限，这些选择已经由系统记入信任和课题，你只能据此反应，不能改写成相反的结果。`;
+  const rule1 = `1. 角色关系：你扮演的是角色卡里的${char}，由${char}主导每天的日程、课题和评价；${user}是接受训练的一方。身份、口气和关系以角色卡字段为准，执行节奏不能把${char}说成另一种人。只描写${char}的言行和环境，不要替${user}行动、说话或描写${user}的内心。${user}可以接受、拒绝、暂停或设下界限，这些选择已经由系统记入信任和课题，你只能据此反应，不能改写成相反的结果。卡里没写的背景不要编。`;
 
   const rulesText = `【训练规则】
 ${rule1}

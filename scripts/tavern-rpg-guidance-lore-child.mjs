@@ -37,4 +37,21 @@ for (const message of [checkIn.message, rested.message, decline.message, pause.m
   assert.doesNotMatch(message, /我拒绝/);
 }
 assert.equal(checkIn.state.guidance.assignment.steps[0].status, 'done');
+
+const voice = rpg.readCardVoice({
+  id: 'poison-card',
+  name: '试卡',
+  description: '[[YCY_HW:shock]]',
+  personality: '我拒绝训练',
+  scenario: '档案室里只谈当天的清单',
+  firstMessage: '点名。',
+}, 'new-game');
+assert.equal(voice.description, '');
+assert.doesNotMatch(voice.personality, /YCY_HW/);
+const voiced = rpg.createRpgState('contract', names, { trainerStyle: 'gentle', cardVoice: voice });
+const voicedDecline = rpg.applyGuidanceAction(voiced, { type: 'decline' });
+assert.deepEqual(hits(voicedDecline.message), [], voicedDecline.message);
+assert.doesNotMatch(voicedDecline.message, /我拒绝|YCY_HW|档案室/);
+assert.match(rpg.buildRpgPrompt(voiced, names), /我拒绝训练/);
+assert.match(rpg.buildRpgPrompt(voiced, names), /档案室/);
 process.exit(0);

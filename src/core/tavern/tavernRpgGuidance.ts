@@ -10,6 +10,7 @@
  * - rpg-tracker 的关系记录会进入后续上下文。
  */
 import type { RpgLocationKind } from './tavernRpgContent';
+import { RPG_CARD_FIELD_LABELS, cardVoicePromptLines, normalizeCardVoice, type RpgCardVoice } from './tavernRpgCard';
 
 export type TrainerStyleId = 'gentle' | 'strict' | 'observer';
 export type TrainingStepId = 'arrive' | 'practice' | 'report';
@@ -81,6 +82,8 @@ export interface TrainingGuidance {
   easeToday: boolean;
   /** 明天安排轻一天。由「请求先被照顾」或循序引导下的拒绝写入。 */
   easeNext: boolean;
+  /** 开局时记下的角色卡摘录。旧档没有这个字段。 */
+  voice?: RpgCardVoice;
 }
 
 export interface GuidanceLocation {
@@ -182,32 +185,74 @@ const followUpLine = (style: TrainerStyleId, lastReport: TrainingReport | null) 
   return '';
 };
 
+const clip = (text: string, max: number) => text.replace(/\s+/g, ' ').trim().slice(0, max);
+
+const voiceCue = (voice?: RpgCardVoice) => {
+  if (!voice) return '';
+  const quote = clip(voice.personality || voice.scenario, 18);
+  return quote ? `。${voice.name}：${quote}` : `。${voice.name}没有填写人格和场景`;
+};
+
+const assignmentTitle = (style: TrainerStyleId, echo: string, voice?: RpgCardVoice) => {
+  const pace: Record<TrainerStyleId, string> = {
+    gentle: '先确认你今天愿意走到哪一步',
+    strict: '报到，并完成一项练习',
+    observer: '留下一份今天的记录',
+  };
+  if (!voice) return echo ? `${echo}${pace[style]}` : pace[style];
+  const head = voice.personality
+    ? `${voice.name}：${clip(voice.personality, 24)}`
+    : `${voice.name}安排今天。这张卡没有填写人格`;
+  return clip(echo ? `${head}。${echo}` : head, 80);
+};
+
+const assignmentSteps = (placeName: string, noPublic: boolean, voice?: RpgCardVoice): TrainingStep[] => {
+  const scene = voice?.scenario ? clip(voice.scenario, 28) : '';
+  return [
+    { id: 'arrive', title: '报到', detail: scene ? `报到。场景：${scene}` : `让${voice?.name || '调教者'}在「${placeName}」看到你。`, status: 'todo' },
+    { id: 'practice', title: '练习', detail: scene ? `练习贴着场景：${scene}。也可以拒绝。` : (noPublic ? '在没有旁人的地方做一门课，或者拒绝这项。' : '做一门这里能做的课，或者拒绝这项。'), status: 'todo' },
+    { id: 'report', title: '交代', detail: voice?.speech ? `用${voice.name}的口气收束：${clip(voice.speech, 24)}` : '用一句话收束：说实话、说得好看一些，或请求先被照顾。', status: 'todo' },
+  ];
+};
+
 export const buildAssignment = (
   locations: GuidanceLocation[],
   style: TrainerStyleId,
   day: number,
   noPublic: boolean,
   lastReport: TrainingReport | null,
+  voice?: RpgCardVoice,
 ): TrainingAssignment => {
   const kind = kindForDay(style, day, noPublic);
   const place = pickPlace(locations, kind, noPublic);
   const echo = followUpLine(style, lastReport);
-  const titles: Record<TrainerStyleId, string> = {
-    gentle: '先确认你今天愿意走到哪一步',
-    strict: '报到，并完成一项练习',
-    observer: '留下一份今天的记录',
-  };
   return {
     day,
-    title: echo ? `${echo}${titles[style]}` : titles[style],
+    title: assignmentTitle(style, echo, voice),
     placeId: place.id,
     placeName: place.name,
     placeKind: place.kind,
-    steps: [
-      { id: 'arrive', title: '报到', detail: `让调教者在「${place.name}」看到你。`, status: 'todo' },
-      { id: 'practice', title: '练习', detail: noPublic ? '在没有旁人的地方做一门课，或者拒绝这项。' : '做一门这里能做的课，或者拒绝这项。', status: 'todo' },
-      { id: 'report', title: '交代', detail: '用一句话收束：说实话、说得好看一些，或请求先被照顾。', status: 'todo' },
-    ],
+    steps: assignmentSteps(place.name, noPublic, voice),
+  };
+};
+
+/** 换上当前卡的说法，但保留地点和已经走过的步骤。 */
+export const retitleAssignment = (assignment: TrainingAssignment, guidance: TrainingGuidance, voice: RpgCardVoice): TrainingAssignment => {
+  const fresh = buildAssignment(
+    [{ id: assignment.placeId, name: assignment.placeName, kind: assignment.placeKind }],
+    guidance.style,
+    assignment.day,
+    guidance.boundaries.noPublic,
+    guidance.lastReport,
+    voice,
+  );
+  return {
+    ...assignment,
+    title: fresh.title,
+    steps: assignment.steps.map((item) => {
+      const next = fresh.steps.find((step) => step.id === item.id);
+      return next ? { ...item, detail: next.detail } : item;
+    }),
   };
 };
 
@@ -215,17 +260,22 @@ export const initialGuidance = (
   locations: GuidanceLocation[],
   style: TrainerStyleId = 'gentle',
   trust = 15,
+  voice?: RpgCardVoice,
 ): TrainingGuidance => {
   const safeStyle = isTrainerStyle(style) ? style : 'gentle';
+  const opening = voice
+    ? `${voice.name}开局采用${voice.present.length ? voice.present.map((field) => RPG_CARD_FIELD_LABELS[field]).join('、') : '名字'}。${voice.personality || '没有填写人格。'}`.slice(0, 80)
+    : `${TRAINER_STYLES[safeStyle].name}：${TRAINER_STYLES[safeStyle].blurb}`;
   return {
     style: safeStyle,
     trust: clamp(trust, 0, 100),
     boundaries: { noPublic: false, noEscalation: false, paused: false },
-    assignment: buildAssignment(locations, safeStyle, 1, false, null),
-    memory: [{ day: 1, text: `${TRAINER_STYLES[safeStyle].name}：${TRAINER_STYLES[safeStyle].blurb}` }],
+    assignment: buildAssignment(locations, safeStyle, 1, false, null, voice),
+    memory: [{ day: 1, text: opening }],
     lastReport: null,
     easeToday: false,
     easeNext: false,
+    voice,
   };
 };
 
@@ -242,6 +292,7 @@ export const normalizeGuidance = (
   const style = isTrainerStyle(raw.style) ? raw.style : 'gentle';
   const boundaries = raw.boundaries && typeof raw.boundaries === 'object' ? raw.boundaries : emptyBoundaries();
   const noPublic = boundaries.noPublic === true;
+  const voice = normalizeCardVoice(raw.voice);
   const base: TrainingGuidance = {
     style,
     trust: clamp(Number.isFinite(Number(raw.trust)) ? Number(raw.trust) : trustFallback, 0, 100),
@@ -250,7 +301,8 @@ export const normalizeGuidance = (
       noEscalation: boundaries.noEscalation === true,
       paused: boundaries.paused === true,
     },
-    assignment: assignmentOrRebuild(raw.assignment, locations, style, day, noPublic, raw.lastReport ?? null),
+    assignment: assignmentOrRebuild(raw.assignment, locations, style, day, noPublic, raw.lastReport ?? null, voice),
+    voice,
     memory: Array.isArray(raw.memory)
       ? raw.memory.filter((entry) => entry && typeof entry.text === 'string').slice(-MEMORY_CAP).map((entry) => ({
         day: Math.max(1, Math.round(Number(entry.day) || day || 1)),
@@ -275,6 +327,7 @@ const assignmentOrRebuild = (
   day: number,
   noPublic: boolean,
   lastReport: TrainingReport | null,
+  voice?: RpgCardVoice,
 ): TrainingAssignment => {
   const raw = value && typeof value === 'object' ? value as Partial<TrainingAssignment> : {};
   const steps = Array.isArray(raw.steps) ? raw.steps : [];
@@ -282,7 +335,7 @@ const assignmentOrRebuild = (
   const valid = ids.every((id) => steps.some((item) => item && item.id === id && typeof item.title === 'string'));
   const usableIds = new Set(locations.filter((loc) => loc && loc.id && loc.discovered !== false).map((loc) => loc.id));
   if (!valid || typeof raw.placeId !== 'string' || typeof raw.placeName !== 'string' || (usableIds.size > 0 && !usableIds.has(raw.placeId))) {
-    return buildAssignment(locations, style, day, noPublic, lastReport);
+    return buildAssignment(locations, style, day, noPublic, lastReport, voice);
   }
   return {
     day: Math.max(1, Math.round(Number(raw.day) || day || 1)),
@@ -346,7 +399,7 @@ export const notePractice = <T extends GuidanceCarrier>(state: T, success: boole
   const arrived = step(state.guidance, 'arrive')?.status === 'todo'
     ? replaceStep(state.guidance, 'arrive', 'done')
     : state.guidance;
-  const guidance = remember(withTrust(replaceStep(arrived, 'practice', 'done'), delta), state.day, success ? '完成了今天的练习' : '练习没有达标，但做了');
+  const guidance = remember(withTrust(replaceStep(arrived, 'practice', 'done'), delta), state.day, `${success ? '完成了今天的练习' : '练习没有达标，但做了'}${voiceCue(state.guidance.voice)}`);
   return pushLog({ ...state, guidance }, `课题：练习已记录（信任 +${delta}）`, success ? 'good' : 'info');
 };
 
@@ -374,7 +427,7 @@ export const declinePractice = <T extends GuidanceCarrier>(state: T): { state: T
   const guidance = remember(withTrust({
     ...declined,
     easeNext: state.guidance.style === 'gentle' ? true : declined.easeNext,
-  }, delta), state.day, '拒绝了今天的练习，已改期');
+  }, delta), state.day, `拒绝了今天的练习，已改期${voiceCue(state.guidance.voice)}`);
   const next = pushLog({
     ...state,
     stress: clamp(state.stress - 4, 0, 100),
@@ -392,7 +445,7 @@ export const pauseTraining = <T extends GuidanceCarrier>(state: T): { state: T; 
   const guidance = remember(withTrust({
     ...stopped,
     boundaries: { ...stopped.boundaries, paused: true },
-  }, delta), state.day, '今天到此为止');
+  }, delta), state.day, `今天到此为止${voiceCue(state.guidance.voice)}`);
   const next = pushLog({
     ...state,
     stress: clamp(state.stress - 8, 0, 100),
@@ -416,7 +469,7 @@ export const setTrainingBoundary = <T extends GuidanceCarrier>(
     ? (on ? '设下界限：不在有别人的地方练习' : '取消了「不在人前练习」')
     : (on ? '设下界限：今天不要再加码' : '取消了「今天不要加码」');
   if (key === 'noPublic' && on && PUBLIC_KINDS.has(guidance.assignment.placeKind) && step(guidance, 'arrive')?.status === 'todo') {
-    guidance = { ...guidance, assignment: buildAssignment(state.locations, guidance.style, state.day, true, guidance.lastReport) };
+    guidance = { ...guidance, assignment: buildAssignment(state.locations, guidance.style, state.day, true, guidance.lastReport, guidance.voice) };
   }
   guidance = remember(guidance, state.day, text);
   const next = pushLog({ ...state, guidance }, `界限：${text}`, 'info');
@@ -441,7 +494,7 @@ export const reportTraining = <T extends GuidanceCarrier>(
       ? '🧭 课题：我把今天说得顺利一些。'
       : '🧭 课题：我请求先被照顾，今天的练习可以停在这里。';
   const reported = replaceStep({ ...state.guidance, lastReport: report, easeNext: report === 'care' ? true : state.guidance.easeNext }, 'report', 'done');
-  const guidance = remember(withTrust(reported, delta), state.day, label);
+  const guidance = remember(withTrust(reported, delta), state.day, `${label}${voiceCue(state.guidance.voice)}`);
   const next = pushLog({
     ...state,
     stress: clamp(state.stress + stressDelta, 0, 100),
@@ -453,7 +506,7 @@ export const reportTraining = <T extends GuidanceCarrier>(
 
 export const refreshAssignment = <T extends GuidanceCarrier>(state: T): T => {
   if (!state.guidance?.assignment) {
-    return { ...state, guidance: initialGuidance(state.locations, 'gentle', state.guidance?.trust) };
+    return { ...state, guidance: initialGuidance(state.locations, state.guidance?.style ?? 'gentle', state.guidance?.trust, state.guidance?.voice) };
   }
   const report = step(state.guidance, 'report');
   const finishedDay = Math.max(1, state.day - 1);
@@ -477,9 +530,10 @@ export const refreshAssignment = <T extends GuidanceCarrier>(state: T): T => {
     easeNext: false,
     easeToday,
     boundaries: { ...guidance.boundaries, paused: false, noEscalation: false },
-    assignment: buildAssignment(next.locations, guidance.style, state.day, guidance.boundaries.noPublic, echo),
+    assignment: buildAssignment(next.locations, guidance.style, state.day, guidance.boundaries.noPublic, echo, guidance.voice),
   };
-  return pushLog({ ...next, guidance }, `新的一天：${TRAINER_STYLES[guidance.style].name}安排了课题「${guidance.assignment.placeName}」${easeToday ? '（今天改轻）' : ''}`, 'info');
+  const who = guidance.voice?.name || TRAINER_STYLES[guidance.style].name;
+  return pushLog({ ...next, guidance }, `新的一天：${who}安排了课题「${guidance.assignment.placeName}」${easeToday ? '（今天改轻）' : ''}`, 'info');
 };
 
 export const guidancePromptLines = (guidance: TrainingGuidance) => {
@@ -492,12 +546,36 @@ export const guidancePromptLines = (guidance: TrainingGuidance) => {
     guidance.easeToday ? '今天是轻一天，消耗很大的练习先不做' : '',
   ].filter(Boolean);
   const memory = guidance.memory.slice(-4).map((entry) => `第${entry.day}天 ${entry.text}`).join('；');
+  const identity = guidance.voice
+    ? cardVoicePromptLines(guidance.voice)
+    : ['这局没有记下角色卡字段。不要假装读过人格、背景或场景，也不要把训练节奏说成角色的性格。'];
   return [
-    `调教风格：${style.name}。${style.blurb}`,
-    `信任：${guidance.trust}/100（${trustLabel(guidance.trust)}）。信任只影响调教者怎么安排和评价，不触发任何设备。`,
+    ...identity,
+    `执行节奏（只决定松紧，不覆盖身份）：${style.name}。${style.blurb}`,
+    `信任：${guidance.trust}/100（${trustLabel(guidance.trust)}）。信任只影响安排和评价，不触发任何设备。`,
     `今日课题：${guidance.assignment.title}。报到地点「${guidance.assignment.placeName}」。进度：${steps}。`,
     limits.length ? `玩家已经生效的界限：${limits.join('、')}。` : '',
     memory ? `调教者记得：${memory}。` : '',
-    '【界限】拒绝、暂停和上面列出的界限已经生效。不得把拒绝写成同意，不得把暂停写成还在训练，不得要求越过界限，不得因此记过或要求惩罚。你仍然是安排训练的一方，玩家是接受训练的一方。',
+    '【界限】拒绝、暂停和上面列出的界限已经生效。不得把拒绝写成同意，不得把暂停写成还在训练，不得要求越过界限，不得因此记过或要求惩罚。你仍然是安排训练的一方，玩家是接受训练的一方。评价和次日安排要沿用角色卡记下的人格与场景；卡上没写的不要编。',
   ].filter(Boolean);
+};
+
+export const bindMissingCardVoice = <T extends GuidanceCarrier>(state: T, voice: RpgCardVoice): T => {
+  if (state.guidance.voice?.cardId) return state;
+  if (voice.cardId && state.guidance.voice && state.guidance.voice.cardId && state.guidance.voice.cardId !== voice.cardId) return state;
+  return { ...state, guidance: { ...state.guidance, voice: { ...voice, source: 'continue' } } };
+};
+
+export const adoptCardVoice = <T extends GuidanceCarrier>(state: T, voice: RpgCardVoice): T => {
+  const current = state.guidance.voice;
+  if (current?.cardId && voice.cardId && current.cardId !== voice.cardId) return state;
+  const nextVoice: RpgCardVoice = { ...voice, source: current ? 'card-edit' : 'continue' };
+  return {
+    ...state,
+    guidance: {
+      ...state.guidance,
+      voice: nextVoice,
+      assignment: retitleAssignment(state.guidance.assignment, state.guidance, nextVoice),
+    },
+  };
 };

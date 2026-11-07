@@ -171,8 +171,11 @@ import {
   RPG_PERIOD_LABELS,
   STAGES,
   addRule,
+  acceptRpgWrite,
+  adoptCardVoice,
   applyGuidanceAction,
   applyRpgUpdate,
+  bindMissingCardVoice,
   buildRpgPrompt,
   buyItem,
   consumePardon,
@@ -190,6 +193,8 @@ import {
   itemUseAction,
   loadRpgState,
   parseRpgUpdate,
+  readCardVoice,
+  rpgStateAfterCardSwitch,
   recordCheck,
   rememberSnapshot,
   removeRule,
@@ -495,6 +500,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const characterStatsRef = useRef<TavernCharacterStats>(characterStats);
   const [rpgState, setRpgState] = useState<TavernRpgState | null>(() => loadRpgState(activeCard.id));
   const rpgStateRef = useRef<TavernRpgState | null>(rpgState);
+  const rpgOwnerRef = useRef(activeCard.id);
   const [rpgPanelTab, setRpgPanelTab] = useState<RpgPanelTab | null>(null);
   const [activeSensorChallenge, setActiveSensorChallenge] = useState<{
     courseId: string;
@@ -781,12 +787,17 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     };
   }, [showMemoryModal, messages, activeCard, isSeseBoosted, memoryState, authorNoteState, generationConfig, generationConfigVersion, characterStats]);
 
-  // 当切换角色时重新加载对应会话
+  // 当切换角色时重新加载对应会话。日程进度按卡读取，不能把上一张卡的内存写进新卡。
   useEffect(() => {
+    const nextCardId = activeCard.id;
+    const previousCardId = rpgOwnerRef.current;
+    activeCardIdRef.current = nextCardId;
     ttsSequenceRef.current += 1;
     TTSManager.getInstance().stop();
     STTManager.getInstance().stopListening();
     requestControllerRef.current?.abort();
+    rpgWorldControllerRef.current?.abort();
+    rpgArtControllerRef.current?.abort();
     suggestionControllerRef.current?.abort();
     aiImageControllerRef.current?.abort();
     memorySummaryControllerRef.current?.abort();
@@ -830,6 +841,21 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     setAuthorNoteState(nextAuthorNote);
     setAuthorNoteDraft(nextAuthorNote);
     activeCardIdRef.current = activeCard.id;
+    const switchedRpg = rpgStateAfterCardSwitch({
+      previousCardId,
+      nextCardId,
+      inMemory: rpgStateRef.current,
+      load: loadRpgState,
+    });
+    let nextRpg = switchedRpg.state;
+    if (nextRpg && !nextRpg.guidance?.voice) {
+      nextRpg = bindMissingCardVoice(nextRpg, readCardVoice(activeCard, 'continue'));
+      saveRpgState(nextCardId, nextRpg);
+    }
+    rpgOwnerRef.current = nextCardId;
+    rpgStateRef.current = nextRpg;
+    setRpgState(nextRpg);
+    setRpgSlots(listRpgSlots(nextCardId));
     skipNextSaveRef.current = true;
     const nextStats = loadCharacterStats(activeCard.id);
     setCharacterStats(nextStats);
@@ -866,6 +892,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       setMessages((current) => current === initialMessages ? repositoryMessages : current);
     });
   }, [activeCard.id]);
+
+  useEffect(() => () => {
+    requestControllerRef.current?.abort();
+    rpgWorldControllerRef.current?.abort();
+    rpgArtControllerRef.current?.abort();
+  }, []);
 
   // 当消息变更时自动保存
   useEffect(() => {
@@ -1745,6 +1777,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
 
   const regenerateAssistantMessage = async (message: ChatMsg) => {
     if (isLoading || regeneratingMessageId || message.role !== 'assistant') return;
+    const requestCardId = activeCard.id;
     const targetIndex = messages.findIndex((candidate) => candidate.id === message.id);
     if (targetIndex < 1 || !messages.slice(0, targetIndex).some((candidate) => candidate.role === 'user')) {
       showFeatureNotice('开场白不能单独重新生成，请先发送一条消息');
@@ -1770,7 +1803,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         rpgBefore ? {
           systemAddon: buildRpgPrompt(rpgBefore, rpgNames()),
           onRawReply: (rawReply) => {
-            if (!controller.signal.aborted) commitRpgTurn(rpgBefore, rawReply, message.id);
+            if (!controller.signal.aborted && acceptRpgWrite(requestCardId, activeCardIdRef.current)) commitRpgTurn(rpgBefore, rawReply, message.id);
           },
         } : undefined,
       )).trim();
@@ -2077,10 +2110,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   // ─── 训练日程 ────────────────────────────────────────────────────────────────
   const rpgActive = rpgEnabled && !isGroupScene && Boolean(rpgState);
   const rpgSaveWarnedRef = useRef(false);
-  const updateRpgState = (next: TavernRpgState | null) => {
+  const updateRpgState = (next: TavernRpgState | null, ownerCardId = activeCardIdRef.current) => {
+    if (!acceptRpgWrite(ownerCardId, activeCardIdRef.current)) return false;
     rpgStateRef.current = next;
     setRpgState(next);
-    const saved = saveRpgState(activeCard.id, next);
+    rpgOwnerRef.current = ownerCardId;
+    const saved = saveRpgState(ownerCardId, next);
     if (!saved && !rpgSaveWarnedRef.current) {
       rpgSaveWarnedRef.current = true;
       showFeatureNotice('⚠️ 本地存储满了，训练进度没能保存。请删掉一些存档或聊天存档');
@@ -2152,7 +2187,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   const startRpg = (templateId: string, custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number; trainerStyle?: 'gentle' | 'strict' | 'observer'; gameMode?: 'normal' | 'hardcore' | 'reversal'; inheritedTraits?: string[]; inheritedPoints?: number }) => {
-    const next = createRpgState(templateId, rpgNames(), custom);
+    const next = createRpgState(templateId, rpgNames(), { ...custom, cardVoice: readCardVoice(activeCard, 'new-game') });
     updateRpgState(next);
     setRpgPanelTab(null);
     const home = next.locations.find((location) => location.id === next.homeId)?.name ?? '住处';
@@ -2318,9 +2353,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     rpgWorldControllerRef.current?.abort();
     const controller = new AbortController();
     rpgWorldControllerRef.current = controller;
+    const requestCardId = activeCard.id;
     try {
       const request = buildWorldGenRequest(input, rpgNames(), { description: activeCard.description, personality: activeCard.personality, scenario: activeCard.scenario });
       const raw = await runTavernTextModel(WORLD_GEN_SYSTEM, request, controller.signal, 'rpg_world');
+      if (!acceptRpgWrite(requestCardId, activeCardIdRef.current)) throw new Error('角色已经切换，这次生成不作数。');
       const world = parseGeneratedWorld(raw, input);
       if (!world) throw new Error('AI 返回的内容没法解析成世界，请重试，或者换一个更擅长输出 JSON 的模型');
       return world;
@@ -2330,7 +2367,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   const startGeneratedRpg = (world: GeneratedWorld, custom?: { trainerStyle?: 'gentle' | 'strict' | 'observer' }) => {
-    const next = createRpgStateFromTemplate(world.template, rpgNames(), { courses: world.courses, events: world.events }, custom);
+    const next = createRpgStateFromTemplate(world.template, rpgNames(), { courses: world.courses, events: world.events }, { ...custom, cardVoice: readCardVoice(activeCard, 'new-game') });
     updateRpgState(next);
     setRpgPanelTab(null);
     const home = next.locations.find((location) => location.id === next.homeId)?.name ?? '住处';
@@ -2341,6 +2378,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const exploreRpg = async () => {
     const current = rpgStateRef.current;
     if (!current || rpgExploring) return;
+    const requestCardId = activeCard.id;
     rpgWorldControllerRef.current?.abort();
     const controller = new AbortController();
     rpgWorldControllerRef.current = controller;
@@ -2348,7 +2386,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     try {
       const raw = await runTavernTextModel(WORLD_GEN_SYSTEM, buildExploreRequest(current, rpgNames()), controller.signal, 'rpg_explore');
       const latest = rpgStateRef.current;
-      if (controller.signal.aborted || !latest) return;
+      if (controller.signal.aborted || !latest || !acceptRpgWrite(requestCardId, activeCardIdRef.current)) return;
       const result = discoverLocations(latest, parseExploredLocations(raw), 2);
       if (!result.added.length) {
         showFeatureNotice('这次没有探索到新地点，可以再试一次');
@@ -2682,7 +2720,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       const rawModelReply = stripThinkingArtifacts(parsedAiActions.cleanedReply || '', false) || '（角色暂时没有说话。）';
       const assistantMessageId = createMessageId('msg');
       const parsedStatus = parseAndApplyStatusUpdate(rawModelReply, characterStatsRef.current, rawText);
-      if (rpgTurnState && rpgStateRef.current) {
+      if (rpgTurnState && rpgStateRef.current && acceptRpgWrite(requestCardId, activeCardIdRef.current)) {
         commitRpgTurn(rpgStateRef.current, rawModelReply, assistantMessageId);
       }
       if (parsedStatus.updated) {
@@ -3639,6 +3677,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           }}
           charName={rpgCharName}
           userName={store.getTavernModelConfig().userName || '你'}
+          cardVoice={readCardVoice(activeCard, 'new-game')}
+          onAdoptCardVoice={() => {
+            const current = rpgStateRef.current;
+            if (!current || !acceptRpgWrite(activeCard.id, activeCardIdRef.current)) return;
+            updateRpgState(adoptCardVoice(current, readCardVoice(activeCard, 'card-edit')));
+          }}
           busy={isLoading}
           emsCeiling={rpgEmsCeiling}
           initialTab={rpgPanelTab}
