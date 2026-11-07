@@ -28,6 +28,9 @@ import {
   activeSummon,
   checkModifier,
   createRpgStateFromTemplate,
+  TRAINER_STYLES,
+  trustLabel,
+  type TrainerStyleId,
   findCourse,
   getCoursesHere,
   getLocation,
@@ -61,7 +64,72 @@ export type RpgSystemAction =
   | { type: 'work' }
   | { type: 'rest' }
   | { type: 'use'; item: string }
-  | { type: 'renew' };
+  | { type: 'renew' }
+  | { type: 'guidance'; verb: 'arrive' | 'decline' | 'pause' }
+  | { type: 'guidance'; verb: 'report'; report: 'honest' | 'polished' | 'care' }
+  | { type: 'boundary'; key: 'noPublic' | 'noEscalation'; value: boolean };
+
+const TrainingDesk: React.FC<{
+  state: TavernRpgState;
+  busy: boolean;
+  onAction: (action: RpgSystemAction) => void;
+}> = ({ state, busy, onAction }) => {
+  const guidance = state.guidance;
+  if (!guidance) return null;
+  const style = TRAINER_STYLES[guidance.style] ?? TRAINER_STYLES.gentle;
+  const here = state.currentId === guidance.assignment.placeId;
+  const practice = guidance.assignment.steps.find((item) => item.id === 'practice');
+  const report = guidance.assignment.steps.find((item) => item.id === 'report');
+  const canReport = practice?.status !== 'todo' && report?.status === 'todo';
+  const chip = 'rounded-xl border px-2.5 py-2 text-left text-[10.5px] font-bold leading-4 disabled:opacity-40';
+  return (
+    <section className="space-y-2 rounded-2xl border border-violet-200 bg-violet-50/40 p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[12px] font-black text-slate-800">{style.name}</p>
+          <p className="text-[10px] leading-4 text-slate-500">{style.blurb}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-violet-700">信任 {guidance.trust} · {trustLabel(guidance.trust)}</span>
+      </div>
+      <p className="text-[12px] font-black text-slate-800">{guidance.assignment.title}</p>
+      <ol className="space-y-1">
+        {guidance.assignment.steps.map((item) => (
+          <li key={item.id} className="flex items-start gap-1.5 text-[10.5px] text-slate-600">
+            <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${item.status === 'done' ? 'bg-emerald-100 text-emerald-700' : item.status === 'declined' ? 'bg-amber-100 text-amber-800' : 'bg-white text-slate-500'}`}>
+              {item.status === 'done' ? '完成' : item.status === 'declined' ? '已拒绝' : '未做'}
+            </span>
+            <span><span className="font-bold text-slate-800">{item.title}</span> · {item.detail}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="grid grid-cols-2 gap-1.5">
+        <button type="button" disabled={busy || guidance.assignment.steps[0]?.status !== 'todo'} onClick={() => onAction({ type: 'guidance', verb: 'arrive' })} className={`${chip} border-violet-200 bg-white text-violet-800`}>
+          {here ? '我到了，请看见我' : `先去「${guidance.assignment.placeName}」`}
+        </button>
+        <button type="button" disabled={busy || guidance.boundaries.paused || practice?.status !== 'todo'} onClick={() => onAction({ type: 'guidance', verb: 'decline' })} className={`${chip} border-amber-200 bg-white text-amber-800`}>
+          拒绝这项练习
+        </button>
+        <button type="button" disabled={busy || guidance.boundaries.paused} onClick={() => onAction({ type: 'guidance', verb: 'pause' })} className={`${chip} col-span-2 border-slate-200 bg-white text-slate-700`}>
+          {guidance.boundaries.paused ? '今天已暂停，休息到明天会重新安排' : '今天到此为止'}
+        </button>
+        <button type="button" disabled={busy || !canReport} onClick={() => onAction({ type: 'guidance', verb: 'report', report: 'honest' })} className={`${chip} border-emerald-200 bg-white text-emerald-800`}>如实交代</button>
+        <button type="button" disabled={busy || !canReport} onClick={() => onAction({ type: 'guidance', verb: 'report', report: 'polished' })} className={`${chip} border-slate-200 bg-white text-slate-700`}>说得顺一些</button>
+        <button type="button" disabled={busy || !canReport} onClick={() => onAction({ type: 'guidance', verb: 'report', report: 'care' })} className={`${chip} col-span-2 border-sky-200 bg-white text-sky-800`}>请求先被照顾</button>
+      </div>
+      <div className="flex flex-col gap-1 text-[10.5px] text-slate-600">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={guidance.boundaries.noPublic} onChange={(event) => onAction({ type: 'boundary', key: 'noPublic', value: event.target.checked })} className="accent-violet-600" />
+          不在有别人的地方练习
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={guidance.boundaries.noEscalation} onChange={(event) => onAction({ type: 'boundary', key: 'noEscalation', value: event.target.checked })} className="accent-violet-600" />
+          今天不要再加码
+        </label>
+      </div>
+      <p className="text-[9.5px] leading-4 text-slate-500">拒绝、暂停和界限只改变信任和后续安排，不会记成违规，也不会启动任何设备。结束整局仍在「设置」里。</p>
+    </section>
+  );
+};
 
 const dayLabel = (state: TavernRpgState) => (state.dayLimit ? `第${state.day}/${state.dayLimit}天` : `第${state.day}天`);
 const signed = (value: number) => (value > 0 ? `+${value}` : `${value}`);
@@ -366,9 +434,10 @@ const RpgSetup: React.FC<{
   userName: string;
   onStart: (templateId: string, custom?: RpgCustomConfig) => void;
   onGenerateWorld: (input: WorldGenInput) => Promise<GeneratedWorld>;
-  onStartGenerated: (world: GeneratedWorld) => void;
+  onStartGenerated: (world: GeneratedWorld, custom?: { trainerStyle?: TrainerStyleId }) => void;
 }> = ({ charName, userName, onStart, onGenerateWorld, onStartGenerated }) => {
   const [templateId, setTemplateId] = useState('ai');
+  const [trainerStyle, setTrainerStyle] = useState<TrainerStyleId>('gentle');
   const [custom, setCustom] = useState({ worldName: '', premise: '', startName: '', dayLimit: 30 });
   const [aiInput, setAiInput] = useState<WorldGenInput>({ theme: '', details: '', dayLimit: 30 });
   const [world, setWorld] = useState<GeneratedWorld | null>(null);
@@ -394,8 +463,16 @@ const RpgSetup: React.FC<{
   return (
     <div className="space-y-3">
       <p className="text-[11px] leading-5 text-slate-600">
-        {charName}是调教者，{userName}是被调教的一方。每天早上系统会排好课表，{charName}按课表和地点下达指令；课程由系统掷骰结算，AI 只负责描写。
+        {charName}是调教者，{userName}是接受训练的一方。每天有一项由{charName}布置的课题；你可以报到、完成、拒绝或叫停。拒绝不会被记成违规。
       </p>
+      <div className="grid grid-cols-1 gap-1.5">
+        {(Object.values(TRAINER_STYLES)).map((style) => (
+          <button key={style.id} type="button" onClick={() => setTrainerStyle(style.id)} className={`rounded-2xl border px-3 py-2 text-left ${trainerStyle === style.id ? 'border-violet-400 bg-violet-50' : 'border-pink-100 bg-white'}`}>
+            <span className="block text-[12px] font-black text-slate-800">{style.name}</span>
+            <span className="mt-0.5 block text-[10px] leading-4 text-slate-500">{style.blurb}</span>
+          </button>
+        ))}
+      </div>
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={() => setTemplateId('ai')} className={`col-span-2 ${option('ai')}`}>
           <span className="flex items-center gap-1 text-[12px] font-black text-slate-800"><Wand2 className="h-3.5 w-3.5 text-violet-500" />AI 生成世界</span>
@@ -456,7 +533,7 @@ const RpgSetup: React.FC<{
         </div>
       )}
       <button type="button" disabled={isAi && (!world || generating)}
-        onClick={() => (isAi ? world && onStartGenerated(world) : onStart(templateId, isCustom ? custom : undefined))}
+        onClick={() => (isAi ? world && onStartGenerated(world, { trainerStyle }) : onStart(templateId, { ...(isCustom ? custom : {}), trainerStyle }))}
         className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-pink-500 to-rose-500 px-4 py-2.5 text-[12px] font-black text-white shadow-sm disabled:opacity-40">
         <CalendarDays className="h-4 w-4" />{isAi ? (world ? '就用这个世界，开始第一天' : '先生成世界') : '开始第一天'}
       </button>
@@ -526,7 +603,7 @@ export interface TavernRpgPanelProps {
   onGenerateArt: (locationId: string) => void;
   onToggleArtAuto: (enabled: boolean) => void;
   onGenerateWorld: (input: WorldGenInput) => Promise<GeneratedWorld>;
-  onStartGenerated: (world: GeneratedWorld) => void;
+  onStartGenerated: (world: GeneratedWorld, custom?: { trainerStyle?: TrainerStyleId }) => void;
   onExplore: () => void;
   exploring: boolean;
   slots: RpgSaveSlot[];
@@ -566,7 +643,8 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   const [viewCertificateEnding, setViewCertificateEnding] = useState<RpgEnding | null>(null);
   const [showNewGamePlusModal, setShowNewGamePlusModal] = useState(false);
   const [ngpInheritedTrait, setNgpInheritedTrait] = useState<string>('');
-  const [ngpGameMode, setNgpGameMode] = useState<'normal' | 'hardcore' | 'reversal'>('normal');
+  const [ngpGameMode, setNgpGameMode] = useState<'normal' | 'hardcore'>('normal');
+  const [ngpStyle, setNgpStyle] = useState<TrainerStyleId>('gentle');
   const [unlockedEndings, setUnlockedEndings] = useState<string[]>(() => getUnlockedEndings(charName));
 
   React.useEffect(() => {
@@ -681,6 +759,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
               ))}
             </div>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" data-allow-scroll>
+              <TrainingDesk state={state} busy={busy} onAction={onAction} />
               {state.ending && (
                 <div className="space-y-2 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-pink-50 p-3">
                   <div className="flex items-center gap-3">
@@ -773,10 +852,8 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-xs font-black text-slate-800">今日天气 · {RPG_WEATHER_META[state.weather ?? 'clear']?.label}</span>
-                          {state.gameMode !== 'normal' && (
-                            <span className="rounded-full bg-violet-100 text-violet-800 px-1.5 py-0.5 text-[9px] font-bold">
-                              {state.gameMode === 'hardcore' ? '⚡ 硬核模式' : '🔄 身份反转模式'}
-                            </span>
+                          {state.gameMode === 'hardcore' && (
+                            <span className="rounded-full bg-violet-100 text-violet-800 px-1.5 py-0.5 text-[9px] font-bold">硬核模式</span>
                           )}
                         </div>
                         <p className="text-[10px] text-slate-600 mt-0.5 leading-relaxed">{RPG_WEATHER_META[state.weather ?? 'clear']?.description}</p>
@@ -1332,20 +1409,20 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                       <span className="block text-[9.5px] text-slate-500">80 体力上限，规训更严格，通关可获 S 阶结局</span>
                     </div>
                   </label>
-                  <label className="flex items-center gap-2 rounded-xl border p-2 cursor-pointer border-slate-200 hover:bg-slate-50">
-                    <input
-                      type="radio"
-                      name="ngpMode"
-                      value="reversal"
-                      checked={ngpGameMode === 'reversal'}
-                      onChange={() => setNgpGameMode('reversal')}
-                      className="accent-violet-600"
-                    />
-                    <div>
-                      <span className="font-bold text-slate-800">🔄 身份反转模式</span>
-                      <span className="block text-[9.5px] text-slate-500">身份倒转！你成为主导导师，AI 角色成为顺从学徒</span>
-                    </div>
-                  </label>
+                </div>
+              </div>
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">调教者风格（仍然由对方安排你）：</label>
+                <div className="space-y-1.5">
+                  {Object.values(TRAINER_STYLES).map((style) => (
+                    <label key={style.id} className="flex items-center gap-2 rounded-xl border border-slate-200 p-2">
+                      <input type="radio" name="ngpStyle" checked={ngpStyle === style.id} onChange={() => setNgpStyle(style.id)} className="accent-violet-600" />
+                      <span>
+                        <span className="font-bold text-slate-800">{style.name}</span>
+                        <span className="block text-[9.5px] text-slate-500">{style.blurb}</span>
+                      </span>
+                    </label>
+                  ))}
                 </div>
               </div>
             </div>
@@ -1366,6 +1443,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                     inheritedTraits: ngpInheritedTrait ? [ngpInheritedTrait] : [],
                     inheritedPoints: Math.floor(state.points * 0.3),
                     gameMode: ngpGameMode,
+                    trainerStyle: ngpStyle,
                   });
                 }}
                 className="flex-1 rounded-xl bg-violet-600 hover:bg-violet-500 text-white py-2 text-[11px] font-black shadow-md shadow-violet-500/20"

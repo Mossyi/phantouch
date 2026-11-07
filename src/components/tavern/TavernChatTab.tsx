@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { draftKey, loadDraft, writePreference } from '../../core/ui/localPreferences';
 import { highlightMessage, loadMessageBookmarks, toggleMessageBookmark } from '../../core/tavern/messageFinder';
 import { MessageFinderPanel, ArchiveMessageMatches } from './MessageFinderPanel';
@@ -170,6 +171,7 @@ import {
   RPG_PERIOD_LABELS,
   STAGES,
   addRule,
+  applyGuidanceAction,
   applyRpgUpdate,
   buildRpgPrompt,
   buyItem,
@@ -2149,7 +2151,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     return { state: next, note };
   };
 
-  const startRpg = (templateId: string, custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number }) => {
+  const startRpg = (templateId: string, custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number; trainerStyle?: 'gentle' | 'strict' | 'observer'; gameMode?: 'normal' | 'hardcore' | 'reversal'; inheritedTraits?: string[]; inheritedPoints?: number }) => {
     const next = createRpgState(templateId, rpgNames(), custom);
     updateRpgState(next);
     setRpgPanelTab(null);
@@ -2173,6 +2175,22 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         });
         return;
       }
+    }
+
+    if (action.type === 'guidance' || action.type === 'boundary') {
+      const guided = applyGuidanceAction(current, action.type === 'boundary'
+        ? { type: 'boundary', key: action.key, value: action.value }
+        : action.verb === 'report'
+          ? { type: 'report', report: action.report }
+          : { type: action.verb });
+      if (guided.error) {
+        showFeatureNotice(guided.error);
+        return;
+      }
+      updateRpgState(guided.state);
+      if (guided.message) void handleSendRef.current?.(guided.message, false);
+      else showFeatureNotice('界限已记下。下一条对话会按这个界限进行，不会因此记过。');
+      return;
     }
 
     let result: RpgActionResult;
@@ -2311,8 +2329,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     }
   };
 
-  const startGeneratedRpg = (world: GeneratedWorld) => {
-    const next = createRpgStateFromTemplate(world.template, rpgNames(), { courses: world.courses, events: world.events });
+  const startGeneratedRpg = (world: GeneratedWorld, custom?: { trainerStyle?: 'gentle' | 'strict' | 'observer' }) => {
+    const next = createRpgStateFromTemplate(world.template, rpgNames(), { courses: world.courses, events: world.events }, custom);
     updateRpgState(next);
     setRpgPanelTab(null);
     const home = next.locations.find((location) => location.id === next.homeId)?.name ?? '住处';
@@ -3665,10 +3683,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           <span>{lorebookToast}</span>
         </div>
       )}
-      {featureNotice && (
-        <div className="absolute top-12 left-1/2 z-50 w-max max-w-[88%] -translate-x-1/2 rounded-full border border-pink-200 bg-white/95 px-3.5 py-1.5 text-center text-[10px] font-bold text-pink-700 shadow-xl backdrop-blur-md">
+      {featureNotice && typeof document !== 'undefined' && createPortal(
+        <div className="fixed top-16 left-1/2 z-[10050] w-max max-w-[88%] -translate-x-1/2 rounded-full border border-pink-200 bg-white/95 px-3.5 py-1.5 text-center text-[10px] font-bold text-pink-700 shadow-xl backdrop-blur-md">
           {featureNotice}
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* RPG 属性/好感度状态栏 HUD */}

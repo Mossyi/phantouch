@@ -51,8 +51,30 @@ import {
   type RpgGameMode,
   type RpgWeatherKey,
 } from './tavernRpgContent';
+import {
+  acknowledgeArrival,
+  courseRefusal,
+  declinePractice,
+  guidancePromptLines,
+  initialGuidance,
+  isTrainerStyle,
+  noteArrival,
+  notePractice,
+  normalizeGuidance,
+  pauseTraining,
+  refreshAssignment,
+  reportTraining,
+  setTrainingBoundary,
+  TRAINER_STYLES,
+  trustLabel,
+  type TrainerStyleId,
+  type TrainingGuidance,
+  type TrainingReport,
+} from './tavernRpgGuidance';
 
 export * from './tavernRpgContent';
+export { TRAINER_STYLES, trustLabel, isTrainerStyle, courseRefusal };
+export type { TrainerStyleId, TrainingGuidance, TrainingReport };
 
 export interface RpgLocation {
   id: string;
@@ -158,7 +180,7 @@ export interface RpgDailyReport {
 
 
 export interface RpgCore {
-  version: 4;
+  version: 5;
   /** 这一局的唯一 id（存档按它区分同名世界的不同局） */
   runId: string;
   /** 系统动作（课程/差事/休息）已经推进了时间，本轮忽略 AI 标签里的 time，避免重复推进 */
@@ -204,8 +226,10 @@ export interface RpgCore {
   weather: RpgWeatherKey;
   /** 奇遇支线进度：chainId -> step */
   eventChains: Record<string, number>;
-  /** 游戏模式：普通 / 硬核 / 身份反转 */
-  gameMode: 'normal' | 'hardcore' | 'reversal';
+  /** 游戏模式：普通 / 硬核。身份反转已停用，读档时会改回普通并保留进度。 */
+  gameMode: 'normal' | 'hardcore';
+  /** 调教者风格、信任、当天课题和玩家界限。只影响剧情数值。 */
+  guidance: TrainingGuidance;
   /** 累计续约次数 */
   renewCount: number;
   /** 需要 AI 在下一轮回应的剧情事件（阶段提升、获得特质、期满……），回复后清空 */
@@ -471,7 +495,8 @@ export const getCoursesHere = (state: RpgCore): CourseAvailability[] => {
 /** 系统排的今日课表：前三个时段挑解锁的课程，优先补最弱的属性；深夜安排汇报或安抚 */
 export const buildDailyPlan = (state: RpgCore, random: () => number = Math.random): RpgPlanSlot[] => {
   const kinds = new Set(state.locations.filter((loc) => loc.discovered).map((loc) => loc.kind));
-  const candidates = allCourses(state).filter((course) => !course.relief && course.check && isCourseUnlocked(state, course) && course.kinds.some((kind) => kinds.has(kind)) && course.id !== 'report');
+  const lightDay = state.guidance?.easeToday === true;
+  const candidates = allCourses(state).filter((course) => !course.relief && course.check && isCourseUnlocked(state, course) && course.kinds.some((kind) => kinds.has(kind)) && course.id !== 'report' && (!lightDay || course.stamina < 15));
   const weakness = (course: RpgCourse) => effectiveStat(course.check!.stat, state.trainee[course.check!.stat]) + random() * 15;
   const picked: RpgCourse[] = [];
   for (const course of [...candidates].sort((a, b) => weakness(a) - weakness(b))) {
@@ -558,7 +583,8 @@ export const evaluateProgress = (input: TavernRpgState): RpgProgress => {
 const freshCore = () => {
   const trainee = { ...DEFAULT_TRAINEE };
   return {
-    version: 4 as const,
+    version: 5 as const,
+    guidance: initialGuidance([], 'gentle'),
     runId: newId('run'),
     timeLocked: false,
     stamina: 100,
@@ -596,9 +622,16 @@ export interface RpgCustomConfig {
   startName?: string;
   dayLimit?: number;
   gameMode?: 'normal' | 'hardcore' | 'reversal';
+  /** 调教者风格。不传则用循序引导。 */
+  trainerStyle?: TrainerStyleId;
   inheritedTraits?: string[];
   inheritedPoints?: number;
 }
+
+const sealGuidance = (state: TavernRpgState, style?: TrainerStyleId): TavernRpgState => ({
+  ...state,
+  guidance: initialGuidance(state.locations, isTrainerStyle(style) ? style : 'gentle'),
+});
 
 /** 从模板开局：内置模板和 AI 生成的世界都走这里 */
 export const createRpgStateFromTemplate = (
@@ -611,7 +644,7 @@ export const createRpgStateFromTemplate = (
   const customCourses = extras.courses ?? [];
   const idByKey = new Map(template.locations.map((loc) => [loc.key, `${template.id}_${loc.key}`]));
   const homeId = idByKey.get(template.home) ?? `${template.id}_${template.locations[0].key}`;
-  const gameMode = custom?.gameMode === 'hardcore' || custom?.gameMode === 'reversal' ? custom.gameMode : 'normal';
+  const gameMode = custom?.gameMode === 'hardcore' ? 'hardcore' : 'normal';
   const stamina = gameMode === 'hardcore' ? 80 : 100;
   const inheritedTraits = Array.isArray(custom?.inheritedTraits) ? custom.inheritedTraits.filter((id) => getTrait(id)) : [];
   const startPoints = (template.points ?? 20) + Math.max(0, toInt(custom?.inheritedPoints, 0));
@@ -639,9 +672,9 @@ export const createRpgStateFromTemplate = (
     quests: template.goals.map(goalQuest),
     dayLimit,
     today: freshTally(common.trainee, startPoints),
-    log: [{ at: Date.now(), text: `开始：${worldName}${gameMode !== 'normal' ? `（${gameMode === 'hardcore' ? '硬核模式' : '身份反转模式'}）` : ''}`, tone: 'info' }],
+    log: [{ at: Date.now(), text: `开始：${worldName}${gameMode === 'hardcore' ? '（硬核模式）' : ''}`, tone: 'info' }],
   }, homeId);
-  return { ...state, plan: buildDailyPlan(state) };
+  return sealGuidance({ ...state, plan: buildDailyPlan(state) }, custom?.trainerStyle);
 };
 
 export const createRpgState = (
@@ -656,7 +689,7 @@ export const createRpgState = (
   const shopId = newId('loc');
   const roomId = newId('loc');
   const homeName = cleanText(custom?.startName, 12) || '住处';
-  const gameMode = custom?.gameMode === 'hardcore' || custom?.gameMode === 'reversal' ? custom.gameMode : 'normal';
+  const gameMode = custom?.gameMode === 'hardcore' ? 'hardcore' : 'normal';
   const stamina = gameMode === 'hardcore' ? 80 : 100;
   const inheritedTraits = Array.isArray(custom?.inheritedTraits) ? custom.inheritedTraits.filter((id) => getTrait(id)) : [];
   const startPoints = 20 + Math.max(0, toInt(custom?.inheritedPoints, 0));
@@ -686,9 +719,9 @@ export const createRpgState = (
     quests: [goalQuest({ title: '学会规矩', stat: 'obedience', op: 'gte', value: 40, reward: 40 }), goalQuest({ title: '交出信任', stat: 'devotion', op: 'gte', value: 50, reward: 60 })],
     dayLimit,
     today: freshTally(common.trainee, startPoints),
-    log: [{ at: Date.now(), text: `开始：${homeName}${gameMode !== 'normal' ? `（${gameMode === 'hardcore' ? '硬核模式' : '身份反转模式'}）` : ''}`, tone: 'info' }],
+    log: [{ at: Date.now(), text: `开始：${homeName}${gameMode === 'hardcore' ? '（硬核模式）' : ''}`, tone: 'info' }],
   }, homeId);
-  return { ...state, plan: buildDailyPlan(state) };
+  return sealGuidance({ ...state, plan: buildDailyPlan(state) }, custom?.trainerStyle);
 };
 
 // ─── 检定 ──────────────────────────────────────────────────────────────────────
@@ -905,10 +938,12 @@ export const travelTo = (state: TavernRpgState, locationId: string, random: () =
   }
   const moved = appendRpgLog(revealAround({ ...state, currentId: target.id }, target.id), `前往 ${target.name}`, 'info');
   const reported = completeSummonAt(moved, target.id);
+  const arrived = noteArrival(reported);
   const summoned = reported !== moved;
-  const { state: next, event } = rollLocationEvent(reported, random);
+  const { state: next, event } = rollLocationEvent(arrived, random);
   const lines = [`🧭 前往：${target.name}`];
   if (summoned) lines.push('（按调教者的传唤按时报到）');
+  if (arrived !== reported) lines.push('（已按今天的课题报到）');
   if (event) lines.push(`✨ 地点事件：${event.title}`);
   return { state: evaluateProgress(next).state, message: lines.join('\n') };
 };
@@ -964,6 +999,9 @@ export const runCourse = (
   if (!entry) return { state: input, error: '这里不能进行这门课程。' };
   if (!entry.available) return { state: input, error: entry.reason };
   const { course } = entry;
+  const here = getLocation(input, input.currentId);
+  const blocked = input.guidance ? courseRefusal(input.guidance, course, here?.kind) : null;
+  if (blocked) return { state: input, error: blocked };
   let state: TavernRpgState = input;
   let check: RpgCheckResult | undefined;
   let success = true;
@@ -1022,6 +1060,7 @@ export const runCourse = (
     today: { ...state.today, courses: state.today.courses + 1 },
   };
   state = appendRpgLog(state, `课程：${course.name}${course.check ? (success ? '（成功）' : '（失败）') : ''}`, success ? 'good' : 'bad');
+  state = notePractice(state, success, { relief: course.relief });
   state = evaluateProgress(afterTimeAdvance(state, random)).state;
 
   const lines = [`🧭 课程：${course.name}（${course.description}）${slotIndex >= 0 ? '· 今日课表' : ''}`];
@@ -1072,6 +1111,7 @@ export const restUntilMorning = (state: TavernRpgState, random: () => number = M
   };
   next = appendRpgLog(next, `第 ${finished} 天结束${bonus ? `，课表奖励 +${bonus}` : ''}`, 'info');
   next = { ...next, today: freshTally(next.trainee, next.points) };
+  next = refreshAssignment(next);
   next = { ...next, plan: buildDailyPlan(next, random) };
   next = afterTimeAdvance(next, random);
   next = evaluateProgress(next).state;
@@ -1090,7 +1130,7 @@ export const restUntilMorning = (state: TavernRpgState, random: () => number = M
     Object.entries(deltas).map(([key, value]) => `${RPG_STAT_LABELS[key as RpgStatKey]} ${formatSigned(value!)}`).join('、'),
     `积分 ${formatSigned(report.points)}${bonus ? `（含课表奖励 ${bonus}）` : ''}`,
   ].filter(Boolean).join('；');
-  return { state: next, message: `🧭 休息：第 ${finished} 天结束。今日小结：${summary}。第 ${next.day} 天清晨，我的体力已恢复` };
+  return { state: next, message: `🧭 休息：第 ${finished} 天结束。今日小结：${summary}。第 ${next.day} 天清晨，我的体力已恢复。今天的课题已重新安排` };
 };
 
 /** 续约：期限再延长 30 天 */
@@ -1184,6 +1224,7 @@ export const buildRpgPrompt = (state: RpgCore, names: { char: string; user: stri
   const summon = activeSummon(state);
   const milestones = (state.milestones ?? []).slice(-6).map((entry) => `第${entry.day}天${entry.text}`).join('；');
   const recent = state.reports.slice(-3).map((report) => `第${report.day}天课程 ${report.courses} 次、检定 ${report.passed} 成 ${report.failed} 败${report.violations ? `、违规 ${report.violations} 次` : ''}${report.planTotal ? `、课表 ${report.planDone}/${report.planTotal}` : ''}`).join('；');
+  const guidanceLines = state.guidance ? guidancePromptLines(state.guidance) : [];
 
   const lines = [
     '【训练日程 · 当前状态（由系统维护，以此为准）】',
@@ -1201,12 +1242,11 @@ export const buildRpgPrompt = (state: RpgCore, names: { char: string; user: stri
     summon ? `限时传唤：${summon.objective}（没按时到要追究）` : '',
     milestones ? `训练回忆（重要的时刻，可以在对话里提起）：${milestones}` : '',
     recent ? `最近几天：${recent}` : '',
+    ...guidanceLines,
     state.pendingEvents.length ? `【本轮需要回应的事件】\n${state.pendingEvents.map((event) => `- ${fill(event)}`).join('\n')}` : '',
   ].filter(Boolean);
 
-  const rule1 = state.gameMode === 'reversal'
-    ? `1. 身份反转模式：你扮演的${char}是被调教者/学员，对${user}言听计从并积极完成${user}安排的训练与日常；${user}是主导一切的调教者/导师。只描写${char}作为学员的言行、羞涩、反思与顺从，不要替${user}行动。`
-    : `1. 角色关系：你扮演的${char}是调教者，主导每天的日程和课程，根据地点、时段和课表给${user}下达指令、检查表现、给予奖励或惩罚；${user}是被调教的一方。只描写${char}的言行和环境，不要替${user}行动、说话或描写${user}的内心。`;
+  const rule1 = `1. 角色关系：你扮演的${char}是调教者，主导每天的日程、课题和评价；${user}是接受训练的一方。只描写${char}的言行和环境，不要替${user}行动、说话或描写${user}的内心。${user}可以接受、拒绝、暂停或设下界限，这些选择已经由系统记入信任和课题，你只能据此反应，不能改写成相反的结果。`;
 
   const rulesText = `【训练规则】
 ${rule1}
@@ -1229,6 +1269,23 @@ ${rule1}
 choices 是给${user}的 3 个回应选项（以${user}的口吻，每个不超过 20 字，不要重复），需要看${user}能不能做到的写 check（obedience/endurance/shame/devotion + 难度 8-20）。`;
 
   return `${lines.join('\n')}\n\n${rulesText}`;
+};
+
+export type GuidancePlayerAction =
+  | { type: 'arrive' }
+  | { type: 'decline' }
+  | { type: 'pause' }
+  | { type: 'boundary'; key: 'noPublic' | 'noEscalation'; value: boolean }
+  | { type: 'report'; report: TrainingReport };
+
+/** 玩家对课题的选择。只改信任、压力、界限和记录，不接触硬件。 */
+export const applyGuidanceAction = (state: TavernRpgState, action: GuidancePlayerAction): RpgActionResult => {
+  const result = action.type === 'arrive' ? acknowledgeArrival(state)
+    : action.type === 'decline' ? declinePractice(state)
+    : action.type === 'pause' ? pauseTraining(state)
+    : action.type === 'boundary' ? setTrainingBoundary(state, action.key, action.value)
+    : reportTraining(state, action.report);
+  return { state: result.state, message: result.message, error: result.error };
 };
 
 // ─── 解析 ──────────────────────────────────────────────────────────────────────
@@ -1495,7 +1552,10 @@ export const rememberSnapshot = (state: TavernRpgState, messageId: string): Tave
 export const restoreSnapshot = (state: TavernRpgState, messageId: string): TavernRpgState | null => {
   const snapshot = state.snapshots.find((item) => item.messageId === messageId);
   if (!snapshot) return null;
-  return { ...snapshot.core, snapshots: state.snapshots.filter((item) => item.messageId !== messageId) };
+  return normalizeRpgState({
+    ...snapshot.core,
+    snapshots: state.snapshots.filter((item) => item.messageId !== messageId),
+  });
 };
 
 /**
@@ -1673,10 +1733,23 @@ const normalizeStats = (value: unknown, fallback: RpgTraineeStats): RpgTraineeSt
   return Object.fromEntries(STAT_KEYS.map((key) => [key, clamp(toInt(raw[key], fallback[key]), 0, 100)])) as RpgTraineeStats;
 };
 
+const migrateSnapshots = (value: unknown): TavernRpgState['snapshots'] => {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-MAX_SNAPSHOTS).flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const entry = item as { messageId?: unknown; core?: unknown };
+    if (typeof entry.messageId !== 'string' || !entry.core || typeof entry.core !== 'object') return [];
+    const migrated = normalizeRpgState({ ...(entry.core as object), snapshots: [] });
+    if (!migrated) return [];
+    const { snapshots: _unused, ...core } = migrated;
+    return [{ messageId: entry.messageId, core }];
+  });
+};
+
 export const normalizeRpgState = (value: unknown): TavernRpgState | null => {
   if (!value || typeof value !== 'object') return null;
-  const raw = value as TavernRpgState;
-  if (raw.version !== 4 || !Array.isArray(raw.locations) || !raw.locations.length) return null;
+  const raw = value as Omit<TavernRpgState, 'version' | 'gameMode' | 'guidance'> & { version?: number; gameMode?: string; guidance?: unknown };
+  if ((raw.version !== 4 && raw.version !== 5) || !Array.isArray(raw.locations) || !raw.locations.length) return null;
   const ids = new Set(raw.locations.map((loc) => loc.id));
   const currentId = ids.has(raw.currentId) ? raw.currentId : raw.locations[0].id;
   const trainee = normalizeStats(raw.trainee, DEFAULT_TRAINEE);
@@ -1727,16 +1800,18 @@ export const normalizeRpgState = (value: unknown): TavernRpgState | null => {
     today: raw.today && typeof raw.today === 'object' ? { ...raw.today, startTrainee: normalizeStats(raw.today.startTrainee, trainee) } : freshTally(trainee, points),
     reports: Array.isArray(raw.reports) ? raw.reports.slice(-MAX_REPORTS) : [],
     ending: raw.ending && typeof raw.ending === 'object' ? raw.ending : null,
+    version: 5,
     weather: normalizeWeather(raw.weather),
     eventChains: numberRecord(raw.eventChains),
-    gameMode: raw.gameMode === 'hardcore' || raw.gameMode === 'reversal' ? raw.gameMode : 'normal',
+    gameMode: raw.gameMode === 'hardcore' ? 'hardcore' : 'normal',
+    guidance: normalizeGuidance(raw.guidance, raw.locations, Math.max(1, toInt(raw.day, 1)), trainee.devotion, raw.gameMode === 'reversal'),
     renewCount: Math.max(0, toInt(raw.renewCount, 0)),
     pendingEvents: Array.isArray(raw.pendingEvents) ? raw.pendingEvents.slice(-6) : [],
     inventory: Array.isArray(raw.inventory) ? raw.inventory : [],
     quests: Array.isArray(raw.quests) ? raw.quests : [],
     choices: Array.isArray(raw.choices) ? raw.choices : [],
     log: Array.isArray(raw.log) ? raw.log.slice(-MAX_LOG) : [],
-    snapshots: Array.isArray(raw.snapshots) ? raw.snapshots.slice(-MAX_SNAPSHOTS) : [],
+    snapshots: migrateSnapshots(raw.snapshots),
     hardware: normalizeHardware(raw.hardware),
   };
 };
