@@ -115,4 +115,55 @@ test('休息后按昨天的交代生成新课题；旧版本 4 存档保留进�
   assert.equal(again.guidance.memory.filter((entry) => entry.text.includes('身份反转')).length, 1);
   assert.equal(again.day, 12);
   assert.equal(m.normalizeRpgState({ version: 3, locations: [{ id: 'a' }] }), null);
+
+  const fresh = m.createRpgState('contract', names);
+  const legacySnapshot = {
+    ...fresh,
+    version: 4,
+    gameMode: 'reversal',
+    guidance: undefined,
+    snapshots: [{
+      messageId: 'before',
+      core: { ...fresh, version: 4, gameMode: 'reversal', guidance: undefined, snapshots: [] },
+    }],
+  };
+  const migrated = m.normalizeRpgState(legacySnapshot);
+  assert.equal(migrated.snapshots[0].core.gameMode, 'normal');
+  assert.ok(migrated.snapshots[0].core.guidance.assignment.steps.length, 3);
+  const rolled = m.restoreSnapshot(migrated, 'before');
+  assert.equal(rolled.gameMode, 'normal');
+  assert.equal(rolled.guidance.assignment.steps.length, 3);
+  const living = rolled.locations.find((loc) => loc.name === '客厅');
+  assert.equal(m.travelTo(rolled, living.id, () => 0).error, undefined);
+});
+
+test('暂停后仍可交代；安抚课不完成练习；轻一天只持续一天并挡住重课', async () => {
+  const m = await load();
+  let state = m.createRpgState('contract', names, { trainerStyle: 'strict' });
+  const paused = m.applyGuidanceAction(state, { type: 'pause' });
+  assert.equal(practice(paused.state).status, 'declined');
+  const cared = m.applyGuidanceAction(paused.state, { type: 'report', report: 'care' });
+  assert.equal(cared.error, undefined);
+  const home = cared.state.locations.find((loc) => loc.services.includes('rest'));
+  const morning = m.restUntilMorning({ ...cared.state, currentId: home.id }, () => 0);
+  assert.equal(morning.state.guidance.trust, cared.state.guidance.trust);
+  assert.equal(morning.state.guidance.easeToday, true);
+  assert.match(m.courseRefusal(morning.state.guidance, { name: '耐力保持', stamina: 20 }, 'playroom'), /改轻/);
+  assert.ok(morning.state.plan.every((slot) => {
+    const course = m.findCourse(morning.state, slot.courseId);
+    return !course || course.relief || course.stamina < 15;
+  }));
+
+  const second = m.restUntilMorning({ ...morning.state, currentId: home.id }, () => 0);
+  assert.equal(second.state.guidance.easeToday, false);
+  assert.equal(second.state.guidance.lastReport, null);
+  assert.doesNotMatch(second.state.guidance.assignment.title, /昨天/);
+
+  const gentle = m.createRpgState('contract', names, { trainerStyle: 'gentle' });
+  const relieved = m.runCourse(gentle, 'aftercare', () => 0.99);
+  assert.equal(practice(relieved.state).status, 'todo');
+  const refused = m.applyGuidanceAction(gentle, { type: 'decline' });
+  const next = m.restUntilMorning({ ...refused.state, currentId: gentle.homeId }, () => 0);
+  assert.equal(next.state.guidance.easeToday, true);
+  assert.match(m.courseRefusal(next.state.guidance, { name: '耐力保持', stamina: 20 }, 'bedroom'), /改轻/);
 });

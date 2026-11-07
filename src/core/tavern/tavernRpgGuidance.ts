@@ -77,6 +77,10 @@ export interface TrainingGuidance {
   assignment: TrainingAssignment;
   memory: TrainingMemory[];
   lastReport: TrainingReport | null;
+  /** 今天不做消耗很大的练习。只持续到下一次休息。 */
+  easeToday: boolean;
+  /** 明天安排轻一天。由「请求先被照顾」或循序引导下的拒绝写入。 */
+  easeNext: boolean;
 }
 
 export interface GuidanceLocation {
@@ -220,6 +224,8 @@ export const initialGuidance = (
     assignment: buildAssignment(locations, safeStyle, 1, false, null),
     memory: [{ day: 1, text: `${TRAINER_STYLES[safeStyle].name}：${TRAINER_STYLES[safeStyle].blurb}` }],
     lastReport: null,
+    easeToday: false,
+    easeNext: false,
   };
 };
 
@@ -252,6 +258,8 @@ export const normalizeGuidance = (
       }))
       : [],
     lastReport: raw.lastReport === 'honest' || raw.lastReport === 'polished' || raw.lastReport === 'care' ? raw.lastReport : null,
+    easeToday: raw.easeToday === true,
+    easeNext: raw.easeNext === true,
   };
   if (!base.memory.length) base.memory = [{ day, text: `${TRAINER_STYLES[style].name}：${TRAINER_STYLES[style].blurb}` }];
   if (wasReversal && !base.memory.some((entry) => entry.text === REVERSAL_RETIRED_NOTE)) {
@@ -305,8 +313,10 @@ export const courseRefusal = (guidance: TrainingGuidance, course: CourseGate, he
   if (guidance.boundaries.paused && !course.relief) {
     return `今天已经暂停。${course.name}不会开始。休息到明天后，调教者会重新安排。这不是违规。`;
   }
-  if (guidance.boundaries.noEscalation && !course.relief && course.stamina >= 15) {
-    return `你今天说过不要再加码，所以${course.name}被放下了。可以做更轻松的练习，或拒绝这项。`;
+  if ((guidance.easeToday || guidance.boundaries.noEscalation) && !course.relief && course.stamina >= 15) {
+    return guidance.easeToday
+      ? `调教者把今天改轻了，所以${course.name}先不做。可以做更轻松的练习，或拒绝这项。`
+      : `你今天说过不要再加码，所以${course.name}被放下了。可以做更轻松的练习，或拒绝这项。`;
   }
   if (guidance.boundaries.noPublic && hereKind && PUBLIC_KINDS.has(hereKind)) {
     return '你设过界限：不在有别人的地方练习。换到私人地点再开始，或自己取消这条界限。';
@@ -315,6 +325,7 @@ export const courseRefusal = (guidance: TrainingGuidance, course: CourseGate, he
 };
 
 export const noteArrival = <T extends GuidanceCarrier>(state: T): T => {
+  if (!state.guidance?.assignment) return state;
   const arrive = step(state.guidance, 'arrive');
   if (!arrive || arrive.status !== 'todo' || state.currentId !== state.guidance.assignment.placeId) return state;
   const guidance = remember(withTrust(replaceStep(state.guidance, 'arrive', 'done'), 1), state.day, `在「${state.guidance.assignment.placeName}」报到`);
@@ -325,7 +336,8 @@ export const noteArrival = <T extends GuidanceCarrier>(state: T): T => {
   }, `课题：已在${state.guidance.assignment.placeName}报到（信任 +1）`, 'good');
 };
 
-export const notePractice = <T extends GuidanceCarrier>(state: T, success: boolean): T => {
+export const notePractice = <T extends GuidanceCarrier>(state: T, success: boolean, course?: { relief?: boolean }): T => {
+  if (!state.guidance?.assignment || state.guidance.boundaries.paused || course?.relief) return state;
   const practice = step(state.guidance, 'practice');
   if (!practice || practice.status !== 'todo') return state;
   const delta = success ? 3 : 1;
@@ -352,7 +364,11 @@ export const declinePractice = <T extends GuidanceCarrier>(state: T): { state: T
   if (!practice || practice.status === 'declined') return unchanged(state, '这项练习已经拒绝过了。');
   if (practice.status === 'done') return unchanged(state, '这项练习已经做完，不用再拒绝。');
   const delta = state.guidance.style === 'gentle' ? 3 : state.guidance.style === 'observer' ? 2 : 1;
-  const guidance = remember(withTrust(replaceStep(state.guidance, 'practice', 'declined'), delta), state.day, '拒绝了今天的练习，已改期');
+  const declined = replaceStep(state.guidance, 'practice', 'declined');
+  const guidance = remember(withTrust({
+    ...declined,
+    easeNext: state.guidance.style === 'gentle' ? true : declined.easeNext,
+  }, delta), state.day, '拒绝了今天的练习，已改期');
   const next = pushLog({
     ...state,
     stress: clamp(state.stress - 4, 0, 100),
@@ -365,9 +381,11 @@ export const declinePractice = <T extends GuidanceCarrier>(state: T): { state: T
 export const pauseTraining = <T extends GuidanceCarrier>(state: T): { state: T; message?: string; error?: string } => {
   if (state.guidance.boundaries.paused) return unchanged(state, '今天已经暂停。休息到明天会重新安排。');
   const delta = state.guidance.style === 'gentle' ? 2 : 1;
+  const practice = step(state.guidance, 'practice');
+  const stopped = practice?.status === 'todo' ? replaceStep(state.guidance, 'practice', 'declined') : state.guidance;
   const guidance = remember(withTrust({
-    ...state.guidance,
-    boundaries: { ...state.guidance.boundaries, paused: true },
+    ...stopped,
+    boundaries: { ...stopped.boundaries, paused: true },
   }, delta), state.day, '今天到此为止');
   const next = pushLog({
     ...state,
@@ -416,7 +434,8 @@ export const reportTraining = <T extends GuidanceCarrier>(
     : report === 'polished'
       ? '🧭 训练课题：我把今天说得顺利一些。'
       : '🧭 训练课题：我请求先被照顾，今天的练习可以停在这里。';
-  const guidance = remember(withTrust(replaceStep({ ...state.guidance, lastReport: report }, 'report', 'done'), delta), state.day, label);
+  const reported = replaceStep({ ...state.guidance, lastReport: report, easeNext: report === 'care' ? true : state.guidance.easeNext }, 'report', 'done');
+  const guidance = remember(withTrust(reported, delta), state.day, label);
   const next = pushLog({
     ...state,
     stress: clamp(state.stress + stressDelta, 0, 100),
@@ -427,21 +446,34 @@ export const reportTraining = <T extends GuidanceCarrier>(
 };
 
 export const refreshAssignment = <T extends GuidanceCarrier>(state: T): T => {
+  if (!state.guidance?.assignment) {
+    return { ...state, guidance: initialGuidance(state.locations, 'gentle', state.guidance?.trust) };
+  }
   const report = step(state.guidance, 'report');
   const finishedDay = Math.max(1, state.day - 1);
+  const echo = state.guidance.lastReport;
+  const wasPaused = state.guidance.boundaries.paused;
   let guidance = state.guidance;
   let next = state;
   if (report && report.status === 'todo') {
-    const delta = guidance.style === 'strict' ? -1 : 0;
-    guidance = remember(withTrust(guidance, delta), finishedDay, '今天没有做晚间交代');
-    if (delta) next = pushLog({ ...next, guidance }, '课题：没有交代今天（信任 -1，不是违规）', 'info');
+    if (wasPaused) {
+      guidance = remember(guidance, finishedDay, '今天暂停了，不要求晚间交代');
+    } else {
+      const delta = guidance.style === 'strict' ? -1 : 0;
+      guidance = remember(withTrust(guidance, delta), finishedDay, '今天没有做晚间交代');
+      if (delta) next = pushLog({ ...next, guidance }, '课题：没有交代今天（信任 -1，不是违规）', 'info');
+    }
   }
+  const easeToday = guidance.easeNext || echo === 'care';
   guidance = {
     ...guidance,
+    lastReport: null,
+    easeNext: false,
+    easeToday,
     boundaries: { ...guidance.boundaries, paused: false, noEscalation: false },
-    assignment: buildAssignment(next.locations, guidance.style, state.day, guidance.boundaries.noPublic, guidance.lastReport),
+    assignment: buildAssignment(next.locations, guidance.style, state.day, guidance.boundaries.noPublic, echo),
   };
-  return pushLog({ ...next, guidance }, `新的一天：${TRAINER_STYLES[guidance.style].name}安排了课题「${guidance.assignment.placeName}」`, 'info');
+  return pushLog({ ...next, guidance }, `新的一天：${TRAINER_STYLES[guidance.style].name}安排了课题「${guidance.assignment.placeName}」${easeToday ? '（今天改轻）' : ''}`, 'info');
 };
 
 export const guidancePromptLines = (guidance: TrainingGuidance) => {
@@ -451,6 +483,7 @@ export const guidancePromptLines = (guidance: TrainingGuidance) => {
     guidance.boundaries.noPublic ? '不在有别人的地方练习' : '',
     guidance.boundaries.noEscalation ? '今天不要再加码' : '',
     guidance.boundaries.paused ? '今天剩下的新练习已暂停' : '',
+    guidance.easeToday ? '今天是轻一天，消耗很大的练习先不做' : '',
   ].filter(Boolean);
   const memory = guidance.memory.slice(-4).map((entry) => `第${entry.day}天 ${entry.text}`).join('；');
   return [

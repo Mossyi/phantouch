@@ -2188,7 +2188,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       }
       updateRpgState(guided.state);
       if (guided.message) void handleSendRef.current?.(guided.message, false);
-      else showFeatureNotice('界限已记下。下一条对话会按这个界限进行，不会因此惩罚你。');
+      else showFeatureNotice('界限已记下。下一条对话会按这个界限进行，不会因此记过。');
       return;
     }
 

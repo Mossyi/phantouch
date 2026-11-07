@@ -495,7 +495,8 @@ export const getCoursesHere = (state: RpgCore): CourseAvailability[] => {
 /** 系统排的今日课表：前三个时段挑解锁的课程，优先补最弱的属性；深夜安排汇报或安抚 */
 export const buildDailyPlan = (state: RpgCore, random: () => number = Math.random): RpgPlanSlot[] => {
   const kinds = new Set(state.locations.filter((loc) => loc.discovered).map((loc) => loc.kind));
-  const candidates = allCourses(state).filter((course) => !course.relief && course.check && isCourseUnlocked(state, course) && course.kinds.some((kind) => kinds.has(kind)) && course.id !== 'report');
+  const lightDay = state.guidance?.easeToday === true;
+  const candidates = allCourses(state).filter((course) => !course.relief && course.check && isCourseUnlocked(state, course) && course.kinds.some((kind) => kinds.has(kind)) && course.id !== 'report' && (!lightDay || course.stamina < 15));
   const weakness = (course: RpgCourse) => effectiveStat(course.check!.stat, state.trainee[course.check!.stat]) + random() * 15;
   const picked: RpgCourse[] = [];
   for (const course of [...candidates].sort((a, b) => weakness(a) - weakness(b))) {
@@ -1059,7 +1060,7 @@ export const runCourse = (
     today: { ...state.today, courses: state.today.courses + 1 },
   };
   state = appendRpgLog(state, `课程：${course.name}${course.check ? (success ? '（成功）' : '（失败）') : ''}`, success ? 'good' : 'bad');
-  state = notePractice(state, success);
+  state = notePractice(state, success, { relief: course.relief });
   state = evaluateProgress(afterTimeAdvance(state, random)).state;
 
   const lines = [`🧭 课程：${course.name}（${course.description}）${slotIndex >= 0 ? '· 今日课表' : ''}`];
@@ -1110,8 +1111,8 @@ export const restUntilMorning = (state: TavernRpgState, random: () => number = M
   };
   next = appendRpgLog(next, `第 ${finished} 天结束${bonus ? `，课表奖励 +${bonus}` : ''}`, 'info');
   next = { ...next, today: freshTally(next.trainee, next.points) };
-  next = { ...next, plan: buildDailyPlan(next, random) };
   next = refreshAssignment(next);
+  next = { ...next, plan: buildDailyPlan(next, random) };
   next = afterTimeAdvance(next, random);
   next = evaluateProgress(next).state;
 
@@ -1551,7 +1552,10 @@ export const rememberSnapshot = (state: TavernRpgState, messageId: string): Tave
 export const restoreSnapshot = (state: TavernRpgState, messageId: string): TavernRpgState | null => {
   const snapshot = state.snapshots.find((item) => item.messageId === messageId);
   if (!snapshot) return null;
-  return { ...snapshot.core, snapshots: state.snapshots.filter((item) => item.messageId !== messageId) };
+  return normalizeRpgState({
+    ...snapshot.core,
+    snapshots: state.snapshots.filter((item) => item.messageId !== messageId),
+  });
 };
 
 /**
@@ -1729,6 +1733,19 @@ const normalizeStats = (value: unknown, fallback: RpgTraineeStats): RpgTraineeSt
   return Object.fromEntries(STAT_KEYS.map((key) => [key, clamp(toInt(raw[key], fallback[key]), 0, 100)])) as RpgTraineeStats;
 };
 
+const migrateSnapshots = (value: unknown): TavernRpgState['snapshots'] => {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-MAX_SNAPSHOTS).flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const entry = item as { messageId?: unknown; core?: unknown };
+    if (typeof entry.messageId !== 'string' || !entry.core || typeof entry.core !== 'object') return [];
+    const migrated = normalizeRpgState({ ...(entry.core as object), snapshots: [] });
+    if (!migrated) return [];
+    const { snapshots: _unused, ...core } = migrated;
+    return [{ messageId: entry.messageId, core }];
+  });
+};
+
 export const normalizeRpgState = (value: unknown): TavernRpgState | null => {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Omit<TavernRpgState, 'version' | 'gameMode' | 'guidance'> & { version?: number; gameMode?: string; guidance?: unknown };
@@ -1794,7 +1811,7 @@ export const normalizeRpgState = (value: unknown): TavernRpgState | null => {
     quests: Array.isArray(raw.quests) ? raw.quests : [],
     choices: Array.isArray(raw.choices) ? raw.choices : [],
     log: Array.isArray(raw.log) ? raw.log.slice(-MAX_LOG) : [],
-    snapshots: Array.isArray(raw.snapshots) ? raw.snapshots.slice(-MAX_SNAPSHOTS) : [],
+    snapshots: migrateSnapshots(raw.snapshots),
     hardware: normalizeHardware(raw.hardware),
   };
 };
