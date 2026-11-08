@@ -330,6 +330,138 @@ test('提前识别：停顿一开始就送识别；接着又开口则作废；�
   }
 });
 
+test('打断会停掉正在播放的句子，晚到的旧回复不再朗读，挂断后也不再开口', async () => {
+  globalThis.window = globalThis;
+  globalThis.webkitSpeechRecognition = FakeRecognition;
+  const { VoiceCallSession } = await loadBundledModule('../src/core/voice/voiceCallSession.ts');
+  const started = [];
+  const finished = [];
+  const sent = [];
+  let interrupts = 0;
+  let stops = 0;
+  let releaseLate = () => {};
+  const lateGate = new Promise((resolve) => { releaseLate = resolve; });
+  const session = new VoiceCallSession({
+    sttOptions: { engine: 'browser' },
+    sendTurn: async (text, hooks) => {
+      sent.push(text);
+      hooks.onVisibleText('第一句已经开始朗读。');
+      await lateGate;
+      hooks.onVisibleText('第一句已经开始朗读。这句是打断之后才到的。');
+      return '第一句已经开始朗读。这句是打断之后才到的。';
+    },
+    interruptTurn: () => { interrupts += 1; },
+    prepareSpeech: (text) => {
+      let canceled = false;
+      let release = () => {};
+      const gate = new Promise((resolve) => { release = resolve; });
+      return {
+        text,
+        cancel: () => { canceled = true; release(); },
+        play: async () => {
+          started.push(text);
+          await gate;
+          if (!canceled) finished.push(text);
+        },
+      };
+    },
+    stopSpeech: () => { stops += 1; },
+  });
+  try {
+    await session.connect('（📞 电话接通）');
+    await sleep(20);
+    assert.equal(session.getSnapshot().phase, 'speaking');
+    assert.deepEqual(started, ['第一句已经开始朗读。']);
+    session.interrupt();
+    session.interrupt();
+    assert.equal(session.getSnapshot().phase, 'listening');
+    assert.ok(interrupts >= 2);
+    assert.ok(stops >= 2);
+    releaseLate();
+    await sleep(30);
+    assert.deepEqual(finished, [], '被打断的句子不应播完');
+    assert.deepEqual(started, ['第一句已经开始朗读。'], '打断后的句子不应再开始');
+    session.hangUp();
+    assert.equal(session.getSnapshot().phase, 'ended');
+    await sleep(20);
+    assert.deepEqual(started, ['第一句已经开始朗读。']);
+  } finally {
+    session.hangUp();
+    cleanupGlobals();
+  }
+});
+
+test('云端通话开口可以打断正在说的角色，短促回声不会打断，说完后能开始新一轮', async () => {
+  const { VoiceCallSession } = await loadBundledModule('../src/core/voice/voiceCallSession.ts');
+  const started = [];
+  const sent = [];
+  let interrupts = 0;
+  let releaseFirst = () => {};
+  const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+  const session = new VoiceCallSession({
+    sttOptions: { engine: 'openai' },
+    transcribe: async () => '换个话题',
+    sendTurn: async (text, hooks) => {
+      sent.push(text);
+      if (sent.length === 1) {
+        hooks.onVisibleText('我先说一句很长的开场白给对方听。');
+        await firstGate;
+        hooks.onVisibleText('我先说一句很长的开场白给对方听。后半句不该再读。');
+        return '我先说一句很长的开场白给对方听。后半句不该再读。';
+      }
+      hooks.onVisibleText('好，听你的。');
+      return '好，听你的。';
+    },
+    interruptTurn: () => { interrupts += 1; releaseFirst(); },
+    prepareSpeech: (text) => {
+      let canceled = false;
+      let release = () => {};
+      const gate = new Promise((resolve) => { release = resolve; });
+      return {
+        text,
+        cancel: () => { canceled = true; release(); },
+        play: async () => {
+          if (canceled) return;
+          started.push(text);
+          await gate;
+        },
+      };
+    },
+    stopSpeech: () => {},
+  });
+  session.active = true;
+  session.setPhase('listening');
+  const frameMs = (2048 / 48_000) * 1000;
+  let now = 1_000_000;
+  const loud = new Float32Array(2048).map((_, index) => (index % 2 ? 0.2 : -0.2));
+  const quiet = new Float32Array(2048).fill(0.001);
+  const blip = new Float32Array(2048).map((_, index) => (index % 2 ? 0.08 : -0.08));
+  const feed = (samples, ms) => {
+    for (let elapsed = 0; elapsed < ms; elapsed += frameMs) {
+      now += frameMs;
+      session.processFrame(samples, now);
+    }
+  };
+  try {
+    session.processFrame(quiet, now);
+    session.startTurn('（接通）', false);
+    await sleep(30);
+    assert.equal(session.getSnapshot().phase, 'speaking');
+    feed(blip, 200);
+    assert.equal(interrupts, 0, '短于插话确认时间的声音不算开口');
+    feed(loud, 500);
+    assert.ok(interrupts >= 1, '持续开口应打断');
+    assert.equal(session.getSnapshot().phase, 'user_speaking');
+    feed(quiet, 900);
+    await sleep(200);
+    assert.ok(sent.includes('换个话题'), sent.join('|'));
+    assert.ok(started.includes('好，听你的。'), started.join('|'));
+    assert.equal(started.includes('后半句不该再读。'), false);
+  } finally {
+    session.hangUp();
+  }
+});
+
 test('断句快慢：「快」在约 0.55 秒停顿后就提交，「耐心」在 0.8 秒停顿时仍在等', async () => {
   const fast = await setupCloudSession('fast');
   const patient = await setupCloudSession('patient');
@@ -368,6 +500,52 @@ test('识别接口地址：只接受 HTTPS 或局域网 HTTP；非法地址保�
     assert.equal(manager.getSafetyConfig().voiceCallTurnTiming, 'standard');
   } finally {
     manager.simulator?.destroy?.();
+    delete globalThis.__YCY_DEVICE_MANAGER__;
+    delete globalThis.localStorage;
+  }
+});
+
+test('取消信号在工具执行前生效，provider 已返回的工具调用也不会落地', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.localStorage = { getItem: () => null, setItem: () => undefined, removeItem: () => undefined };
+  delete globalThis.__YCY_DEVICE_MANAGER__;
+  try {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      const encoder = new TextEncoder();
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"先停一下"}}]}\n\n'));
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"set_ems_strength","arguments":"{\\"strength\\":40}"}}]}}]}\n\n'));
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        },
+      }), { headers: { 'content-type': 'text/event-stream' } });
+    };
+    const { LLMClient } = await loadBundledModule('../src/core/ai/llmClient.ts');
+    const client = new LLMClient({
+      baseUrl: 'https://api.example.test/v1',
+      apiKey: 'test-key',
+      model: 'test-model',
+      temperature: 0.7,
+      selectedPersonaId: 'male_dom',
+    }, { hardwareToolsEnabled: true });
+    const controller = new AbortController();
+    await assert.rejects(
+      client.sendMessage(
+        [{ id: 'u1', role: 'user', content: '继续', timestamp: 1 }],
+        [],
+        'system',
+        controller.signal,
+        () => controller.abort(),
+      ),
+      (error) => error?.name === 'AbortError',
+    );
+    assert.equal(calls, 1, '取消后不应再请求下一轮工具结果');
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.__YCY_DEVICE_MANAGER__?.simulator?.destroy?.();
     delete globalThis.__YCY_DEVICE_MANAGER__;
     delete globalThis.localStorage;
   }
