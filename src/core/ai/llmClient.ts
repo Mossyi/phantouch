@@ -689,7 +689,7 @@ export class LLMClient {
 
     const body = useResponsesApi
       ? {
-          model: this.config.model || 'doubao-seed-2.0-lite',
+          model: this.config.model || 'doubao-seed-2.1-lite',
           input: convertChatMessagesToResponsesInput(messages),
           max_output_tokens: this.generation.maxTokens,
           ...(this.hardwareToolsEnabled ? { tools: getResponsesTools() } : {}),
@@ -979,7 +979,7 @@ export class LLMClient {
     };
 
     const body = {
-      model: this.config.model || 'doubao-seed-2.0-lite',
+      model: this.config.model || 'doubao-seed-2.1-lite',
       input: convertChatMessagesToResponsesInput(messages),
       max_output_tokens: this.generation.maxTokens,
       stream: true,

@@ -10,10 +10,8 @@ import {
   splitTextForTts,
 } from './siliconflowTts';
 import { decodeBase64Audio } from './audioBinary';
+import { VOLCENGINE_PLAN_TTS_ENDPOINT, VOLCENGINE_PLAN_TTS_RESOURCE } from './volcenginePlanSpeech';
 
-// Agent Plan uses its own TTS route. It returns chunked JSON frames rather than SSE-only data.
-const VOLCENGINE_TTS_PLAN_ENDPOINT = 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional';
-const VOLCENGINE_TTS_RESOURCE_ID = 'seed-tts-2.0';
 const VOLCENGINE_TTS_FEMALE_VOICE = 'zh_female_vv_uranus_bigtts';
 
 interface NativeTtsPlugin {
@@ -491,9 +489,9 @@ export class TTSManager {
     const voice = config?.volcengineVoice
       || this.defaults.volcengineVoice
       || (config?.gender === 'male' ? 'zh_male_m191_uranus_bigtts' : VOLCENGINE_TTS_FEMALE_VOICE);
-    const resourceId = this.defaults.volcengineResourceId || VOLCENGINE_TTS_RESOURCE_ID;
+    const resourceId = this.defaults.volcengineResourceId || VOLCENGINE_PLAN_TTS_RESOURCE;
     try {
-      const { response, text: responseText } = await fetchTextWithTimeout(VOLCENGINE_TTS_PLAN_ENDPOINT, {
+      const { response, text: responseText } = await fetchTextWithTimeout(VOLCENGINE_PLAN_TTS_ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

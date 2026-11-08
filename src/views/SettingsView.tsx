@@ -871,7 +871,7 @@ export const SettingsView: React.FC = () => {
             {[
               { id: 'browser', label: '本机/浏览器', hint: '免 Key，电脑 Chrome 推荐' },
               { id: 'siliconflow', label: '硅基流动', hint: 'SenseVoice / TeleSpeech' },
-              { id: 'volcengine', label: '火山豆包', hint: '极速版' },
+              { id: 'volcengine', label: '火山方舟 Plan', hint: '语音识别 2.0' },
               { id: 'openai', label: 'OpenAI 兼容', hint: 'OpenAI / Groq / 本地 Whisper' },
             ].map((engine) => (
               <button key={engine.id} type="button" onClick={() => setSafetyConfig({ sttEngine: engine.id as any })} className={`rounded-xl border px-2 py-2 text-center transition-all ${safetyConfig.sttEngine === engine.id ? 'border-pink-300 bg-pink-50 text-pink-700 shadow-sm font-black' : 'border-pink-100 bg-white text-slate-600 hover:border-pink-200'}`}>
@@ -902,15 +902,15 @@ export const SettingsView: React.FC = () => {
 
           {safetyConfig.sttEngine === 'volcengine' && (
             <div className="space-y-2 rounded-xl border border-pink-200 bg-white p-3 shadow-sm">
-              <p className="text-[9.5px] leading-4 text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200">需在“豆包语音”控制台开通录音文件识别极速版。火山方舟聊天 API Key 不能直接代替语音凭据。</p>
-              <label className="block text-[10px] font-bold text-slate-700">新版 X-Api-Key
-                <input type="password" autoComplete="off" value={safetyConfig.volcengineSttApiKey || ''} onChange={(event) => setSafetyConfig({ volcengineSttApiKey: event.target.value })} placeholder="新版控制台只填这一项" className="mt-1 w-full rounded-lg border border-pink-200 bg-pink-50/30 px-2.5 py-2 font-mono text-[10px] text-slate-800 outline-none focus:border-pink-400" />
+              <p className="text-[9.5px] leading-4 text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200">识别走 Agent Plan WebSocket <span className="font-mono">wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream</span>，模型 doubao-seed-asr-2.0，资源 ID volc.seedasr.sauc.duration。这不是文字 /responses，也不是旧的录音文件极速版。Key 留空时复用文字模型里的 Plan Key；单独填写的识别 Key 会保留。旧版 APP ID 仍保存在本地，但这个接口不用它。浏览器若不能给 WebSocket 附加 X-Api-Key，会直接失败，不会改打别的接口。</p>
+              <label className="block text-[10px] font-bold text-slate-700">Agent Plan 语音识别 Key
+                <input type="password" autoComplete="off" value={safetyConfig.volcengineSttApiKey || ''} onChange={(event) => setSafetyConfig({ volcengineSttApiKey: event.target.value })} placeholder="留空则复用文字模型里的 Plan Key" className="mt-1 w-full rounded-lg border border-pink-200 bg-pink-50/30 px-2.5 py-2 font-mono text-[10px] text-slate-800 outline-none focus:border-pink-400" />
               </label>
               <div className="grid grid-cols-2 gap-2">
-                <label className="block text-[9px] font-bold text-slate-600">旧版 APP ID<input value={safetyConfig.volcengineSttAppId || ''} onChange={(event) => setSafetyConfig({ volcengineSttAppId: event.target.value })} placeholder="可选" className="mt-1 w-full rounded-lg border border-pink-200 bg-pink-50/30 px-2 py-2 font-mono text-[9px] text-slate-800 outline-none" /></label>
-                <label className="block text-[9px] font-bold text-slate-600">旧版 Access Token<input type="password" value={safetyConfig.volcengineSttAccessKey || ''} onChange={(event) => setSafetyConfig({ volcengineSttAccessKey: event.target.value })} placeholder="可选" className="mt-1 w-full rounded-lg border border-pink-200 bg-pink-50/30 px-2 py-2 font-mono text-[9px] text-slate-800 outline-none" /></label>
+                <label className="block text-[9px] font-bold text-slate-600">旧版 APP ID（保留，不用于 Plan）<input value={safetyConfig.volcengineSttAppId || ''} onChange={(event) => setSafetyConfig({ volcengineSttAppId: event.target.value })} placeholder="可选" className="mt-1 w-full rounded-lg border border-pink-200 bg-pink-50/30 px-2 py-2 font-mono text-[9px] text-slate-800 outline-none" /></label>
+                <label className="block text-[9px] font-bold text-slate-600">旧版 Access Token（保留，不用于 Plan）<input type="password" value={safetyConfig.volcengineSttAccessKey || ''} onChange={(event) => setSafetyConfig({ volcengineSttAccessKey: event.target.value })} placeholder="可选" className="mt-1 w-full rounded-lg border border-pink-200 bg-pink-50/30 px-2 py-2 font-mono text-[9px] text-slate-800 outline-none" /></label>
               </div>
-              <label className="block text-[9px] font-bold text-slate-600">资源 ID<input value={safetyConfig.volcengineSttResourceId || 'volc.bigasr.auc_turbo'} onChange={(event) => setSafetyConfig({ volcengineSttResourceId: event.target.value })} className="mt-1 w-full rounded-lg border border-pink-200 bg-pink-50/30 px-2.5 py-2 font-mono text-[9px] text-slate-800 outline-none focus:border-pink-400" /></label>
+              <label className="block text-[9px] font-bold text-slate-600">资源 ID<input value={safetyConfig.volcengineSttResourceId || 'volc.seedasr.sauc.duration'} onChange={(event) => setSafetyConfig({ volcengineSttResourceId: event.target.value })} className="mt-1 w-full rounded-lg border border-pink-200 bg-pink-50/30 px-2.5 py-2 font-mono text-[9px] text-slate-800 outline-none focus:border-pink-400" /></label>
             </div>
           )}
 
@@ -952,7 +952,7 @@ export const SettingsView: React.FC = () => {
                 {
                   id: 'volcengine_tts',
                   label: '🌋 火山豆包语音合成 2.0 (Seed TTS)',
-                  desc: '使用独立语音接口与 seed-tts-2.0，复用上方火山方舟 Plan 的 API Key',
+                  desc: 'Agent Plan 语音合成 doubao-seed-tts-2.0，地址是 openspeech 的 /api/v3/plan，不是文字 /responses',
                 },
                 {
                   id: 'edge_neural',
@@ -1088,7 +1088,7 @@ export const SettingsView: React.FC = () => {
             <div className="space-y-3 rounded-xl border border-[#efb18c] bg-[#fff9f5] p-2.5">
               <div className="rounded-lg border border-[#f3d6c4] bg-white px-2.5 py-2">
                 <p className="text-[10px] font-black text-[#9a3f18]">火山豆包语音合成 2.0</p>
-                <p className="mt-0.5 break-all text-[9px] leading-4 text-[#667085]">接口：<span className="font-mono">openspeech.bytedance.com/api/v3/plan/tts/unidirectional</span>。复用火山方舟 Plan 的 API Key。</p>
+                <p className="mt-0.5 break-all text-[9px] leading-4 text-[#667085]">接口：<span className="font-mono">https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional</span>。资源 ID seed-tts-2.0。只有文字模型地址是 Agent Plan 时才复用它的 Key。</p>
               </div>
               <label className="block text-[10px] font-bold text-[#4b5565]">语音资源 ID
                 <input value={safetyConfig.volcengineTtsResourceId || 'seed-tts-2.0'} onChange={(event) => setSafetyConfig({ volcengineTtsResourceId: event.target.value })} className="mt-1 w-full rounded-lg border border-[#e8c8b5] bg-white px-2.5 py-2 font-mono text-[11px] text-[#263247] outline-none focus:border-[#e9793f]" />

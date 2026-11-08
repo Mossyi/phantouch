@@ -21,6 +21,7 @@ import { YCYIMBridgeClient } from './bridge/ycyImClient';
 import { DGLabSocketClient } from './bridge/dglabSocketClient';
 import { clampOutputToLimit, normalizeFiniteRange, normalizeSafetyLimit, randomIntegerWithinLimits, resolveEnabledEmsCeiling } from './safetyLimits';
 import { normalizeSiliconflowTtsModel, normalizeSiliconflowTtsVoice } from './voice/siliconflowTts';
+import { resolveVolcenginePlanSttResource } from './voice/volcenginePlanSpeech';
 import { parseApiBaseUrl, parseLocalNetworkApiBaseUrl } from './apiBaseUrl';
 
 export type DeviceStateCallback = (state: DeviceSystemState) => void;
@@ -430,7 +431,7 @@ export class DeviceManager {
     next.volcengineSttApiKey = String(next.volcengineSttApiKey || '').trim().slice(0, 1000);
     next.volcengineSttAppId = String(next.volcengineSttAppId || '').trim().slice(0, 200);
     next.volcengineSttAccessKey = String(next.volcengineSttAccessKey || '').trim().slice(0, 1000);
-    next.volcengineSttResourceId = String(next.volcengineSttResourceId || '').trim().slice(0, 200) || 'volc.bigasr.auc_turbo';
+    next.volcengineSttResourceId = resolveVolcenginePlanSttResource(next.volcengineSttResourceId);
     // 只接受 HTTPS，或局域网内的 HTTP（本地 Whisper 服务）；非法地址回退上一次的有效值
     const sttBaseUrl = parseApiBaseUrl(next.openaiSttBaseUrl) ?? parseLocalNetworkApiBaseUrl(next.openaiSttBaseUrl);
     next.openaiSttBaseUrl = sttBaseUrl ?? (this.safetyConfig.openaiSttBaseUrl || 'https://api.openai.com/v1');

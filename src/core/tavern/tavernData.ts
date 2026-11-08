@@ -87,7 +87,7 @@ export const DEFAULT_TAVERN_IMAGE_MODEL_CONFIG: TavernImageModelConfig = {
 
 export const VOLCENGINE_PLAN_IMAGE_BASE_URL = 'https://ark.cn-beijing.volces.com/api/plan/v3';
 // Seedream is the official model ID. The former extra "d" made Plan reject it.
-export const VOLCENGINE_PLAN_IMAGE_MODEL = 'doubao-seedream-5.0-lite';
+export const VOLCENGINE_PLAN_IMAGE_MODEL = 'doubao-seedream-5.0-flash';
 
 export const getTavernImageCredentialScope = (
   config: Pick<TavernImageModelConfig, 'provider' | 'baseUrl'>,

@@ -2930,7 +2930,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       return TTSManager.getInstance().prepare(speech, voice);
     },
     stopSpeech: () => TTSManager.getInstance().stop(),
-    sttOptions: buildSttOptions(safetyConfig),
+    sttOptions: buildSttOptions(safetyConfig, [store.getTavernModelConfig(), useAppStore.getState().llmConfig]),
     turnTiming: safetyConfig.voiceCallTurnTiming,
   });
 
@@ -3056,7 +3056,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         setIsVoiceProcessing(processing === true);
         if (error) showFeatureNotice(error);
       },
-      buildSttOptions(safetyConfig),
+      buildSttOptions(safetyConfig, [store.getTavernModelConfig(), useAppStore.getState().llmConfig]),
     );
   };
 
@@ -3631,7 +3631,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           name={activeCard.name}
           avatar={activeCard.avatar}
           userName={store.getTavernModelConfig().userName || '我'}
-          sttOptions={buildSttOptions(safetyConfig)}
+          sttOptions={buildSttOptions(safetyConfig, [store.getTavernModelConfig(), useAppStore.getState().llmConfig])}
           speak={speakAsCharacter}
           stopSpeech={stopTtsPlayback}
           emsCeiling={resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200)}
@@ -3714,7 +3714,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           openingLine={phoneCall === 'outgoing'
             ? '（📞 我给你打了语音电话，你刚刚接起）'
             : '（📞 你给我打了语音电话，我刚刚接起。请你先开口，说说为什么打来）'}
-          sttLabel={`实时语音 · ${describeSttEngine(buildSttOptions(safetyConfig))}`}
+          sttLabel={`实时语音 · ${describeSttEngine(buildSttOptions(safetyConfig, [store.getTavernModelConfig(), useAppStore.getState().llmConfig]))}`}
           onEnd={handlePhoneCallEnd}
           onEmergencyStop={() => void useAppStore.getState().triggerEmergencyStop()}
         />

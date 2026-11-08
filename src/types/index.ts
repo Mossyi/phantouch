@@ -109,7 +109,7 @@ export interface SafetyConfig {
   sttEngine: STTEngineType; // 语音识别引擎: 浏览器 / 硅基流动 / 火山豆包语音
   siliconflowSttApiKey?: string;
   siliconflowSttModel?: string;
-  volcengineSttApiKey?: string; // 新版豆包语音控制台 X-Api-Key
+  volcengineSttApiKey?: string; // Agent Plan 语音识别 X-Api-Key；留空时可复用 Plan 文字 Key
   volcengineSttAppId?: string; // 旧版控制台 APP ID
   volcengineSttAccessKey?: string; // 旧版控制台 Access Token
   volcengineSttResourceId?: string;
