@@ -1,5 +1,4 @@
 import { TavernCharacterCard, TavernEmotionKey } from './tavernTypes';
-import { TavernCharacterStats } from './tavernStatusHud';
 
 export interface TavernEmotionMeta {
   key: TavernEmotionKey;
@@ -107,26 +106,24 @@ const EMOTION_REGEX_MAP: Array<{ key: TavernEmotionKey; regex: RegExp }> = [
 export interface EmotionDeductionResult {
   emotion: TavernEmotionKey;
   cleanedReply: string;
-  source: 'tag' | 'hardware' | 'stats' | 'regex' | 'fallback';
+  source: 'tag' | 'hardware' | 'regex' | 'fallback';
 }
 
 /**
- * 三级情绪决策引擎：
+ * 表情决策：
  * 1. 显式内嵌标签 [emotion:blush] 或 <emotion:blush>，即时捕获并从气泡正文中静默剥离
- * 2. 硬件脉冲 / 生理状态机驱动（快感>=75%强制动情，羞耻>=70%脸红）
+ * 2. 硬件脉冲进行中时用动情表情
  * 3. 正则与动作关键词启发式分析
  * 4. 缺省回退为 neutral
+ * 好感/服从/快感/羞耻数值不再参与，避免已停用的状态栏继续改表情。
  */
 export function deduceTavernEmotion(params: {
   reply?: string;
   text?: string;
-  stats?: TavernCharacterStats | null;
-  biometrics?: Partial<TavernCharacterStats> | null;
   hardwareActive?: boolean;
   hasActivePulse?: boolean;
 }): EmotionDeductionResult {
   const rawReply = params.reply ?? params.text ?? '';
-  const stats = params.stats ?? (params.biometrics ? params.biometrics as TavernCharacterStats : undefined);
   const hardwareActive = params.hardwareActive ?? params.hasActivePulse ?? false;
 
   // 1. 显式内嵌标签捕获与清洗
@@ -155,23 +152,7 @@ export function deduceTavernEmotion(params: {
     };
   }
 
-  // 3. 生理与好感度状态机驱动
-  if (stats) {
-    if (stats.arousal >= 75) {
-      return { emotion: 'aroused', cleanedReply: rawReply, source: 'stats' };
-    }
-    if (stats.shame >= 70) {
-      return { emotion: 'blush', cleanedReply: rawReply, source: 'stats' };
-    }
-    if (stats.obedience <= 15) {
-      return { emotion: 'angry', cleanedReply: rawReply, source: 'stats' };
-    }
-    if (stats.favor >= 80 && stats.arousal < 45) {
-      return { emotion: 'smile', cleanedReply: rawReply, source: 'stats' };
-    }
-  }
-
-  // 4. 正则语义与动作关键词启发式推导
+  // 3. 正则语义与动作关键词启发式推导
   for (const { key, regex } of EMOTION_REGEX_MAP) {
     if (regex.test(rawReply)) {
       return { emotion: key, cleanedReply: rawReply, source: 'regex' };

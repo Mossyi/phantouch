@@ -18,98 +18,43 @@ function setupLocalStorage() {
   return map;
 }
 
-test('tavernStatusHud correctly normalizes, parses delta tags, and clamps 0-100', async () => {
+test('酒馆好感状态栏已移除：不评分、不注入提示，旧档字段保留且日程仍可加载', async () => {
+  const { readFileSync, existsSync } = await import('node:fs');
+  assert.equal(existsSync('src/components/tavern/TavernStatusHudBar.tsx'), false);
+  assert.equal(existsSync('src/core/tavern/tavernStatusHud.ts'), false);
+  const chat = readFileSync('src/components/tavern/TavernChatTab.tsx', 'utf8');
+  for (const gone of ['TavernStatusHudBar', 'buildStatusPromptInstruction', 'parseAndApplyStatusUpdate', 'loadCharacterStats', '好感', '角色心境', '展开属性栏']) {
+    assert.equal(chat.includes(gone), false, gone);
+  }
+  assert.ok(chat.includes('TavernRpgHud'), '日程条仍在聊天页');
+
+  const rpgSource = readFileSync('src/core/tavern/tavernRpg.ts', 'utf8');
+  assert.equal(rpgSource.includes('STATUS'), false);
+  assert.ok(rpgSource.includes('obedience'));
+
   setupLocalStorage();
-  const {
-    DEFAULT_TAVERN_CHARACTER_STATS,
-    normalizeCharacterStats,
-    parseAndApplyStatusUpdate,
-    loadCharacterStats,
-    saveCharacterStats,
-    resetCharacterStats,
-    deleteCharacterStats,
-  } = await bundled('src/core/tavern/tavernStatusHud.ts');
+  const statsKey = 'ycy_tavern_stats_card_reader';
+  const storedStats = JSON.stringify({ favor: 88, obedience: 77, arousal: 66, shame: 55, mood: '旧心境' });
+  globalThis.localStorage.setItem(statsKey, storedStats);
+  const rpg = await bundled('src/core/tavern/tavernRpg.ts');
+  const fresh = rpg.createRpgState('contract', { char: '林夏', user: '学员' });
+  rpg.saveRpgState('card_reader', fresh);
+  const loaded = rpg.loadRpgState('card_reader');
+  assert.equal(loaded.trainee.obedience, fresh.trainee.obedience);
+  assert.equal(loaded.trainee.shame, fresh.trainee.shame);
+  assert.equal(globalThis.localStorage.getItem(statsKey), storedStats, '读日程不得改写或清掉旧好感记录');
+  const prompt = rpg.buildRpgPrompt(loaded, { char: '林夏', user: '学员' });
+  assert.equal(prompt.includes('STATUS'), false);
+  assert.equal(prompt.includes('好感度'), false);
+  assert.ok(prompt.includes('服从'));
 
-  // 1. Defaults and normalization
-  const normalized = normalizeCharacterStats({ favor: 120, obedience: -10, arousal: '55', mood: ' 微笑 ' });
-  assert.equal(normalized.favor, 100);
-  assert.equal(normalized.obedience, 0);
-  assert.equal(normalized.arousal, 55);
-  assert.equal(normalized.mood, '微笑');
+  const { sanitizeTavernVisibleContent } = await bundled('src/core/tavern/tavernTextSanitizer.ts');
+  const visible = sanitizeTavernVisibleContent('今天先看书。<!--STATUS:{"favor":"+5","mood":"旧心境"}-->', false);
+  assert.equal(visible, '今天先看书。');
+  assert.equal(globalThis.localStorage.getItem(statsKey), storedStats);
 
-  // 2. Parse relative delta in HTML comment
-  const initial = { favor: 40, obedience: 30, arousal: 10, shame: 50, mood: '普通' };
-  const rawReply = '（脸颊泛起一丝红晕）主、主人您怎么能这样看我...<!--STATUS:{"favor":"+5","obedience":"+10","arousal":"+25","shame":"-5","mood":"羞赧心慌"}-->';
-
-  const result = parseAndApplyStatusUpdate(rawReply, initial);
-  assert.equal(result.updated, true);
-  assert.equal(result.cleanedText, '（脸颊泛起一丝红晕）主、主人您怎么能这样看我...');
-  assert.equal(result.nextStats.favor, 45);
-  assert.equal(result.nextStats.obedience, 40);
-  assert.equal(result.nextStats.arousal, 35);
-  assert.equal(result.nextStats.shame, 45);
-  assert.equal(result.nextStats.mood, '羞赧心慌');
-
-  // 3. Clamping upper and lower bounds on delta
-  const extremeResult = parseAndApplyStatusUpdate(
-    '回复内容<!--STATUS:{"favor":"+200","shame":"-100"}-->',
-    initial
-  );
-  assert.equal(extremeResult.nextStats.favor, 100);
-  assert.equal(extremeResult.nextStats.shame, 0);
-
-  // 4. Persistence roundtrip
-  saveCharacterStats('card_alice', extremeResult.nextStats);
-  const loaded = loadCharacterStats('card_alice');
-  assert.equal(loaded.favor, 100);
-  assert.equal(loaded.shame, 0);
-
-  // 5. Reset & Delete
-  const reset = resetCharacterStats('card_alice');
-  assert.equal(reset.favor, DEFAULT_TAVERN_CHARACTER_STATS.favor);
-  assert.equal(loadCharacterStats('card_alice').favor, DEFAULT_TAVERN_CHARACTER_STATS.favor);
-  deleteCharacterStats('card_alice');
-  assert.equal(loadCharacterStats('card_alice').favor, DEFAULT_TAVERN_CHARACTER_STATS.favor);
-
-  // 6. Tolerate unquoted plus signs and single quotes in JSON payload
-  const unquotedResult = parseAndApplyStatusUpdate(
-    '回复内容<!--STATUS:{"favor":+5,"obedience":+3,"arousal":-2,\'mood\':\'轻笑\'}-->',
-    initial
-  );
-  assert.equal(unquotedResult.updated, true);
-  assert.equal(unquotedResult.cleanedText, '回复内容');
-  assert.equal(unquotedResult.nextStats.favor, 45);
-  assert.equal(unquotedResult.nextStats.obedience, 33);
-  assert.equal(unquotedResult.nextStats.arousal, 8);
-  assert.equal(unquotedResult.nextStats.mood, '轻笑');
-
-  // 7. XML tag format <STATUS>{...}</STATUS>
-  const xmlResult = parseAndApplyStatusUpdate(
-    '回复内容<STATUS>{"favor":"+3","mood":"微笑"}</STATUS>',
-    initial
-  );
-  assert.equal(xmlResult.updated, true);
-  assert.equal(xmlResult.cleanedText, '回复内容');
-  assert.equal(xmlResult.nextStats.favor, 43);
-
-  // 8. Fallback inference when model outputs no tag
-  const fallbackResult = parseAndApplyStatusUpdate(
-    '（脸色微红，低声应答）',
-    initial,
-    '我最喜欢你了，要乖乖听话哦'
-  );
-  assert.equal(fallbackResult.updated, true);
-  assert.equal(fallbackResult.nextStats.favor > initial.favor, true);
-  assert.equal(fallbackResult.nextStats.obedience > initial.obedience, true);
-
-  // 9. Tolerate trailing commas in JSON payload
-  const trailingCommaResult = parseAndApplyStatusUpdate(
-    '回复内容<!--STATUS:{"favor":"+6","mood":"心动",}-->',
-    initial
-  );
-  assert.equal(trailingCommaResult.updated, true);
-  assert.equal(trailingCommaResult.cleanedText, '回复内容');
-  assert.equal(trailingCommaResult.nextStats.favor, 46);
+  const { SignInCodeEngine } = await bundled('src/core/tavern/signInCodeEngine.ts');
+  assert.equal(SignInCodeEngine.isBackupKey(statsKey), true);
 });
 
 test('tavern multimodal images and context budgeting preserve messages, budget tokens, and protect storage quotas', async () => {

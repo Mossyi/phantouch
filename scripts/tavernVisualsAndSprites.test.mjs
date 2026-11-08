@@ -38,22 +38,15 @@ test('tavernVisualsAndSprites: deduction, normalization, and sprite fallback log
   assert.equal(tagResult.source, 'tag');
   assert.equal(tagResult.cleanedReply, '好的，主人…  我马上就去准备！');
 
-  // 3. Emotion deduction: hardware and biometrics
+  // 3. Emotion deduction: hardware still changes the sprite; retired favor/arousal numbers do not
   const hwResult = deduceTavernEmotion({ reply: '你好', hardwareActive: true });
   assert.equal(hwResult.emotion, 'aroused');
   assert.equal(hwResult.source, 'hardware');
 
-  const statsAroused = deduceTavernEmotion({ reply: '等一下…', stats: { arousal: 80, shame: 20, obedience: 50, favor: 50 } });
-  assert.equal(statsAroused.emotion, 'aroused');
-
-  const statsBlush = deduceTavernEmotion({ reply: '你别看我…', stats: { arousal: 40, shame: 75, obedience: 50, favor: 50 } });
-  assert.equal(statsBlush.emotion, 'blush');
-
-  const statsAngry = deduceTavernEmotion({ reply: '哼！', stats: { arousal: 20, shame: 10, obedience: 10, favor: 20 } });
-  assert.equal(statsAngry.emotion, 'angry');
-
-  const statsSmile = deduceTavernEmotion({ reply: '今天天气真好。', stats: { arousal: 20, shame: 10, obedience: 60, favor: 85 } });
-  assert.equal(statsSmile.emotion, 'smile');
+  const retiredStats = { arousal: 80, shame: 75, obedience: 10, favor: 85 };
+  const ignoredStats = deduceTavernEmotion({ reply: '等一下…', stats: retiredStats, biometrics: retiredStats });
+  assert.equal(ignoredStats.emotion, 'neutral');
+  assert.equal(ignoredStats.source, 'fallback');
 
   // 4. Emotion deduction: regex action heuristics
   const actionBlush = deduceTavernEmotion({ reply: '……才没有呢。*她低下头，两颊浮现出一抹娇羞的绯红*' });
