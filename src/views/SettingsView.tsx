@@ -902,7 +902,7 @@ export const SettingsView: React.FC = () => {
 
           {safetyConfig.sttEngine === 'volcengine' && (
             <div className="space-y-2 rounded-xl border border-pink-200 bg-white p-3 shadow-sm">
-              <p className="text-[9.5px] leading-4 text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200">识别走 Agent Plan WebSocket <span className="font-mono">wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream</span>，模型 doubao-seed-asr-2.0，资源 ID volc.seedasr.sauc.duration。这不是文字 /responses，也不是旧的录音文件极速版。Key 留空时复用文字模型里的 Plan Key；单独填写的识别 Key 会保留。旧版 APP ID 仍保存在本地，但这个接口不用它。浏览器若不能给 WebSocket 附加 X-Api-Key，会直接失败，不会改打别的接口。</p>
+              <p className="text-[9.5px] leading-4 text-amber-800 bg-amber-50 p-2 rounded-lg border border-amber-200">识别走 Agent Plan WebSocket <span className="font-mono">wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_nostream</span>，模型 doubao-seed-asr-2.0，资源 ID volc.seedasr.sauc.duration。这不是文字 /responses，也不是旧的录音文件极速版。Key 留空时复用文字模型里的 Plan Key；单独填写的识别 Key 会保留。旧版 APP ID 仍保存在本地，但这个接口不用它。Android 安装包用原生连接附带 X-Api-Key。浏览器加不上这个请求头，会直接失败，不会改用旧的录音文件接口，也不会改打文字 /responses。</p>
               <label className="block text-[10px] font-bold text-slate-700">Agent Plan 语音识别 Key
                 <input type="password" autoComplete="off" value={safetyConfig.volcengineSttApiKey || ''} onChange={(event) => setSafetyConfig({ volcengineSttApiKey: event.target.value })} placeholder="留空则复用文字模型里的 Plan Key" className="mt-1 w-full rounded-lg border border-pink-200 bg-pink-50/30 px-2.5 py-2 font-mono text-[10px] text-slate-800 outline-none focus:border-pink-400" />
               </label>
