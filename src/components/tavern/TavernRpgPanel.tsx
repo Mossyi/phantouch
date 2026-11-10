@@ -1,9 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppStore } from '../../store/useAppStore';
 import {
   Award, BatteryLow, BedDouble, BookOpen, CalendarDays, Telescope, Wand2, Megaphone, Save, FolderOpen, Trash2, History, CheckCircle2, Circle, Dices, Footprints, Gift, Gavel, HeartPulse, ImagePlus, Loader2, Lock,
-  Map as MapIcon, MessageCircleHeart, NotebookText, Plus, RefreshCw, RotateCcw, ScrollText, Settings2, Sparkles, Star, Trophy, UserRound, Wrench, X, Zap,
+  ChevronLeft, ChevronRight, Map as MapIcon, MessageCircleHeart, NotebookText, Plus, RefreshCw, RotateCcw, ScrollText, Settings2, Sparkles, Star, Trophy, UserRound, Wrench, X, Zap,
 } from 'lucide-react';
 import { RpgCertificateModal } from './RpgCertificateModal';
 import { RPG_ICON_CREDIT, RPG_ICON_PATHS } from '../../core/tavern/rpgIcons';
@@ -272,6 +272,64 @@ export const TavernRpgHud: React.FC<{ state: TavernRpgState; art?: string; onOpe
   );
 };
 
+/** 横向动作条：竖向滚轮和左右按钮都能把它滚到被裁切的按钮。 */
+const useHorizontalStrip = () => {
+  const ref = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+  const update = React.useCallback(() => {
+    const strip = ref.current;
+    if (!strip) return;
+    const left = strip.scrollLeft > 4;
+    const right = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 4;
+    setEdges((current) => (current.left === left && current.right === right ? current : { left, right }));
+  }, []);
+  useEffect(() => {
+    const strip = ref.current;
+    if (!strip) return undefined;
+    const onWheel = (event: WheelEvent) => {
+      if (strip.scrollWidth <= strip.clientWidth + 1) return;
+      if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      strip.scrollLeft += event.deltaY;
+      event.preventDefault();
+    };
+    strip.addEventListener('wheel', onWheel, { passive: false });
+    strip.addEventListener('scroll', update, { passive: true });
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(strip);
+    [...strip.children].forEach((child) => observer?.observe(child));
+    update();
+    const frame = requestAnimationFrame(update);
+    return () => {
+      cancelAnimationFrame(frame);
+      strip.removeEventListener('wheel', onWheel);
+      strip.removeEventListener('scroll', update);
+      observer?.disconnect();
+    };
+  }, [update]);
+  return { ref, edges, update, scrollBy: (distance: number) => ref.current?.scrollBy({ left: distance, behavior: 'smooth' }) };
+};
+
+const HorizontalStrip: React.FC<{ label: string; className?: string; children: React.ReactNode }> = ({ label, className = '', children }) => {
+  const strip = useHorizontalStrip();
+  return (
+    <div className="relative">
+      {strip.edges.left && (
+        <button type="button" aria-label={`${label}向左`} onClick={() => strip.scrollBy(-180)} className="absolute left-0 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-pink-200 bg-white text-slate-700 shadow-sm">
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+      )}
+      <div ref={strip.ref} data-allow-scroll="true" aria-label={label} className={`rpg-choice-strip flex items-center gap-1.5 overflow-x-auto px-8 ${className}`}>
+        {children}
+      </div>
+      {strip.edges.right && (
+        <button type="button" aria-label={`${label}向右`} onClick={() => strip.scrollBy(180)} className="absolute right-0 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-pink-200 bg-white text-slate-700 shadow-sm">
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+};
+
 // ─── 回应选项与系统动作 ────────────────────────────────────────────────────────
 
 export const TavernRpgChoices: React.FC<{
@@ -297,7 +355,7 @@ export const TavernRpgChoices: React.FC<{
     .slice(0, 3);
   const chip = 'flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-bold shadow-xs transition disabled:opacity-50';
   return (
-    <div key={`${state.turn}-${state.currentId}-${state.period}`} className="flex items-center gap-1.5 overflow-x-auto px-1 scrollbar-none" data-allow-scroll>
+    <HorizontalStrip key={`${state.turn}-${state.currentId}-${state.period}`} label="日程动作">
       {choices.map((choice) => {
         const mod = choice.check ? checkModifier(state, choice.check.stat) : 0;
         return (
@@ -335,7 +393,7 @@ export const TavernRpgChoices: React.FC<{
           <Footprints className="h-3 w-3" />去{location.name}
         </button>
       ))}
-    </div>
+    </HorizontalStrip>
   );
 };
 
@@ -676,6 +734,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   const [ngpGameMode, setNgpGameMode] = useState<'normal' | 'hardcore'>('normal');
   const [ngpStyle, setNgpStyle] = useState<TrainerStyleId>('gentle');
   const [unlockedEndings, setUnlockedEndings] = useState<string[]>(() => getUnlockedEndings(charName));
+  const tabStrip = useHorizontalStrip();
 
   React.useEffect(() => {
     if (state?.ending?.id) {
@@ -780,10 +839,10 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
           </div>
         ) : (
           <>
-            <div className="flex shrink-0 gap-0.5 border-b border-pink-50 px-2 py-2" role="tablist">
+            <div ref={tabStrip.ref} className="rpg-choice-strip flex shrink-0 gap-0.5 overflow-x-auto border-b border-pink-50 px-2 py-2" role="tablist" data-allow-scroll="true" aria-label="训练日程分页">
               {tabs.map((item) => (
                 <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)}
-                  className={`flex flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-1 text-[9.5px] font-bold transition ${tab === item.id ? 'bg-pink-50 text-pink-700' : 'text-slate-500 hover:text-slate-700'}`}>
+                  className={`flex min-w-[3.4rem] shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-1 text-[9.5px] font-bold transition ${tab === item.id ? 'bg-pink-50 text-pink-700' : 'text-slate-500 hover:text-slate-700'}`}>
                   <item.icon className="h-3.5 w-3.5" />{item.label}
                 </button>
               ))}
