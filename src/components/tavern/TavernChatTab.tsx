@@ -164,8 +164,12 @@ import {
   addRule,
   acceptRpgWrite,
   adoptCardVoice,
+  applyChoiceCheck,
   applyGuidanceAction,
   applyRpgUpdate,
+  dismissFunToast,
+  equipRpgTitle,
+  noteGalleryEndings,
   bindMissingCardVoice,
   buildRpgPrompt,
   buyItem,
@@ -184,7 +188,9 @@ import {
   itemUseAction,
   loadRpgState,
   parseRpgUpdate,
+  readCardTwists,
   readCardVoice,
+  setTensionEnabled,
   rpgStateAfterCardSwitch,
   recordCheck,
   rememberSnapshot,
@@ -491,6 +497,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const rpgStateRef = useRef<TavernRpgState | null>(rpgState);
   const rpgOwnerRef = useRef(activeCard.id);
   const [rpgPanelTab, setRpgPanelTab] = useState<RpgPanelTab | null>(null);
+  const pendingStakeRef = useRef(0);
   const [activeSensorChallenge, setActiveSensorChallenge] = useState<{
     courseId: string;
     courseName: string;
@@ -2085,7 +2092,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   const startRpg = (templateId: string, custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number; trainerStyle?: 'gentle' | 'strict' | 'observer'; gameMode?: 'normal' | 'hardcore' | 'reversal'; inheritedTraits?: string[]; inheritedPoints?: number }) => {
-    const next = createRpgState(templateId, rpgNames(), { ...custom, cardVoice: readCardVoice(activeCard, 'new-game') });
+    const next = createRpgState(templateId, rpgNames(), { ...custom, cardVoice: readCardVoice(activeCard, 'new-game'), cardTwists: readCardTwists(activeCard) });
     updateRpgState(next);
     setRpgPanelTab(null);
     const home = next.locations.find((location) => location.id === next.homeId)?.name ?? '住处';
@@ -2096,11 +2103,28 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const runRpgAction = (action: RpgSystemAction & { challengePassed?: boolean }) => {
     const current = rpgStateRef.current;
     if (!current || isLoading) return;
+    if (action.type === 'equipTitle') {
+      updateRpgState(equipRpgTitle(current, action.id));
+      return;
+    }
+    if (action.type === 'dismissToast') {
+      updateRpgState(dismissFunToast(current));
+      return;
+    }
+    if (action.type === 'tension') {
+      updateRpgState(setTensionEnabled(current, action.enabled));
+      return;
+    }
+    if (action.type === 'gallery') {
+      updateRpgState(noteGalleryEndings(current, action.ids));
+      return;
+    }
 
     // 具身感应挑战拦截
     if (action.type === 'course' && action.challengePassed === undefined) {
       const course = findCourse(current, action.courseId);
       if (course?.sensorChallenge && current.hardware.sensorChallengesEnabled) {
+        pendingStakeRef.current = action.stake ?? 0;
         setActiveSensorChallenge({
           courseId: course.id,
           courseName: course.name,
@@ -2129,7 +2153,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     let result: RpgActionResult;
     switch (action.type) {
       case 'travel': result = travelTo(current, action.locationId); break;
-      case 'course': result = runCourse(current, action.courseId, undefined, action.challengePassed !== undefined ? { challengePassed: action.challengePassed } : undefined); break;
+      case 'course': result = runCourse(current, action.courseId, undefined, {
+        ...(action.challengePassed !== undefined ? { challengePassed: action.challengePassed } : {}),
+        ...(action.stake ? { stake: action.stake } : {}),
+      }); break;
       case 'buy': result = buyItem(current, action.item); break;
       case 'work': result = doWork(current); break;
       case 'rest': result = restUntilMorning(current); break;
@@ -2183,8 +2210,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const handleSensorChallengeComplete = (success: boolean) => {
     if (!activeSensorChallenge) return;
     const courseId = activeSensorChallenge.courseId;
+    const stake = pendingStakeRef.current;
+    pendingStakeRef.current = 0;
     setActiveSensorChallenge(null);
-    runRpgAction({ type: 'course', courseId, challengePassed: success });
+    runRpgAction({ type: 'course', courseId, challengePassed: success, stake });
   };
 
   const handleSensorChallengeCancel = () => {
@@ -2195,15 +2224,14 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   /** 用户的回应选项：带检定的先掷骰（用户的训练属性和特质做修正） */
-  const pickRpgChoice = (choice: RpgChoice) => {
+  const pickRpgChoice = (choice: RpgChoice, stake = 0) => {
     const current = rpgStateRef.current;
     if (!current || isLoading) return;
     let text = choice.text;
     if (choice.check) {
-      const result = rollCheck(current, choice.check);
-      const recorded = evaluateProgress(recordCheck(current, result)).state;
-      const settled = settleRpgCheck(recorded, result);
-      text = `${choice.text}\n${formatCheckResult(result)}${settled.note}`;
+      const resolved = applyChoiceCheck(current, choice.check, stake);
+      const settled = settleRpgCheck(resolved.state, resolved.result);
+      text = `${choice.text}\n${resolved.line}${settled.note}`;
       updateRpgState(settled.state);
     }
     void handleSendRef.current?.(text, false);

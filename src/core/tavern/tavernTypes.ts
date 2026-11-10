@@ -29,6 +29,8 @@ export interface TavernCharacterCard {
     category?: string;
   };
   hardwareEnchanted: boolean; // 是否开启“硬件支配附魔”
+  /** 训练日程可用的角色卡转折，触发一次后记为已用。 */
+  rpgTwists?: Array<{ id?: string; text: string }>;
   creator?: string;
   source: 'preset' | 'imported_png' | 'imported_json' | 'dzmm_cloud' | 'ai_generated';
 }

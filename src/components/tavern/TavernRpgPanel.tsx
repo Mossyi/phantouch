@@ -32,8 +32,13 @@ import {
   TRAINER_STYLES,
   trustLabel,
   type TrainerStyleId,
+  CHECK_TIER_LABEL,
+  WAGER_PRESETS,
   findCourse,
   getCoursesHere,
+  listAchievements,
+  previewCheck,
+  tensionCountdown,
   getLocation,
   getReachableLocations,
   getTrait,
@@ -60,7 +65,11 @@ import {
 
 export type RpgSystemAction =
   | { type: 'travel'; locationId: string }
-  | { type: 'course'; courseId: string }
+  | { type: 'course'; courseId: string; stake?: number }
+  | { type: 'equipTitle'; id: string | null }
+  | { type: 'dismissToast' }
+  | { type: 'tension'; enabled: boolean }
+  | { type: 'gallery'; ids: string[] }
   | { type: 'buy'; item: string }
   | { type: 'work' }
   | { type: 'rest' }
@@ -330,15 +339,98 @@ const HorizontalStrip: React.FC<{ label: string; className?: string; children: R
   );
 };
 
+const prefersStillDice = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+const CheckOfferCard: React.FC<{
+  state: TavernRpgState;
+  title: string;
+  stat: RpgStatKey;
+  dc: number;
+  disabled?: boolean;
+  onCancel: () => void;
+  onConfirm: (stake: number) => void;
+}> = ({ state, title, stat, dc, disabled, onCancel, onConfirm }) => {
+  const [stake, setStake] = useState(0);
+  const preview = previewCheck(state, stat, dc);
+  const stakes = WAGER_PRESETS.filter((amount) => amount === 0 || amount <= state.points);
+  const part = (label: string, value: number) => value ? `${label} ${value > 0 ? `+${value}` : value}` : '';
+  const parts = [part('属性', preview.fromStat), part('特质', preview.fromTrait), part('体力', preview.fromStamina), part('压力', preview.fromStress)].filter(Boolean);
+  return (
+    <div className="rounded-2xl border border-violet-200 bg-white p-3 text-left shadow-sm" role="dialog" aria-label="检定预告">
+      <p className="text-[12px] font-black text-slate-800">{title}</p>
+      <p className="mt-1 text-[11px] text-slate-600">难度 {dc} · 修正 {preview.total >= 0 ? `+${preview.total}` : preview.total} · 成功概率 {preview.chances.successPercent}%</p>
+      <p className="mt-1 text-[10px] leading-4 text-slate-500">{parts.join('，') || '没有修正'}。20 面里 {preview.chances.successFaces} 面会通过（含勉强成功）。</p>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {stakes.map((amount) => (
+          <button key={amount} type="button" disabled={disabled} aria-pressed={stake === amount} onClick={() => setStake(amount)} className={`rounded-full border px-2 py-1 text-[10px] font-bold ${stake === amount ? 'border-violet-400 bg-violet-50 text-violet-800' : 'border-slate-200 text-slate-600'}`}>
+            {amount === 0 ? '稳妥不押' : `押 ${amount}`}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1 text-[10px] text-slate-400">大成功返还 3 倍，成功返还 2 倍，勉强成功退回，失败没收。</p>
+      <div className="mt-2 flex gap-2">
+        <button type="button" onClick={onCancel} className="flex-1 rounded-xl border border-slate-200 py-1.5 text-[11px] font-bold text-slate-600">先不掷</button>
+        <button type="button" disabled={disabled} onClick={() => onConfirm(stake)} className="flex-1 rounded-xl bg-violet-600 py-1.5 text-[11px] font-black text-white disabled:opacity-40">掷骰</button>
+      </div>
+    </div>
+  );
+};
+
+const DiceResultCard: React.FC<{ state: TavernRpgState }> = ({ state }) => {
+  const history = state.fun?.rollHistory ?? [];
+  const latest = history[history.length - 1];
+  if (!latest) return null;
+  const still = prefersStillDice();
+  return (
+    <div className={`rounded-2xl border border-violet-200 bg-violet-50/70 p-3 ${still ? '' : 'rpg-die-roll'}`} aria-label="检定结果">
+      <div className="flex items-center gap-3">
+        <div className="grid h-14 w-14 place-items-center rounded-2xl bg-white text-2xl font-black text-violet-700 shadow-sm">{latest.roll}</div>
+        <div className="min-w-0">
+          <p className="text-[12px] font-black text-slate-800">{RPG_CHECK_LABELS[latest.stat as RpgStatKey] ?? latest.stat} · {CHECK_TIER_LABEL[latest.tier]}</p>
+          <p className="text-[10px] text-slate-600">d20 {latest.roll} {latest.mod >= 0 ? `+${latest.mod}` : latest.mod} = {latest.total} / 难度 {latest.dc}</p>
+          {latest.tier === 'costly' && <p className="text-[10px] text-amber-700">付出代价：压力 +3</p>}
+          {latest.stake > 0 && <p className="text-[10px] text-slate-500">押注 {latest.stake} · {latest.net > 0 ? `净赚 ${latest.net}` : latest.net === 0 ? '原数退回' : `失去 ${-latest.net}`}</p>}
+        </div>
+      </div>
+      {history.length > 1 && (
+        <ol className="mt-2 space-y-0.5" aria-label="检定记录">
+          {history.slice(0, -1).slice(-4).reverse().map((entry) => (
+            <li key={entry.id} className="text-[10px] text-slate-500">第 {entry.day} 天 · {entry.roll} 点 · {CHECK_TIER_LABEL[entry.tier]}</li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+};
+
+const AchievementWall: React.FC<{ state: TavernRpgState; onEquip: (id: string | null) => void }> = ({ state, onEquip }) => {
+  const items = listAchievements(state.fun?.unlocked ?? []);
+  const equipped = state.fun?.equipped ?? null;
+  return (
+    <div className="space-y-2" aria-label="称号墙">
+      <p className="text-[11px] font-black text-slate-800">称号墙 {items.filter((item) => item.unlocked).length}/{items.length}</p>
+      <div className="grid grid-cols-2 gap-1.5">
+        {items.map((item) => (
+          <button key={item.id} type="button" disabled={!item.unlocked} aria-label={item.unlocked ? `称号 ${item.title}` : `未解锁 ${item.hint}`} onClick={() => onEquip(equipped === item.id ? null : item.id)} className={`rounded-xl border px-2 py-2 text-left disabled:opacity-70 ${equipped === item.id ? 'border-amber-300 bg-amber-50' : 'border-pink-100 bg-white'}`}>
+            <span className="block text-[11px] font-black text-slate-800">{item.unlocked ? item.title : '未解锁'}</span>
+            <span className="block text-[9.5px] leading-4 text-slate-500">{item.unlocked ? (equipped === item.id ? '佩戴中，再点可卸下' : item.hint) : item.hint}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 // ─── 回应选项与系统动作 ────────────────────────────────────────────────────────
 
 export const TavernRpgChoices: React.FC<{
   state: TavernRpgState;
   disabled: boolean;
-  onPick: (choice: RpgChoice) => void;
+  onPick: (choice: RpgChoice, stake?: number) => void;
   onAction: (action: RpgSystemAction) => void;
   onOpenShop: () => void;
 }> = ({ state, disabled, onPick, onAction, onOpenShop }) => {
+  const [offer, setOffer] = useState<{ kind: 'choice'; choice: RpgChoice } | { kind: 'course'; courseId: string; name: string; stat: RpgStatKey; dc: number } | null>(null);
   const here = getLocation(state, state.currentId);
   const reachable = getReachableLocations(state).filter((location) => isLocationOpen(location, state.period));
   // AI 推荐的「去某地」和前往按钮重复时，只保留前往按钮（移动由系统完成，更可靠）
@@ -354,20 +446,40 @@ export const TavernRpgChoices: React.FC<{
     .sort((a, b) => Number(planned.has(b.course.id)) - Number(planned.has(a.course.id)))
     .slice(0, 3);
   const chip = 'flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-bold shadow-xs transition disabled:opacity-50';
+  const offerCheck = offer?.kind === 'choice' ? offer.choice.check : offer ? { stat: offer.stat, dc: offer.dc } : null;
   return (
+    <div className="space-y-2">
+    {(state.fun?.rollHistory?.length ?? 0) > 0 && <DiceResultCard state={state} />}
+    {offer && offerCheck && (
+      <CheckOfferCard
+        state={state}
+        title={offer.kind === 'choice' ? offer.choice.text : offer.name}
+        stat={offerCheck.stat}
+        dc={offerCheck.dc}
+        disabled={disabled}
+        onCancel={() => setOffer(null)}
+        onConfirm={(stake) => {
+          const chosen = offer;
+          setOffer(null);
+          if (chosen.kind === 'choice') onPick(chosen.choice, stake);
+          else onAction({ type: 'course', courseId: chosen.courseId, stake });
+        }}
+      />
+    )}
     <HorizontalStrip key={`${state.turn}-${state.currentId}-${state.period}`} label="日程动作">
       {choices.map((choice) => {
         const mod = choice.check ? checkModifier(state, choice.check.stat) : 0;
+        const odds = choice.check ? previewCheck(state, choice.check.stat, choice.check.dc).chances.successPercent : null;
         return (
-          <button key={choice.text} type="button" disabled={disabled} onClick={() => onPick(choice)} className={`${chip} border-pink-200 bg-white/95 text-slate-700 hover:border-pink-300 hover:text-pink-600`}>
+          <button key={choice.text} type="button" disabled={disabled} onClick={() => (choice.check ? setOffer({ kind: 'choice', choice }) : onPick(choice))} className={`${chip} border-pink-200 bg-white/95 text-slate-700 hover:border-pink-300 hover:text-pink-600`}>
             {choice.check ? <Dices className="h-3 w-3 text-violet-500" /> : <MessageCircleHeart className="h-3 w-3 text-pink-500" />}
             <span>{choice.text}</span>
-            {choice.check && <span className="font-medium text-violet-600">{RPG_CHECK_LABELS[choice.check.stat as RpgStatKey]}{signed(mod)} / {choice.check.dc}</span>}
+            {choice.check && <span className="font-medium text-violet-600">{RPG_CHECK_LABELS[choice.check.stat as RpgStatKey]}{signed(mod)} / {choice.check.dc} · {odds}%</span>}
           </button>
         );
       })}
       {courses.map((entry) => (
-        <button key={entry.course.id} type="button" disabled={disabled} onClick={() => onAction({ type: 'course', courseId: entry.course.id })} className={`${chip} border-violet-200 bg-violet-50/90 text-violet-800`}>
+        <button key={entry.course.id} type="button" disabled={disabled} onClick={() => (entry.course.check ? setOffer({ kind: 'course', courseId: entry.course.id, name: entry.course.name, stat: entry.course.check.stat, dc: entry.course.check.dc }) : onAction({ type: 'course', courseId: entry.course.id }))} className={`${chip} border-violet-200 bg-violet-50/90 text-violet-800`}>
           <RpgIcon name={courseIcon(entry.course.id)} className="h-3.5 w-3.5" />{entry.course.name}
           {planned.has(entry.course.id) && <span className="rounded-full bg-violet-200/70 px-1 text-[8.5px]">课表</span>}
           <span className="font-medium opacity-80">{courseCheckText(state, entry)}</span>
@@ -394,6 +506,7 @@ export const TavernRpgChoices: React.FC<{
         </button>
       ))}
     </HorizontalStrip>
+    </div>
   );
 };
 
@@ -751,7 +864,25 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
     return () => window.removeEventListener('keydown', handleKey);
   }, [onClose]);
 
+  const [courseOffer, setCourseOffer] = useState<{ courseId: string; name: string; stat: RpgStatKey; dc: number } | null>(null);
+  const gallerySent = useRef('');
+  React.useEffect(() => {
+    if (!state) return;
+    const ids = getUnlockedEndings(charName).slice().sort();
+    const key = ids.join('|');
+    if (gallerySent.current === key) return;
+    gallerySent.current = key;
+    if (ids.length) onAction({ type: 'gallery', ids });
+  }, [charName, onAction, state]);
   const act = (action: RpgSystemAction) => {
+    if (action.type === 'course' && action.stake === undefined && state) {
+      const course = findCourse(state, action.courseId);
+      if (course?.check) {
+        setCourseOffer({ courseId: course.id, name: course.name, stat: course.check.stat, dc: course.check.dc });
+        return;
+      }
+    }
+    setCourseOffer(null);
     onAction(action);
     onClose();
   };
@@ -812,7 +943,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                 </span>
               )}
             </h3>
-            {state && <p className="text-[10px] text-slate-500">{dayLabel(state)} · {RPG_PERIOD_LABELS[state.period]} · {STAGES[state.stage]?.name} · 积分 {state.points}</p>}
+            {state && <p className="text-[10px] text-slate-500">{dayLabel(state)} · {RPG_PERIOD_LABELS[state.period]} · {STAGES[state.stage]?.name} · 积分 {state.points}{state.fun?.tension ? (() => { const left = tensionCountdown(state.fun.tension); return left === null ? '' : ` · ⚡ ${left} 回合后有变数`; })() : ''}</p>}
             </div>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭" className="rounded-full p-1.5 text-slate-500 hover:bg-pink-50"><X className="h-4 w-4" /></button>
@@ -849,6 +980,29 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
             </div>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" data-allow-scroll>
               <TrainingDesk state={state} busy={busy} liveVoice={cardVoice} onAdopt={onAdoptCardVoice} onAction={onAction} />
+              {state.fun?.toasts?.length ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2" role="status">
+                  <p className="text-[12px] font-black text-amber-900">{state.fun.toasts[state.fun.toasts.length - 1]}</p>
+                  <button type="button" onClick={() => onAction({ type: 'dismissToast' })} className="mt-1 text-[10px] font-bold text-amber-800">知道了</button>
+                </div>
+              ) : null}
+              <DiceResultCard state={state} />
+              {courseOffer && (
+                <CheckOfferCard
+                  state={state}
+                  title={courseOffer.name}
+                  stat={courseOffer.stat}
+                  dc={courseOffer.dc}
+                  disabled={busy}
+                  onCancel={() => setCourseOffer(null)}
+                  onConfirm={(stake) => {
+                    const courseId = courseOffer.courseId;
+                    setCourseOffer(null);
+                    onAction({ type: 'course', courseId, stake });
+                    onClose();
+                  }}
+                />
+              )}
               {state.ending && (
                 <div className="space-y-2 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-pink-50 p-3">
                   <div className="flex items-center gap-3">
@@ -999,6 +1153,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
 
               {tab === 'status' && (
                 <>
+                  <AchievementWall state={state} onEquip={(id) => onAction({ type: 'equipTitle', id })} />
                   {(state.milestones ?? []).length > 0 && (
                     <div className="rounded-2xl border border-amber-100 bg-amber-50/40 p-3">
                       <p className="mb-1 flex items-center gap-1 text-[11px] font-black text-slate-700"><History className="h-3.5 w-3.5 text-amber-500" />训练回忆</p>
@@ -1286,6 +1441,13 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
 
               {tab === 'settings' && (
                 <>
+                  <div className="rounded-2xl border border-violet-100 bg-white p-3">
+                    <p className="text-[11px] font-black text-slate-800">导演转折</p>
+                    <p className="mt-1 text-[10px] leading-4 text-slate-500">连续平静、没有检定也没有大变化时，会倒计时然后插入一件小事。默认开着。</p>
+                    <button type="button" aria-label={state.fun?.tension?.enabled === false ? '开启导演转折' : '关闭导演转折'} onClick={() => onAction({ type: 'tension', enabled: state.fun?.tension?.enabled === false })} className="mt-2 rounded-xl border border-violet-200 px-3 py-1.5 text-[11px] font-bold text-violet-800">
+                      {state.fun?.tension?.enabled === false ? '已关闭，点此开启' : '已开启，点此关闭'}
+                    </button>
+                  </div>
                   <div className="space-y-2 rounded-2xl border border-pink-100 bg-white p-3">
                     <p className="flex items-center gap-1 text-[11px] font-black text-slate-800"><Save className="h-3.5 w-3.5 text-pink-500" />存档（最多 5 个）</p>
                     <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); setSlotError(onSaveSlot(slotName) ?? ''); setSlotName(''); }}>
