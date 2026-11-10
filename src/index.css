@@ -941,3 +941,80 @@ button[class*="bg-rose-500"] {
   to { opacity: 1; transform: none; }
 }
 
+.rpg-scene-bg {
+  animation: rpg-scene-fade 0.45s ease both;
+}
+
+.rpg-sprite-enter {
+  animation: rpg-sprite-in 0.45s ease both;
+}
+
+.rpg-scene-shake {
+  animation: rpg-scene-shake 0.55s ease;
+}
+
+.rpg-die-banner {
+  animation: rpg-scene-fade 0.25s ease both;
+}
+
+.rpg-weather {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.rpg-weather-rain {
+  background-image: repeating-linear-gradient(115deg, transparent 0 10px, rgba(255,255,255,0.35) 11px, transparent 13px);
+  animation: rpg-rain 0.7s linear infinite;
+  opacity: 0.55;
+}
+
+.rpg-weather-snow {
+  background-image: radial-gradient(circle, rgba(255,255,255,0.85) 1px, transparent 1.6px);
+  background-size: 18px 22px;
+  animation: rpg-snow 2.4s linear infinite;
+  opacity: 0.8;
+}
+
+.rpg-weather-fog {
+  background: linear-gradient(to top, rgba(255,255,255,0.28), transparent 55%);
+}
+
+@keyframes rpg-scene-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes rpg-sprite-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes rpg-scene-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+@keyframes rpg-rain {
+  from { background-position: 0 0; }
+  to { background-position: -40px 80px; }
+}
+
+@keyframes rpg-snow {
+  from { background-position: 0 -20px; }
+  to { background-position: 12px 40px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rpg-scene-bg,
+  .rpg-sprite-enter,
+  .rpg-scene-shake,
+  .rpg-die-banner,
+  .rpg-die-roll,
+  .rpg-weather-rain,
+  .rpg-weather-snow {
+    animation: none;
+  }
+}
+

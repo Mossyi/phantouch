@@ -3579,6 +3579,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         <TavernRpgPanel
           state={isGroupScene ? null : rpgState}
           portrait={{ avatar: activeCard.avatar, expressions: activeCard.expressions }}
+          emotion={activeEmotion}
           art={rpgArt}
           artBusyId={rpgArtBusyId}
           artAuto={rpgArtAuto}
