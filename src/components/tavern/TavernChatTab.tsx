@@ -2371,8 +2371,17 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   const handleSend = async (forcedPrompt?: string, forcedOoc?: boolean) => {
+    // isLoading 要等下一次渲染才变，连点会在那之前再进一次。用 ref 在第一次进入时立刻占住。
+    if (isLoadingRef.current) return;
     if (isGroupScene) {
-      await handleGroupSend(forcedPrompt, forcedOoc);
+      const preview = (forcedPrompt !== undefined ? forcedPrompt : input).trim();
+      if ((!preview && attachedImages.length === 0) || isLoading) return;
+      isLoadingRef.current = true;
+      try {
+        await handleGroupSend(forcedPrompt, forcedOoc);
+      } finally {
+        isLoadingRef.current = false;
+      }
       return;
     }
     const rawText = (forcedPrompt !== undefined ? forcedPrompt : input).trim();
@@ -2413,6 +2422,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
 
     let requestController: AbortController | null = null;
     try {
+      isLoadingRef.current = true;
       // 1. 扫描硬件世界书关键词 (仅在非 OOC 模式触发)
       let lorebookInjected = '';
       let deferredUserActions: LorebookEntry[] = [];
@@ -2782,6 +2792,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       streamingReplyRef.current = '';
       setStreamingReply('');
       setIsLoading(false);
+      isLoadingRef.current = false;
     }
   };
 

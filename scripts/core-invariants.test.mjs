@@ -94,7 +94,10 @@ test('signed certificates preserve required safety clauses and reject polluted r
     participantName: ' 测试参与者 ', mentorId: 'mentor', mentorName: '测试导师', themeId: 'story', termId: 'lasting', reviewId: '30d',
     clauseIds: [], customPromise: '每周复盘一次', signatureDataUrl: 'data:image/png;base64,AAAA',
   }, new Date('2026-08-27T00:00:00.000Z'), () => 0);
-  assert.equal(signed.id, 'YCY-20260827-000000');
+  const localDay = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date('2026-08-27T00:00:00.000Z'))
+    .replace(/-/g, '');
+  assert.equal(signed.id, `YCY-${localDay}-000000`);
   assert.equal(signed.participantName, '测试参与者');
   assert.equal(signed.clauses.length, 3);
   assert.equal(normalizeSignedCertificateRecord(signed)?.customPromise, '每周复盘一次');

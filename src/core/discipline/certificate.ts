@@ -85,7 +85,7 @@ export const createSignedCertificateRecord = (input: {
   const review = optionById(CERTIFICATE_REVIEWS, input.reviewId) || CERTIFICATE_REVIEWS[0];
   const selected = new Set(input.clauseIds);
   const clauses = CERTIFICATE_CLAUSES.filter((clause) => clause.required || selected.has(clause.id)).map((clause) => clause.text);
-  const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
+  const datePart = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(now).replace(/-/g, '');
   const randomPart = Math.floor(Math.max(0, Math.min(0.999999, random())) * 0xffffff).toString(16).padStart(6, '0').toUpperCase();
 
   return {

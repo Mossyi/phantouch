@@ -162,6 +162,24 @@ class SpeechQueue {
   }
 }
 
+/** 把浏览器的英文权限错误换成通话界面能直接看懂的提示。 */
+export const describeMicrophoneFailure = (error: unknown): string => {
+  const name = error instanceof DOMException ? error.name : '';
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (
+    name === 'NotAllowedError'
+    || name === 'PermissionDeniedError'
+    || name === 'SecurityError'
+    || /not allowed|permission denied|permission dismissed/i.test(message)
+  ) {
+    return '麦克风或语音识别权限被拒绝';
+  }
+  if (name === 'NotFoundError' || /requested device not found|device not found|no audio/i.test(message)) {
+    return '没有找到可用的麦克风';
+  }
+  return message || '麦克风无法启动';
+};
+
 export class VoiceCallSession {
   private snapshot: VoiceCallSnapshot = {
     phase: 'idle',
@@ -240,7 +258,7 @@ export class VoiceCallSession {
       if (this.snapshot.sttMode === 'cloud') await this.startMicrophone();
       else this.startBrowserRecognition();
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : String(error));
+      this.fail(describeMicrophoneFailure(error));
       return;
     }
     if (!this.active) return;
