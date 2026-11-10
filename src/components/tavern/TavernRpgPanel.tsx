@@ -1,13 +1,14 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppStore } from '../../store/useAppStore';
 import {
   Award, BatteryLow, BedDouble, BookOpen, CalendarDays, Telescope, Wand2, Megaphone, Save, FolderOpen, Trash2, History, CheckCircle2, Circle, Dices, Footprints, Gift, Gavel, HeartPulse, ImagePlus, Loader2, Lock,
-  Map as MapIcon, MessageCircleHeart, NotebookText, Plus, RefreshCw, RotateCcw, ScrollText, Settings2, Sparkles, Star, Trophy, UserRound, Wrench, X, Zap,
+  ChevronLeft, ChevronRight, Map as MapIcon, MessageCircleHeart, NotebookText, Plus, RefreshCw, RotateCcw, ScrollText, Settings2, Sparkles, Star, Trophy, UserRound, Wrench, X, Zap,
 } from 'lucide-react';
 import { RpgCertificateModal } from './RpgCertificateModal';
 import { RPG_ICON_CREDIT, RPG_ICON_PATHS } from '../../core/tavern/rpgIcons';
 import type { TavernCharacterExpressions, TavernEmotionKey } from '../../core/tavern/tavernTypes';
+import { RPG_CARD_FIELD_LABELS, cardVoiceDrift, type RpgCardVoice } from '../../core/tavern/tavernRpgCard';
 import { KIND_ICONS, PERIOD_ICONS, RpgIcon, STAGE_ICONS, courseIcon, itemIcon, traitIcon } from './RpgIcon';
 import type { GeneratedWorld, WorldGenInput } from '../../core/tavern/tavernRpgWorldGen';
 import type { RpgSaveSlot } from '../../core/tavern/tavernRpgSlots';
@@ -28,6 +29,9 @@ import {
   activeSummon,
   checkModifier,
   createRpgStateFromTemplate,
+  TRAINER_STYLES,
+  trustLabel,
+  type TrainerStyleId,
   findCourse,
   getCoursesHere,
   getLocation,
@@ -61,7 +65,97 @@ export type RpgSystemAction =
   | { type: 'work' }
   | { type: 'rest' }
   | { type: 'use'; item: string }
-  | { type: 'renew' };
+  | { type: 'renew' }
+  | { type: 'guidance'; verb: 'arrive' | 'decline' | 'pause' }
+  | { type: 'guidance'; verb: 'report'; report: 'honest' | 'polished' | 'care' }
+  | { type: 'boundary'; key: 'noPublic' | 'noEscalation'; value: boolean };
+
+const CardVoiceSheet: React.FC<{ voice: RpgCardVoice; saved?: RpgCardVoice; onAdopt?: () => void }> = ({ voice, saved, onAdopt }) => {
+  const shown = saved ?? voice;
+  const drifted = cardVoiceDrift(saved, voice);
+  const used = shown.present.length ? shown.present.map((field) => RPG_CARD_FIELD_LABELS[field]).join('、') : '只有名字';
+  return (
+    <section className="space-y-1 rounded-2xl border border-pink-100 bg-white p-3 text-[10.5px] leading-5 text-slate-600">
+      <p className="text-[12px] font-black text-slate-800">当前角色：{shown.name}</p>
+      <p>采用：{used}。世界书和补充指令不进入课题。</p>
+      <p>{shown.personality ? `人格：${shown.personality}` : '人格：未填写。安排里不会编造性格。'}</p>
+      <p>{shown.scenario ? `场景：${shown.scenario}` : '场景：未填写。地点骨架不是这张卡的故事。'}</p>
+      {shown.speech ? <p>口气：{shown.speech}</p> : <p>没有开场白或对话样本，不会假装读过说话方式。</p>}
+      {shown.source === 'continue' && <p>这局存档原来没有记下角色设定，已按当前卡补上，天数和进度没动。</p>}
+      {saved && saved.cardId !== voice.cardId && <p>这局记下的是另一张卡。进度留在当前存档，没有搬到别的角色。</p>}
+      {drifted && onAdopt && (
+        <button type="button" onClick={onAdopt} className="mt-1 w-full rounded-xl border border-violet-200 bg-violet-50 px-2 py-1.5 text-left text-[10.5px] font-bold text-violet-800">
+          角色卡在开局后改过。按当前卡更新人设，不重置进度。
+        </button>
+      )}
+    </section>
+  );
+};
+
+const TrainingDesk: React.FC<{
+  state: TavernRpgState;
+  busy: boolean;
+  liveVoice: RpgCardVoice;
+  onAdopt?: () => void;
+  onAction: (action: RpgSystemAction) => void;
+}> = ({ state, busy, liveVoice, onAdopt, onAction }) => {
+  const guidance = state.guidance;
+  if (!guidance) return null;
+  const style = TRAINER_STYLES[guidance.style] ?? TRAINER_STYLES.gentle;
+  const here = state.currentId === guidance.assignment.placeId;
+  const practice = guidance.assignment.steps.find((item) => item.id === 'practice');
+  const report = guidance.assignment.steps.find((item) => item.id === 'report');
+  const canReport = practice?.status !== 'todo' && report?.status === 'todo';
+  const chip = 'rounded-xl border px-2.5 py-2 text-left text-[10.5px] font-bold leading-4 disabled:opacity-40';
+  return (
+    <section className="space-y-2 rounded-2xl border border-violet-200 bg-violet-50/40 p-3">
+      <CardVoiceSheet voice={liveVoice} saved={guidance.voice} onAdopt={onAdopt} />
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[12px] font-black text-slate-800">{guidance.voice?.name || liveVoice.name}</p>
+          <p className="text-[10px] leading-4 text-slate-500">节奏：{style.name}。{style.blurb}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-bold text-violet-700">信任 {guidance.trust} · {trustLabel(guidance.trust)}</span>
+      </div>
+      <p className="text-[12px] font-black text-slate-800">{guidance.assignment.title}</p>
+      <ol className="space-y-1">
+        {guidance.assignment.steps.map((item) => (
+          <li key={item.id} className="flex items-start gap-1.5 text-[10.5px] text-slate-600">
+            <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${item.status === 'done' ? 'bg-emerald-100 text-emerald-700' : item.status === 'declined' ? 'bg-amber-100 text-amber-800' : 'bg-white text-slate-500'}`}>
+              {item.status === 'done' ? '完成' : item.status === 'declined' ? '已拒绝' : '未做'}
+            </span>
+            <span><span className="font-bold text-slate-800">{item.title}</span> · {item.detail}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="grid grid-cols-2 gap-1.5">
+        <button type="button" disabled={busy || guidance.assignment.steps[0]?.status !== 'todo'} onClick={() => onAction({ type: 'guidance', verb: 'arrive' })} className={`${chip} border-violet-200 bg-white text-violet-800`}>
+          {here ? '我到了，请看见我' : `先去「${guidance.assignment.placeName}」`}
+        </button>
+        <button type="button" disabled={busy || guidance.boundaries.paused || practice?.status !== 'todo'} onClick={() => onAction({ type: 'guidance', verb: 'decline' })} className={`${chip} border-amber-200 bg-white text-amber-800`}>
+          拒绝这项练习
+        </button>
+        <button type="button" disabled={busy || guidance.boundaries.paused} onClick={() => onAction({ type: 'guidance', verb: 'pause' })} className={`${chip} col-span-2 border-slate-200 bg-white text-slate-700`}>
+          {guidance.boundaries.paused ? '今天已暂停，休息到明天会重新安排' : '今天到此为止'}
+        </button>
+        <button type="button" disabled={busy || !canReport} onClick={() => onAction({ type: 'guidance', verb: 'report', report: 'honest' })} className={`${chip} border-emerald-200 bg-white text-emerald-800`}>如实交代</button>
+        <button type="button" disabled={busy || !canReport} onClick={() => onAction({ type: 'guidance', verb: 'report', report: 'polished' })} className={`${chip} border-slate-200 bg-white text-slate-700`}>说得顺一些</button>
+        <button type="button" disabled={busy || !canReport} onClick={() => onAction({ type: 'guidance', verb: 'report', report: 'care' })} className={`${chip} col-span-2 border-sky-200 bg-white text-sky-800`}>请求先被照顾</button>
+      </div>
+      <div className="flex flex-col gap-1 text-[10.5px] text-slate-600">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={guidance.boundaries.noPublic} onChange={(event) => onAction({ type: 'boundary', key: 'noPublic', value: event.target.checked })} className="accent-violet-600" />
+          不在有别人的地方练习
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={guidance.boundaries.noEscalation} onChange={(event) => onAction({ type: 'boundary', key: 'noEscalation', value: event.target.checked })} className="accent-violet-600" />
+          今天不要再加码
+        </label>
+      </div>
+      <p className="text-[9.5px] leading-4 text-slate-500">拒绝、暂停和界限只改变信任和后续安排，不会记成违规，也不会启动任何设备。结束整局仍在「设置」里。</p>
+    </section>
+  );
+};
 
 const dayLabel = (state: TavernRpgState) => (state.dayLimit ? `第${state.day}/${state.dayLimit}天` : `第${state.day}天`);
 const signed = (value: number) => (value > 0 ? `+${value}` : `${value}`);
@@ -178,6 +272,64 @@ export const TavernRpgHud: React.FC<{ state: TavernRpgState; art?: string; onOpe
   );
 };
 
+/** 横向动作条：竖向滚轮和左右按钮都能把它滚到被裁切的按钮。 */
+const useHorizontalStrip = () => {
+  const ref = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+  const update = React.useCallback(() => {
+    const strip = ref.current;
+    if (!strip) return;
+    const left = strip.scrollLeft > 4;
+    const right = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 4;
+    setEdges((current) => (current.left === left && current.right === right ? current : { left, right }));
+  }, []);
+  useEffect(() => {
+    const strip = ref.current;
+    if (!strip) return undefined;
+    const onWheel = (event: WheelEvent) => {
+      if (strip.scrollWidth <= strip.clientWidth + 1) return;
+      if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      strip.scrollLeft += event.deltaY;
+      event.preventDefault();
+    };
+    strip.addEventListener('wheel', onWheel, { passive: false });
+    strip.addEventListener('scroll', update, { passive: true });
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(strip);
+    [...strip.children].forEach((child) => observer?.observe(child));
+    update();
+    const frame = requestAnimationFrame(update);
+    return () => {
+      cancelAnimationFrame(frame);
+      strip.removeEventListener('wheel', onWheel);
+      strip.removeEventListener('scroll', update);
+      observer?.disconnect();
+    };
+  }, [update]);
+  return { ref, edges, update, scrollBy: (distance: number) => ref.current?.scrollBy({ left: distance, behavior: 'smooth' }) };
+};
+
+const HorizontalStrip: React.FC<{ label: string; className?: string; children: React.ReactNode }> = ({ label, className = '', children }) => {
+  const strip = useHorizontalStrip();
+  return (
+    <div className="relative">
+      {strip.edges.left && (
+        <button type="button" aria-label={`${label}向左`} onClick={() => strip.scrollBy(-180)} className="absolute left-0 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-pink-200 bg-white text-slate-700 shadow-sm">
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+      )}
+      <div ref={strip.ref} data-allow-scroll="true" aria-label={label} className={`rpg-choice-strip flex items-center gap-1.5 overflow-x-auto px-8 ${className}`}>
+        {children}
+      </div>
+      {strip.edges.right && (
+        <button type="button" aria-label={`${label}向右`} onClick={() => strip.scrollBy(180)} className="absolute right-0 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-pink-200 bg-white text-slate-700 shadow-sm">
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+};
+
 // ─── 回应选项与系统动作 ────────────────────────────────────────────────────────
 
 export const TavernRpgChoices: React.FC<{
@@ -203,7 +355,7 @@ export const TavernRpgChoices: React.FC<{
     .slice(0, 3);
   const chip = 'flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-bold shadow-xs transition disabled:opacity-50';
   return (
-    <div key={`${state.turn}-${state.currentId}-${state.period}`} className="flex items-center gap-1.5 overflow-x-auto px-1 scrollbar-none" data-allow-scroll>
+    <HorizontalStrip key={`${state.turn}-${state.currentId}-${state.period}`} label="日程动作">
       {choices.map((choice) => {
         const mod = choice.check ? checkModifier(state, choice.check.stat) : 0;
         return (
@@ -241,7 +393,7 @@ export const TavernRpgChoices: React.FC<{
           <Footprints className="h-3 w-3" />去{location.name}
         </button>
       ))}
-    </div>
+    </HorizontalStrip>
   );
 };
 
@@ -364,11 +516,13 @@ const WorldPreview: React.FC<{ world: GeneratedWorld; charName: string; userName
 const RpgSetup: React.FC<{
   charName: string;
   userName: string;
+  cardVoice: RpgCardVoice;
   onStart: (templateId: string, custom?: RpgCustomConfig) => void;
   onGenerateWorld: (input: WorldGenInput) => Promise<GeneratedWorld>;
-  onStartGenerated: (world: GeneratedWorld) => void;
-}> = ({ charName, userName, onStart, onGenerateWorld, onStartGenerated }) => {
+  onStartGenerated: (world: GeneratedWorld, custom?: { trainerStyle?: TrainerStyleId }) => void;
+}> = ({ charName, userName, cardVoice, onStart, onGenerateWorld, onStartGenerated }) => {
   const [templateId, setTemplateId] = useState('ai');
+  const [trainerStyle, setTrainerStyle] = useState<TrainerStyleId>('gentle');
   const [custom, setCustom] = useState({ worldName: '', premise: '', startName: '', dayLimit: 30 });
   const [aiInput, setAiInput] = useState<WorldGenInput>({ theme: '', details: '', dayLimit: 30 });
   const [world, setWorld] = useState<GeneratedWorld | null>(null);
@@ -393,9 +547,18 @@ const RpgSetup: React.FC<{
 
   return (
     <div className="space-y-3">
+      <CardVoiceSheet voice={cardVoice} />
       <p className="text-[11px] leading-5 text-slate-600">
-        {charName}是调教者，{userName}是被调教的一方。每天早上系统会排好课表，{charName}按课表和地点下达指令；课程由系统掷骰结算，AI 只负责描写。
+        {charName}是调教者，{userName}是接受训练的一方。每天的课题沿用上面的卡，而不是把所有人说成同一种教官。下面的节奏只决定松紧。内置地点是本地日程骨架，不是模型生成的世界。拒绝不会被记成违规。
       </p>
+      <div className="grid grid-cols-1 gap-1.5">
+        {(Object.values(TRAINER_STYLES)).map((style) => (
+          <button key={style.id} type="button" onClick={() => setTrainerStyle(style.id)} className={`rounded-2xl border px-3 py-2 text-left ${trainerStyle === style.id ? 'border-violet-400 bg-violet-50' : 'border-pink-100 bg-white'}`}>
+            <span className="block text-[12px] font-black text-slate-800">{style.name}</span>
+            <span className="mt-0.5 block text-[10px] leading-4 text-slate-500">{style.blurb}</span>
+          </button>
+        ))}
+      </div>
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={() => setTemplateId('ai')} className={`col-span-2 ${option('ai')}`}>
           <span className="flex items-center gap-1 text-[12px] font-black text-slate-800"><Wand2 className="h-3.5 w-3.5 text-violet-500" />AI 生成世界</span>
@@ -456,7 +619,7 @@ const RpgSetup: React.FC<{
         </div>
       )}
       <button type="button" disabled={isAi && (!world || generating)}
-        onClick={() => (isAi ? world && onStartGenerated(world) : onStart(templateId, isCustom ? custom : undefined))}
+        onClick={() => (isAi ? world && onStartGenerated(world, { trainerStyle }) : onStart(templateId, { ...(isCustom ? custom : {}), trainerStyle }))}
         className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-pink-500 to-rose-500 px-4 py-2.5 text-[12px] font-black text-white shadow-sm disabled:opacity-40">
         <CalendarDays className="h-4 w-4" />{isAi ? (world ? '就用这个世界，开始第一天' : '先生成世界') : '开始第一天'}
       </button>
@@ -526,7 +689,7 @@ export interface TavernRpgPanelProps {
   onGenerateArt: (locationId: string) => void;
   onToggleArtAuto: (enabled: boolean) => void;
   onGenerateWorld: (input: WorldGenInput) => Promise<GeneratedWorld>;
-  onStartGenerated: (world: GeneratedWorld) => void;
+  onStartGenerated: (world: GeneratedWorld, custom?: { trainerStyle?: TrainerStyleId }) => void;
   onExplore: () => void;
   exploring: boolean;
   slots: RpgSaveSlot[];
@@ -537,6 +700,8 @@ export interface TavernRpgPanelProps {
   onDisableMode: () => void;
   charName: string;
   userName: string;
+  cardVoice: RpgCardVoice;
+  onAdoptCardVoice?: () => void;
   busy: boolean;
   emsCeiling: number;
   initialTab?: RpgPanelTab;
@@ -551,7 +716,7 @@ export interface TavernRpgPanelProps {
 
 export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   state, portrait, art, artBusyId, artAuto, onGenerateArt, onToggleArtAuto, onGenerateWorld, onStartGenerated, onExplore, exploring, slots, onSaveSlot, onLoadSlot, onDeleteSlot, onNewRun, onDisableMode,
-  charName, userName, busy, emsCeiling, initialTab = 'map', onStart, onAction, onAddRule, onRemoveRule, onEnd, onUpdateHardware, onClose,
+  charName, userName, cardVoice, onAdoptCardVoice, busy, emsCeiling, initialTab = 'map', onStart, onAction, onAddRule, onRemoveRule, onEnd, onUpdateHardware, onClose,
 }) => {
   const deviceState = useAppStore((s) => s.deviceState);
   const heartRateState = useAppStore((s) => s.heartRateState);
@@ -566,8 +731,10 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   const [viewCertificateEnding, setViewCertificateEnding] = useState<RpgEnding | null>(null);
   const [showNewGamePlusModal, setShowNewGamePlusModal] = useState(false);
   const [ngpInheritedTrait, setNgpInheritedTrait] = useState<string>('');
-  const [ngpGameMode, setNgpGameMode] = useState<'normal' | 'hardcore' | 'reversal'>('normal');
+  const [ngpGameMode, setNgpGameMode] = useState<'normal' | 'hardcore'>('normal');
+  const [ngpStyle, setNgpStyle] = useState<TrainerStyleId>('gentle');
   const [unlockedEndings, setUnlockedEndings] = useState<string[]>(() => getUnlockedEndings(charName));
+  const tabStrip = useHorizontalStrip();
 
   React.useEffect(() => {
     if (state?.ending?.id) {
@@ -667,20 +834,21 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                 ))}
               </div>
             )}
-            <RpgSetup charName={charName} userName={userName} onStart={onStart} onGenerateWorld={onGenerateWorld} onStartGenerated={onStartGenerated} />
+            <RpgSetup key={cardVoice.cardId} charName={charName} userName={userName} cardVoice={cardVoice} onStart={onStart} onGenerateWorld={onGenerateWorld} onStartGenerated={onStartGenerated} />
             <button type="button" onClick={onDisableMode} className="w-full text-center text-[10.5px] text-slate-400 underline-offset-2 hover:underline">暂时不用，关闭训练日程</button>
           </div>
         ) : (
           <>
-            <div className="flex shrink-0 gap-0.5 border-b border-pink-50 px-2 py-2" role="tablist">
+            <div ref={tabStrip.ref} className="rpg-choice-strip flex shrink-0 gap-0.5 overflow-x-auto border-b border-pink-50 px-2 py-2" role="tablist" data-allow-scroll="true" aria-label="训练日程分页">
               {tabs.map((item) => (
                 <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)}
-                  className={`flex flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-1 text-[9.5px] font-bold transition ${tab === item.id ? 'bg-pink-50 text-pink-700' : 'text-slate-500 hover:text-slate-700'}`}>
+                  className={`flex min-w-[3.4rem] shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-1 text-[9.5px] font-bold transition ${tab === item.id ? 'bg-pink-50 text-pink-700' : 'text-slate-500 hover:text-slate-700'}`}>
                   <item.icon className="h-3.5 w-3.5" />{item.label}
                 </button>
               ))}
             </div>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" data-allow-scroll>
+              <TrainingDesk state={state} busy={busy} liveVoice={cardVoice} onAdopt={onAdoptCardVoice} onAction={onAction} />
               {state.ending && (
                 <div className="space-y-2 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-pink-50 p-3">
                   <div className="flex items-center gap-3">
@@ -773,10 +941,8 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-xs font-black text-slate-800">今日天气 · {RPG_WEATHER_META[state.weather ?? 'clear']?.label}</span>
-                          {state.gameMode !== 'normal' && (
-                            <span className="rounded-full bg-violet-100 text-violet-800 px-1.5 py-0.5 text-[9px] font-bold">
-                              {state.gameMode === 'hardcore' ? '⚡ 硬核模式' : '🔄 身份反转模式'}
-                            </span>
+                          {state.gameMode === 'hardcore' && (
+                            <span className="rounded-full bg-violet-100 text-violet-800 px-1.5 py-0.5 text-[9px] font-bold">硬核模式</span>
                           )}
                         </div>
                         <p className="text-[10px] text-slate-600 mt-0.5 leading-relaxed">{RPG_WEATHER_META[state.weather ?? 'clear']?.description}</p>
@@ -1332,20 +1498,20 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                       <span className="block text-[9.5px] text-slate-500">80 体力上限，规训更严格，通关可获 S 阶结局</span>
                     </div>
                   </label>
-                  <label className="flex items-center gap-2 rounded-xl border p-2 cursor-pointer border-slate-200 hover:bg-slate-50">
-                    <input
-                      type="radio"
-                      name="ngpMode"
-                      value="reversal"
-                      checked={ngpGameMode === 'reversal'}
-                      onChange={() => setNgpGameMode('reversal')}
-                      className="accent-violet-600"
-                    />
-                    <div>
-                      <span className="font-bold text-slate-800">🔄 身份反转模式</span>
-                      <span className="block text-[9.5px] text-slate-500">身份倒转！你成为主导导师，AI 角色成为顺从学徒</span>
-                    </div>
-                  </label>
+                </div>
+              </div>
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">调教者风格（仍然由对方安排你）：</label>
+                <div className="space-y-1.5">
+                  {Object.values(TRAINER_STYLES).map((style) => (
+                    <label key={style.id} className="flex items-center gap-2 rounded-xl border border-slate-200 p-2">
+                      <input type="radio" name="ngpStyle" checked={ngpStyle === style.id} onChange={() => setNgpStyle(style.id)} className="accent-violet-600" />
+                      <span>
+                        <span className="font-bold text-slate-800">{style.name}</span>
+                        <span className="block text-[9.5px] text-slate-500">{style.blurb}</span>
+                      </span>
+                    </label>
+                  ))}
                 </div>
               </div>
             </div>
@@ -1366,6 +1532,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                     inheritedTraits: ngpInheritedTrait ? [ngpInheritedTrait] : [],
                     inheritedPoints: Math.floor(state.points * 0.3),
                     gameMode: ngpGameMode,
+                    trainerStyle: ngpStyle,
                   });
                 }}
                 className="flex-1 rounded-xl bg-violet-600 hover:bg-violet-500 text-white py-2 text-[11px] font-black shadow-md shadow-violet-500/20"

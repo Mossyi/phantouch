@@ -50,20 +50,30 @@ export class TavernCardParser {
     return images.length > 0 ? images : undefined;
   }
 
+  private static entryList(value: unknown): unknown[] {
+    if (Array.isArray(value)) return value;
+    // SillyTavern 的 character_book.entries 通常是以 uid 为键的对象，不是数组。
+    if (value && typeof value === 'object') return Object.values(value as Record<string, unknown>);
+    return [];
+  }
+
   private static parseWorldBookEntries(value: unknown): TavernCharacterCard['worldBookEntries'] {
-    if (!Array.isArray(value)) return undefined;
-    const entries = value.slice(0, 200).map((rawEntry, index) => {
-      if (!rawEntry || typeof rawEntry !== 'object') return null;
+    const entries = this.entryList(value).slice(0, 200).map((rawEntry, index) => {
+      if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) return null;
       const entry = rawEntry as Record<string, unknown>;
       const rawKeys = Array.isArray(entry.keys)
         ? entry.keys
         : typeof entry.keys === 'string'
           ? (entry.keys as string).split(',').map((k) => k.trim()).filter(Boolean)
-          : Array.isArray(entry.keywords)
-            ? entry.keywords
-            : typeof entry.keywords === 'string'
-              ? (entry.keywords as string).split(',').map((k) => k.trim()).filter(Boolean)
-              : [];
+          : Array.isArray(entry.key)
+            ? entry.key
+            : typeof entry.key === 'string'
+              ? (entry.key as string).split(',').map((k) => k.trim()).filter(Boolean)
+              : Array.isArray(entry.keywords)
+                ? entry.keywords
+                : typeof entry.keywords === 'string'
+                  ? (entry.keywords as string).split(',').map((k) => k.trim()).filter(Boolean)
+                  : [];
       const keywords = this.cleanStringList(rawKeys, 30, 100);
       if (keywords.length === 0 || typeof entry.content !== 'string' || !entry.content.trim()) return null;
       const rawSecKeys = Array.isArray(entry.secondary_keys)
@@ -271,6 +281,51 @@ export class TavernCardParser {
   }
 
   /**
+   * 从 PNG 的 tEXt 块取出角色 JSON。同时有 ccv3 和旧版 chara 时用 ccv3。
+   */
+  static readEmbeddedCharacterJson(bytes: Uint8Array): string | null {
+    const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+    if (bytes.length < 8 || !signature.every((value, index) => bytes[index] === value)) return null;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const found: Partial<Record<'chara' | 'ccv3', string>> = {};
+    let offset = 8;
+    while (offset + 12 <= bytes.length) {
+      const length = view.getUint32(offset, false);
+      if (offset + 12 + length > bytes.length) break;
+      const type = new TextDecoder('latin1').decode(bytes.subarray(offset + 4, offset + 8));
+      if (type === 'tEXt' && length > 0 && length <= 5_000_000) {
+        const chunk = bytes.subarray(offset + 8, offset + 8 + length);
+        const separator = chunk.indexOf(0);
+        if (separator > 0) {
+          const keyword = new TextDecoder('latin1').decode(chunk.subarray(0, separator));
+          if ((keyword === 'chara' || keyword === 'ccv3') && !found[keyword]) {
+            const contentSlice = chunk.subarray(separator + 1);
+            found[keyword] = contentSlice.length > 0 && contentSlice[0] === 123
+              ? new TextDecoder('utf-8', { fatal: false }).decode(contentSlice).trim()
+              : new TextDecoder('latin1').decode(contentSlice).trim();
+          }
+        }
+      }
+      offset += length + 12;
+    }
+    const decodePayload = (payload: string): string => {
+      if (payload.trim().startsWith('{')) return payload;
+      try {
+        return this.decodeBase64Utf8(payload);
+      } catch {
+        return payload;
+      }
+    };
+    // ccv3 优先，但它损坏时仍回退到同文件里的旧 chara，避免整张卡导入失败。
+    for (const candidate of [found.ccv3, found.chara]) {
+      if (!candidate) continue;
+      const json = decodePayload(candidate);
+      if (this.parseJsonCard(json)) return json;
+    }
+    return null;
+  }
+
+  /**
    * 解析 PNG 格式角色卡（提取常见 tEXt 数据块中的 chara / ccv3 元数据）
    */
   static async parsePngCard(file: File): Promise<TavernCharacterCard | null> {
@@ -280,47 +335,10 @@ export class TavernCardParser {
       reader.onload = async () => {
         try {
           const buffer = reader.result as ArrayBuffer;
-          const bytes = new Uint8Array(buffer);
-          const signature = [137, 80, 78, 71, 13, 10, 26, 10];
-          if (!signature.every((value, index) => bytes[index] === value)) throw new Error('文件不是有效 PNG');
-
-          let encodedCard = '';
-          const view = new DataView(buffer);
-          let offset = 8;
-          while (offset + 12 <= bytes.length) {
-            const length = view.getUint32(offset, false);
-            if (offset + 12 + length > bytes.length) break;
-            const type = String.fromCharCode(...bytes.slice(offset + 4, offset + 8));
-            if (type === 'tEXt' && length <= 5_000_000) {
-              const chunk = bytes.slice(offset + 8, offset + 8 + length);
-              const separator = chunk.indexOf(0);
-              if (separator > 0) {
-                const keyword = new TextDecoder('latin1').decode(chunk.slice(0, separator));
-                if (keyword === 'chara' || keyword === 'ccv3') {
-                  const contentSlice = chunk.slice(separator + 1);
-                  // 优先检查是否为原始 JSON（以 { 开头），避免使用 latin1 损坏多字节 UTF-8 中文字符
-                  if (contentSlice.length > 0 && contentSlice[0] === 123 /* '{' */) {
-                    encodedCard = new TextDecoder('utf-8', { fatal: false }).decode(contentSlice).trim();
-                  } else {
-                    encodedCard = new TextDecoder('latin1').decode(contentSlice).trim();
-                  }
-                  break;
-                }
-              }
-            }
-            offset += length + 12;
-          }
+          const encodedCard = this.readEmbeddedCharacterJson(new Uint8Array(buffer));
 
           if (encodedCard) {
-            let jsonPayload = encodedCard;
-            if (!encodedCard.trim().startsWith('{')) {
-              try {
-                jsonPayload = this.decodeBase64Utf8(encodedCard);
-              } catch {
-                jsonPayload = encodedCard;
-              }
-            }
-            const card = TavernCardParser.parseJsonCard(jsonPayload);
+            const card = TavernCardParser.parseJsonCard(encodedCard);
             if (card) {
               card.source = 'imported_png';
               card.avatar = await this.createAvatarDataUrl(file);

@@ -519,6 +519,7 @@ export class LLMClient {
 
       // 如果有 Tool Calls
       if (normalizedToolCalls.calls.length > 0) {
+        if (signal?.aborted) throw new DOMException('请求已取消', 'AbortError');
         if (toolLogs.length + normalizedToolCalls.calls.length > 12) {
           throw new Error('模型本轮累计工具调用超过 12 个，已拒绝继续执行');
         }
@@ -539,6 +540,7 @@ export class LLMClient {
             argsValid = false;
           }
 
+          if (signal?.aborted) throw new DOMException('请求已取消', 'AbortError');
           // 执行工具动作
           const execResult = !argsValid
             ? { success: false, summary: '工具参数不是有效的 JSON 对象，未执行' }
@@ -689,7 +691,7 @@ export class LLMClient {
 
     const body = useResponsesApi
       ? {
-          model: this.config.model || 'doubao-seed-2.0-lite',
+          model: this.config.model || 'doubao-seed-2.1-lite',
           input: convertChatMessagesToResponsesInput(messages),
           max_output_tokens: this.generation.maxTokens,
           ...(this.hardwareToolsEnabled ? { tools: getResponsesTools() } : {}),
@@ -979,7 +981,7 @@ export class LLMClient {
     };
 
     const body = {
-      model: this.config.model || 'doubao-seed-2.0-lite',
+      model: this.config.model || 'doubao-seed-2.1-lite',
       input: convertChatMessagesToResponsesInput(messages),
       max_output_tokens: this.generation.maxTokens,
       stream: true,

@@ -94,7 +94,10 @@ test('signed certificates preserve required safety clauses and reject polluted r
     participantName: ' 测试参与者 ', mentorId: 'mentor', mentorName: '测试导师', themeId: 'story', termId: 'lasting', reviewId: '30d',
     clauseIds: [], customPromise: '每周复盘一次', signatureDataUrl: 'data:image/png;base64,AAAA',
   }, new Date('2026-08-27T00:00:00.000Z'), () => 0);
-  assert.equal(signed.id, 'YCY-20260827-000000');
+  const localDay = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date('2026-08-27T00:00:00.000Z'))
+    .replace(/-/g, '');
+  assert.equal(signed.id, `YCY-${localDay}-000000`);
   assert.equal(signed.participantName, '测试参与者');
   assert.equal(signed.clauses.length, 3);
   assert.equal(normalizeSignedCertificateRecord(signed)?.customPromise, '每周复盘一次');
@@ -526,18 +529,21 @@ test('system LLM provider presets use unique safe OpenAI-compatible base URLs', 
   }
   const plan = LLM_PROVIDER_PRESETS.find((provider) => provider.id === 'volcengine-agent-plan');
   assert.deepEqual(plan.models, [
-    'doubao-seed-2.0-lite',
+    'doubao-seed-2.1-lite',
     'doubao-seed-2.0-mini',
-    'kimi-k2.7-code',
-    'minimax-m3',
+    'doubao-seed-2.1-pro',
     'doubao-seed-evolving',
-    'kimi-k3',
-    'doubao-seed-2.1-turbo',
     'deepseek-v4-flash',
-    'glm-5.3',
-    'glm-5.3-flash',
+    'deepseek-v4.1-flash',
+    'deepseek-v4.1-flash-economy',
     'deepseek-v4-pro',
+    'glm-5.3-flash',
+    'glm-5.3',
+    'kimi-k2.8-preview',
+    'kimi-k3.1-pro',
+    'kimi-k3',
   ]);
+  assert.equal(plan.defaultModel, 'doubao-seed-2.1-lite');
   assert.equal(LLM_PROVIDER_PRESETS.some((provider) => provider.baseUrl === 'https://ark.cn-beijing.volces.com/api/v3'), false);
 });
 
@@ -551,7 +557,7 @@ test('legacy Ark paid endpoint migrates to Agent Plan without carrying an obsole
     selectedPersonaId: 'male_dom',
   });
   assert.equal(migrated.baseUrl, 'https://ark.cn-beijing.volces.com/api/plan/v3');
-  assert.equal(migrated.model, 'doubao-seed-2.0-lite');
+  assert.equal(migrated.model, 'doubao-seed-2.1-lite');
   assert.equal(migrated.apiKey, 'plan-key');
 });
 
@@ -2396,11 +2402,11 @@ test('tavern AI image generation validates endpoints, provider payloads, and ret
       provider: 'volcengine_plan',
       baseUrl: 'https://ark.cn-beijing.volces.com/api/plan/v3',
       apiKey: 'test-key',
-      model: 'doubao-seedream-5.0-lite',
+      model: 'doubao-seedream-5.0-flash',
       prompt: 'fictional scene',
     });
     assert.equal(requests[3].url, 'https://ark.cn-beijing.volces.com/api/plan/v3/images/generations');
-    assert.equal(requests[3].body.model, 'doubao-seedream-5.0-lite');
+    assert.equal(requests[3].body.model, 'doubao-seedream-5.0-flash');
     assert.equal(requests[3].body.sequential_image_generation, 'disabled');
     const localSdImage = await generateTavernAiImage({
       provider: 'local_sd',

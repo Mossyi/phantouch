@@ -24,7 +24,7 @@ import { FemboyTrainingEngine } from '../core/discipline/femboyTrainingEngine';
 import { AmbientAudioEngine } from '../core/asmr/ambientAudioEngine';
 import { PitchTracker } from '../core/voice/pitchTracker';
 import { DEFAULT_LLM_CONFIG, normalizeLlmConfig } from '../core/llmConfig';
-import { isLocalApiBaseUrl, isVolcengineArkApiBaseUrl } from '../core/apiBaseUrl';
+import { isLocalApiBaseUrl, isVolcengineArkPlanApiBaseUrl } from '../core/apiBaseUrl';
 import { normalizeToolActionLogs } from '../core/ai/toolActionLog';
 import { ChatDisplayConfig, DEFAULT_CHAT_DISPLAY_CONFIG, normalizeChatDisplayConfig } from '../core/ui/chatDisplay';
 
@@ -147,7 +147,7 @@ const DEFAULT_SAFETY_CONFIG: SafetyConfig = {
   volcengineSttApiKey: '',
   volcengineSttAppId: '',
   volcengineSttAccessKey: '',
-  volcengineSttResourceId: 'volc.bigasr.auc_turbo',
+  volcengineSttResourceId: 'volc.seedasr.sauc.duration',
   openaiSttBaseUrl: 'https://api.openai.com/v1',
   openaiSttApiKey: '',
   openaiSttModel: 'gpt-4o-mini-transcribe',
@@ -404,7 +404,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     siliconflowVoice: initialSafetyConfig.siliconflowTtsVoice,
     volcengineResourceId: initialSafetyConfig.volcengineTtsResourceId,
     volcengineVoice: initialSafetyConfig.volcengineTtsVoice,
-    volcengineApiKey: isVolcengineArkApiBaseUrl(initialLlmConfig.baseUrl)
+    volcengineApiKey: isVolcengineArkPlanApiBaseUrl(initialLlmConfig.baseUrl)
       ? initialLlmConfig.apiKey
       : '',
   });
@@ -562,7 +562,7 @@ export const useAppStore = create<AppStore>((set, get) => {
         safeStorageSet('ycy_llm_config', JSON.stringify(next));
         llmClient.updateConfig(next);
         ttsManager.configureDefaults({
-          volcengineApiKey: isVolcengineArkApiBaseUrl(next.baseUrl)
+          volcengineApiKey: isVolcengineArkPlanApiBaseUrl(next.baseUrl)
             ? next.apiKey
             : '',
         });
@@ -668,7 +668,7 @@ export const useAppStore = create<AppStore>((set, get) => {
         get().safetyConfig.ttsEngine,
         get().safetyConfig.ttsEngine === 'siliconflow'
           ? get().safetyConfig.siliconflowTtsApiKey || ''
-          : get().safetyConfig.ttsEngine === 'volcengine_tts' && isVolcengineArkApiBaseUrl(get().llmConfig.baseUrl)
+          : get().safetyConfig.ttsEngine === 'volcengine_tts' && isVolcengineArkPlanApiBaseUrl(get().llmConfig.baseUrl)
             ? get().llmConfig.apiKey
             : ''
       );
@@ -718,7 +718,7 @@ export const useAppStore = create<AppStore>((set, get) => {
               console.warn('STT Error:', error);
             }
           },
-          buildSttOptions(get().safetyConfig),
+          buildSttOptions(get().safetyConfig, [get().llmConfig]),
         )
         .catch((e: any) => console.warn('开启语音识别失败:', e.message))
         .finally(() => {

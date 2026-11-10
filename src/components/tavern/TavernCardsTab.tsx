@@ -14,7 +14,6 @@ import { LLMClient } from '../../core/ai/llmClient';
 import { TTSManager } from '../../core/voice/ttsManager';
 import { getTavernTtsVoiceOptions, resolveTavernVoiceConfig } from '../../core/tavern/tavernVoice';
 import { BountyQuestEngine } from '../../core/tavern/bountyQuestEngine';
-import { deleteCharacterStats } from '../../core/tavern/tavernStatusHud';
 import { deleteRpgDataForCard } from '../../core/tavern/tavernRpgSlots';
 import { exportTextFile } from '../../core/ui/exportFile';
 import { useAppStore } from '../../store/useAppStore';
@@ -178,7 +177,6 @@ export const TavernCardsTab: React.FC<Props> = ({ onSelectCard, onSelectCardAndC
     }
     if (confirm(`确定删除角色卡【${card.name}】吗？\n\n该角色的本地聊天记录也会一并删除，此操作无法撤销。`)) {
       if (!store.deleteCard(card.id)) return;
-      deleteCharacterStats(card.id);
       deleteRpgDataForCard(card.id);
       const nextActiveCard = store.getActiveCard();
       setCards(store.getCards());

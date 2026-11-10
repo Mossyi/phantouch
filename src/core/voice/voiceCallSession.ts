@@ -93,6 +93,7 @@ const MAX_UTTERANCE_MS = 30_000;
 class SpeechQueue {
   private pending: string[] = [];
   private prepared: PreparedSpeech[] = [];
+  private active: PreparedSpeech | null = null;
   private closed = false;
   private canceled = false;
   private wake: (() => void) | null = null;
@@ -119,6 +120,8 @@ class SpeechQueue {
 
   cancel() {
     this.canceled = true;
+    this.active?.cancel();
+    this.active = null;
     this.prepared.forEach((item) => item.cancel());
     this.prepared = [];
     this.pending = [];
@@ -135,22 +138,47 @@ class SpeechQueue {
     while (!this.canceled) {
       const next = this.prepared.shift();
       if (!next) {
-        if (this.closed) return;
+        if (this.closed || this.canceled) return;
         await new Promise<void>((resolve) => { this.wake = resolve; });
         this.wake = null;
         continue;
       }
+      if (this.canceled) {
+        next.cancel();
+        return;
+      }
       this.fill();
       if (!next.text) continue;
+      this.active = next;
       this.onPlay(next.text);
       try {
         await next.play();
       } catch (error) {
-        console.warn('通话朗读失败:', error);
+        if (!this.canceled) console.warn('通话朗读失败:', error);
+      } finally {
+        if (this.active === next) this.active = null;
       }
     }
   }
 }
+
+/** 把浏览器的英文权限错误换成通话界面能直接看懂的提示。 */
+export const describeMicrophoneFailure = (error: unknown): string => {
+  const name = error instanceof DOMException ? error.name : '';
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (
+    name === 'NotAllowedError'
+    || name === 'PermissionDeniedError'
+    || name === 'SecurityError'
+    || /not allowed|permission denied|permission dismissed/i.test(message)
+  ) {
+    return '麦克风或语音识别权限被拒绝';
+  }
+  if (name === 'NotFoundError' || /requested device not found|device not found|no audio/i.test(message)) {
+    return '没有找到可用的麦克风';
+  }
+  return message || '麦克风无法启动';
+};
 
 export class VoiceCallSession {
   private snapshot: VoiceCallSnapshot = {
@@ -230,7 +258,7 @@ export class VoiceCallSession {
       if (this.snapshot.sttMode === 'cloud') await this.startMicrophone();
       else this.startBrowserRecognition();
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : String(error));
+      this.fail(describeMicrophoneFailure(error));
       return;
     }
     if (!this.active) return;
@@ -271,6 +299,13 @@ export class VoiceCallSession {
     this.transcribeController?.abort();
     this.transcribeController = null;
     this.cancelSpeculative();
+    // 手动打断或挂断时清掉还没说完的录音，避免扬声器尾音被当成下一句。
+    // 开口打断会在调用后立刻写入当前这一帧，不能在这里把 VAD 正在确认的话清掉。
+    if (toListening) {
+      this.vad.reset();
+      this.utterance = [];
+      this.preRoll = [];
+    }
     this.deps.stopSpeech();
     this.deps.interruptTurn();
     if (toListening && this.active) this.set({ phase: 'listening' });
@@ -309,6 +344,7 @@ export class VoiceCallSession {
       if (turn !== this.turnId || !this.active) return;
 
       const segmenter = new SpeechSegmenter();
+      this.queue?.cancel();
       const queue = new SpeechQueue(
         (sentence) => this.deps.prepareSpeech(sentence),
         (spoken) => {
@@ -318,6 +354,11 @@ export class VoiceCallSession {
         },
       );
       this.queue = queue;
+      if (turn !== this.turnId || !this.active) {
+        queue.cancel();
+        if (this.queue === queue) this.queue = null;
+        return;
+      }
       let streamed = false;
       const reply = await this.deps.sendTurn(text, {
         onVisibleText: (visible) => {

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { draftKey, loadDraft, writePreference } from '../../core/ui/localPreferences';
 import { highlightMessage, loadMessageBookmarks, toggleMessageBookmark } from '../../core/tavern/messageFinder';
 import { MessageFinderPanel, ArchiveMessageMatches } from './MessageFinderPanel';
@@ -16,15 +17,6 @@ import { expandTavernMacros } from '../../core/tavern/tavernMacros';
 import { TavernMessageContent } from './TavernMessageContent';
 import { TavernAvatar } from './TavernAvatar';
 import { TavernMessageItem } from './TavernMessageItem';
-import { TavernStatusHudBar } from './TavernStatusHudBar';
-import {
-  TavernCharacterStats,
-  loadCharacterStats,
-  saveCharacterStats,
-  resetCharacterStats,
-  buildStatusPromptInstruction,
-  parseAndApplyStatusUpdate,
-} from '../../core/tavern/tavernStatusHud';
 import {
   HardwareLorebookEngine,
   parseLorebookAiActionDecisions,
@@ -170,7 +162,11 @@ import {
   RPG_PERIOD_LABELS,
   STAGES,
   addRule,
+  acceptRpgWrite,
+  adoptCardVoice,
+  applyGuidanceAction,
   applyRpgUpdate,
+  bindMissingCardVoice,
   buildRpgPrompt,
   buyItem,
   consumePardon,
@@ -188,6 +184,8 @@ import {
   itemUseAction,
   loadRpgState,
   parseRpgUpdate,
+  readCardVoice,
+  rpgStateAfterCardSwitch,
   recordCheck,
   rememberSnapshot,
   removeRule,
@@ -488,11 +486,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [featureNotice, setFeatureNotice] = useState<string | null>(null);
   const [generationConfigVersion, setGenerationConfigVersion] = useState(0);
 
-  // === RPG 属性状态 HUD 与多模态识图 ===
-  const [characterStats, setCharacterStats] = useState<TavernCharacterStats>(() => loadCharacterStats(activeCard.id));
-  const characterStatsRef = useRef<TavernCharacterStats>(characterStats);
+  // === RPG 日程与多模态识图 ===
   const [rpgState, setRpgState] = useState<TavernRpgState | null>(() => loadRpgState(activeCard.id));
   const rpgStateRef = useRef<TavernRpgState | null>(rpgState);
+  const rpgOwnerRef = useRef(activeCard.id);
   const [rpgPanelTab, setRpgPanelTab] = useState<RpgPanelTab | null>(null);
   const [activeSensorChallenge, setActiveSensorChallenge] = useState<{
     courseId: string;
@@ -523,26 +520,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       rpgWorldControllerRef.current?.abort();
     };
   }, [activeCard.id]);
-  useEffect(() => {
-    characterStatsRef.current = characterStats;
-  }, [characterStats]);
   const [attachedImages, setAttachedImages] = useState<string[]>([]);
   const [previewModalImage, setPreviewModalImage] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
-
-  const handleUpdateStats = (newStats: TavernCharacterStats) => {
-    setCharacterStats(newStats);
-    characterStatsRef.current = newStats;
-    saveCharacterStats(activeCard.id, newStats);
-    showFeatureNotice('已更新角色状态属性');
-  };
-
-  const handleResetStats = () => {
-    const initial = resetCharacterStats(activeCard.id);
-    setCharacterStats(initial);
-    characterStatsRef.current = initial;
-    showFeatureNotice('已重置角色好感与服从状态');
-  };
 
   const processImageFiles = (fileList: File[]) => {
     const files = fileList.slice(0, 3 - attachedImages.length);
@@ -747,7 +727,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const contextEstimateCardBook = TavernCardParser.buildWorldBookContext(activeCard, contextEstimateText);
     const contextEstimateSharedBook = buildTavernWorldbookContext(loadTavernWorldbooks(), messages);
     const contextEstimatePrompt = assembleTavernPromptSections(
-      TavernCardParser.buildEnchantedSystemPrompt(activeCard, { user: store.getTavernModelConfig().userName }) + '\n\n' + buildStatusPromptInstruction(characterStats),
+      TavernCardParser.buildEnchantedSystemPrompt(activeCard, { user: store.getTavernModelConfig().userName }),
       {
         player: buildTavernPlayerPromptContext(store.getPlayerProfile()),
         memory: memoryContext,
@@ -777,14 +757,19 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       promptTokens: result.promptTokens,
       historyTokens: result.historyTokens,
     };
-  }, [showMemoryModal, messages, activeCard, isSeseBoosted, memoryState, authorNoteState, generationConfig, generationConfigVersion, characterStats]);
+  }, [showMemoryModal, messages, activeCard, isSeseBoosted, memoryState, authorNoteState, generationConfig, generationConfigVersion]);
 
-  // 当切换角色时重新加载对应会话
+  // 当切换角色时重新加载对应会话。日程进度按卡读取，不能把上一张卡的内存写进新卡。
   useEffect(() => {
+    const nextCardId = activeCard.id;
+    const previousCardId = rpgOwnerRef.current;
+    activeCardIdRef.current = nextCardId;
     ttsSequenceRef.current += 1;
     TTSManager.getInstance().stop();
     STTManager.getInstance().stopListening();
     requestControllerRef.current?.abort();
+    rpgWorldControllerRef.current?.abort();
+    rpgArtControllerRef.current?.abort();
     suggestionControllerRef.current?.abort();
     aiImageControllerRef.current?.abort();
     memorySummaryControllerRef.current?.abort();
@@ -828,10 +813,22 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     setAuthorNoteState(nextAuthorNote);
     setAuthorNoteDraft(nextAuthorNote);
     activeCardIdRef.current = activeCard.id;
+    const switchedRpg = rpgStateAfterCardSwitch({
+      previousCardId,
+      nextCardId,
+      inMemory: rpgStateRef.current,
+      load: loadRpgState,
+    });
+    let nextRpg = switchedRpg.state;
+    if (nextRpg && !nextRpg.guidance?.voice) {
+      nextRpg = bindMissingCardVoice(nextRpg, readCardVoice(activeCard, 'continue'));
+      saveRpgState(nextCardId, nextRpg);
+    }
+    rpgOwnerRef.current = nextCardId;
+    rpgStateRef.current = nextRpg;
+    setRpgState(nextRpg);
+    setRpgSlots(listRpgSlots(nextCardId));
     skipNextSaveRef.current = true;
-    const nextStats = loadCharacterStats(activeCard.id);
-    setCharacterStats(nextStats);
-    characterStatsRef.current = nextStats;
     setInputState(loadDraft(activeCard.id));
     setBookmarks(loadMessageBookmarks(activeCard.id));
     setAttachedImages([]);
@@ -864,6 +861,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       setMessages((current) => current === initialMessages ? repositoryMessages : current);
     });
   }, [activeCard.id]);
+
+  useEffect(() => () => {
+    requestControllerRef.current?.abort();
+    rpgWorldControllerRef.current?.abort();
+    rpgArtControllerRef.current?.abort();
+  }, []);
 
   // 当消息变更时自动保存
   useEffect(() => {
@@ -1358,7 +1361,6 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       ? [...messages, { id: 'author_note_preview', role: 'user', content: contextText }]
       : messages;
     const authorNoteContext = buildTavernAuthorNoteContext(authorNoteState, notePreviewHistory);
-    const statusInstruction = buildStatusPromptInstruction(characterStatsRef.current);
     return [
       assembleTavernPromptSections(TavernCardParser.buildEnchantedSystemPrompt(activeCard, { user: store.getTavernModelConfig().userName }), {
         player: playerContext,
@@ -1370,7 +1372,6 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         ].filter(Boolean).join('\n\n'),
         diary: diaryContext,
       }, generationConfig),
-      statusInstruction,
       authorNoteContext,
     ].filter(Boolean).join('\n\n');
   };
@@ -1558,10 +1559,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       combinedScenePrompt,
       promptOverride,
     ).prompt;
-    const currentSpeakerStats = speaker.id === activeCard.id
-      ? characterStatsRef.current
-      : loadCharacterStats(speaker.id);
-    const systemPrompt = [baseScenePrompt, extras?.systemAddon, buildStatusPromptInstruction(currentSpeakerStats)].filter(Boolean).join('\n\n');
+    const systemPrompt = [baseScenePrompt, extras?.systemAddon].filter(Boolean).join('\n\n');
     if (tavernModelConfig.provider === 'dzmm') {
       const requestHistory = buildBudgetedHistory(transformedHistory, [
         systemPrompt,
@@ -1588,20 +1586,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         historyMessages: Math.max(1, requestHistory.length),
       });
       const lastUserMsg = history.slice().reverse().find((m) => m.role === 'user')?.content || '';
-      const lastAssistantMsg = history.slice().reverse().find((m) => m.role === 'assistant' && m.speakerCardId === speaker.id)?.content || '';
       const speakerPrefixRegex = new RegExp(`^(?:\\{\\{char\\}\\}|${speaker.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|角色|AI|Assistant)\\s*[:：]\\s*`, 'i');
       let strippedReply = stripThinkingArtifacts(reply, false).replace(speakerPrefixRegex, '').trim();
       extras?.onRawReply?.(strippedReply);
-      // 先解析隐藏标签再清洗，否则清洗会把标签删掉
-      const statusParsed = parseAndApplyStatusUpdate(strippedReply, currentSpeakerStats, lastUserMsg);
-      if (statusParsed.updated) {
-        if (speaker.id === activeCard.id) {
-          setCharacterStats(statusParsed.nextStats);
-          characterStatsRef.current = statusParsed.nextStats;
-        }
-        saveCharacterStats(speaker.id, statusParsed.nextStats);
-      }
-      return applyTavernTextRules(sanitizeTavernVisibleContent(statusParsed.cleanedText, false, lastUserMsg), textRules, 'assistant_output').text;
+      return applyTavernTextRules(sanitizeTavernVisibleContent(strippedReply, false, lastUserMsg), textRules, 'assistant_output').text;
     }
 
     const useCustomModel = tavernModelConfig.provider === 'custom';
@@ -1636,15 +1624,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const speakerPrefixRegex = new RegExp(`^(?:\\{\\{char\\}\\}|${speaker.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|角色|AI|Assistant)\\s*[:：]\\s*`, 'i');
     let strippedReply = stripThinkingArtifacts(result.reply, false).replace(speakerPrefixRegex, '').trim();
     extras?.onRawReply?.(strippedReply);
-    const statusParsed = parseAndApplyStatusUpdate(strippedReply, currentSpeakerStats, lastUserMsg);
-    if (statusParsed.updated) {
-      if (speaker.id === activeCard.id) {
-        setCharacterStats(statusParsed.nextStats);
-        characterStatsRef.current = statusParsed.nextStats;
-      }
-      saveCharacterStats(speaker.id, statusParsed.nextStats);
-    }
-    return applyTavernTextRules(sanitizeTavernVisibleContent(statusParsed.cleanedText, false, lastUserMsg), textRules, 'assistant_output').text;
+    return applyTavernTextRules(sanitizeTavernVisibleContent(strippedReply, false, lastUserMsg), textRules, 'assistant_output').text;
   };
 
   const appendSafeSceneReplies = async (history: ChatMsg[], speakers: TavernCharacterCard[], promptOverride?: string | null) => {
@@ -1662,17 +1642,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         const reply = (await generateSafeSceneReply(speaker, currentHistory, speakers, controller.signal, promptOverride)).trim()
           || '（角色暂时没有说话。）';
         if (controller.signal.aborted || activeCardIdRef.current !== requestCardId) return;
-        const speakerStats = speaker.id === activeCard.id
-          ? characterStatsRef.current
-          : loadCharacterStats(speaker.id);
         const deducedEmotion = deduceTavernEmotion({
           text: reply,
-          biometrics: {
-            arousal: speakerStats.arousal,
-            shame: speakerStats.shame,
-            obedience: speakerStats.obedience,
-            favor: speakerStats.favor,
-          },
           hasActivePulse: Boolean(speaker.hardwareEnchanted),
         });
         const assistantMessage: ChatMsg = {
@@ -1743,6 +1714,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
 
   const regenerateAssistantMessage = async (message: ChatMsg) => {
     if (isLoading || regeneratingMessageId || message.role !== 'assistant') return;
+    const requestCardId = activeCard.id;
     const targetIndex = messages.findIndex((candidate) => candidate.id === message.id);
     if (targetIndex < 1 || !messages.slice(0, targetIndex).some((candidate) => candidate.role === 'user')) {
       showFeatureNotice('开场白不能单独重新生成，请先发送一条消息');
@@ -1768,7 +1740,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         rpgBefore ? {
           systemAddon: buildRpgPrompt(rpgBefore, rpgNames()),
           onRawReply: (rawReply) => {
-            if (!controller.signal.aborted) commitRpgTurn(rpgBefore, rawReply, message.id);
+            if (!controller.signal.aborted && acceptRpgWrite(requestCardId, activeCardIdRef.current)) commitRpgTurn(rpgBefore, rawReply, message.id);
           },
         } : undefined,
       )).trim();
@@ -1777,17 +1749,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         const next = current.map((candidate) => {
           if (candidate.id !== message.id) return candidate;
           const candidates = [...new Set([...(candidate.candidateReplies || [candidate.content]), reply])].slice(-6);
-          const speakerStats = speaker.id === activeCard.id
-            ? characterStatsRef.current
-            : loadCharacterStats(speaker.id);
           const deduced = deduceTavernEmotion({
             text: reply,
-            biometrics: {
-              arousal: speakerStats.arousal,
-              shame: speakerStats.shame,
-              obedience: speakerStats.obedience,
-              favor: speakerStats.favor,
-            },
             hasActivePulse: Boolean(speaker.hardwareEnchanted),
           });
           return {
@@ -1847,17 +1810,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           if (candidate.id !== message.id) return candidate;
           const sanitizedExisting = (candidate.candidateReplies || [candidate.content]).map((c) => sanitizeTavernVisibleContent(c, false));
           const candidates = [...new Set([...sanitizedExisting, combinedContent])].slice(-6);
-          const speakerStats = speaker.id === activeCard.id
-            ? characterStatsRef.current
-            : loadCharacterStats(speaker.id);
           const deduced = deduceTavernEmotion({
             text: combinedContent,
-            biometrics: {
-              arousal: speakerStats.arousal,
-              shame: speakerStats.shame,
-              obedience: speakerStats.obedience,
-              favor: speakerStats.favor,
-            },
             hasActivePulse: Boolean(speaker.hardwareEnchanted),
           });
           return {
@@ -1892,15 +1846,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         const nextIndex = (Math.max(0, currentIndex) + direction + message.candidateReplies.length) % message.candidateReplies.length;
         const nextContent = message.candidateReplies[nextIndex];
         const speaker = getMessageSpeaker(message);
-        const speakerStats = speaker.id === activeCard.id ? characterStatsRef.current : loadCharacterStats(speaker.id);
         const nextEmotion = deduceTavernEmotion({
           text: nextContent,
-          biometrics: {
-            arousal: speakerStats.arousal,
-            shame: speakerStats.shame,
-            obedience: speakerStats.obedience,
-            favor: speakerStats.favor,
-          },
           hasActivePulse: Boolean(speaker.hardwareEnchanted),
         }).emotion;
         return { ...message, content: nextContent, activeCandidateIndex: nextIndex, flashImage: undefined, emotion: nextEmotion };
@@ -1922,16 +1869,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         const nextIndex = Math.min(activeIdx, nextCandidates.length - 1);
         const nextContent = nextCandidates[nextIndex] || '';
         const speaker = getMessageSpeaker(message);
-        const speakerStats = speaker.id === activeCard.id ? characterStatsRef.current : loadCharacterStats(speaker.id);
         const nextEmotion = nextContent
           ? deduceTavernEmotion({
               text: nextContent,
-              biometrics: {
-                arousal: speakerStats.arousal,
-                shame: speakerStats.shame,
-                obedience: speakerStats.obedience,
-                favor: speakerStats.favor,
-              },
               hasActivePulse: Boolean(speaker.hardwareEnchanted),
             }).emotion
           : undefined;
@@ -2004,15 +1944,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     if (message.role === 'assistant') {
       const cleanEdited = sanitizeTavernVisibleContent(edited, false);
       const speaker = getMessageSpeaker(message);
-      const speakerStats = speaker.id === activeCard.id ? characterStatsRef.current : loadCharacterStats(speaker.id);
       const deduced = deduceTavernEmotion({
         text: cleanEdited,
-        biometrics: {
-          arousal: speakerStats.arousal,
-          shame: speakerStats.shame,
-          obedience: speakerStats.obedience,
-          favor: speakerStats.favor,
-        },
         hasActivePulse: Boolean(speaker.hardwareEnchanted),
       });
       setMessages((current) => {
@@ -2075,10 +2008,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   // ─── 训练日程 ────────────────────────────────────────────────────────────────
   const rpgActive = rpgEnabled && !isGroupScene && Boolean(rpgState);
   const rpgSaveWarnedRef = useRef(false);
-  const updateRpgState = (next: TavernRpgState | null) => {
+  const updateRpgState = (next: TavernRpgState | null, ownerCardId = activeCardIdRef.current) => {
+    if (!acceptRpgWrite(ownerCardId, activeCardIdRef.current)) return false;
     rpgStateRef.current = next;
     setRpgState(next);
-    const saved = saveRpgState(activeCard.id, next);
+    rpgOwnerRef.current = ownerCardId;
+    const saved = saveRpgState(ownerCardId, next);
     if (!saved && !rpgSaveWarnedRef.current) {
       rpgSaveWarnedRef.current = true;
       showFeatureNotice('⚠️ 本地存储满了，训练进度没能保存。请删掉一些存档或聊天存档');
@@ -2149,8 +2084,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     return { state: next, note };
   };
 
-  const startRpg = (templateId: string, custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number }) => {
-    const next = createRpgState(templateId, rpgNames(), custom);
+  const startRpg = (templateId: string, custom?: { worldName?: string; premise?: string; startName?: string; dayLimit?: number; trainerStyle?: 'gentle' | 'strict' | 'observer'; gameMode?: 'normal' | 'hardcore' | 'reversal'; inheritedTraits?: string[]; inheritedPoints?: number }) => {
+    const next = createRpgState(templateId, rpgNames(), { ...custom, cardVoice: readCardVoice(activeCard, 'new-game') });
     updateRpgState(next);
     setRpgPanelTab(null);
     const home = next.locations.find((location) => location.id === next.homeId)?.name ?? '住处';
@@ -2173,6 +2108,22 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         });
         return;
       }
+    }
+
+    if (action.type === 'guidance' || action.type === 'boundary') {
+      const guided = applyGuidanceAction(current, action.type === 'boundary'
+        ? { type: 'boundary', key: action.key, value: action.value }
+        : action.verb === 'report'
+          ? { type: 'report', report: action.report }
+          : { type: action.verb });
+      if (guided.error) {
+        showFeatureNotice(guided.error);
+        return;
+      }
+      updateRpgState(guided.state);
+      if (guided.message) void handleSendRef.current?.(guided.message, false);
+      else showFeatureNotice('界限已记下。下一条对话会按这个界限进行，不会因此记过。');
+      return;
     }
 
     let result: RpgActionResult;
@@ -2300,9 +2251,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     rpgWorldControllerRef.current?.abort();
     const controller = new AbortController();
     rpgWorldControllerRef.current = controller;
+    const requestCardId = activeCard.id;
     try {
       const request = buildWorldGenRequest(input, rpgNames(), { description: activeCard.description, personality: activeCard.personality, scenario: activeCard.scenario });
       const raw = await runTavernTextModel(WORLD_GEN_SYSTEM, request, controller.signal, 'rpg_world');
+      if (!acceptRpgWrite(requestCardId, activeCardIdRef.current)) throw new Error('角色已经切换，这次生成不作数。');
       const world = parseGeneratedWorld(raw, input);
       if (!world) throw new Error('AI 返回的内容没法解析成世界，请重试，或者换一个更擅长输出 JSON 的模型');
       return world;
@@ -2311,8 +2264,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     }
   };
 
-  const startGeneratedRpg = (world: GeneratedWorld) => {
-    const next = createRpgStateFromTemplate(world.template, rpgNames(), { courses: world.courses, events: world.events });
+  const startGeneratedRpg = (world: GeneratedWorld, custom?: { trainerStyle?: 'gentle' | 'strict' | 'observer' }) => {
+    const next = createRpgStateFromTemplate(world.template, rpgNames(), { courses: world.courses, events: world.events }, { ...custom, cardVoice: readCardVoice(activeCard, 'new-game') });
     updateRpgState(next);
     setRpgPanelTab(null);
     const home = next.locations.find((location) => location.id === next.homeId)?.name ?? '住处';
@@ -2323,6 +2276,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const exploreRpg = async () => {
     const current = rpgStateRef.current;
     if (!current || rpgExploring) return;
+    const requestCardId = activeCard.id;
     rpgWorldControllerRef.current?.abort();
     const controller = new AbortController();
     rpgWorldControllerRef.current = controller;
@@ -2330,7 +2284,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     try {
       const raw = await runTavernTextModel(WORLD_GEN_SYSTEM, buildExploreRequest(current, rpgNames()), controller.signal, 'rpg_explore');
       const latest = rpgStateRef.current;
-      if (controller.signal.aborted || !latest) return;
+      if (controller.signal.aborted || !latest || !acceptRpgWrite(requestCardId, activeCardIdRef.current)) return;
       const result = discoverLocations(latest, parseExploredLocations(raw), 2);
       if (!result.added.length) {
         showFeatureNotice('这次没有探索到新地点，可以再试一次');
@@ -2417,8 +2371,17 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   const handleSend = async (forcedPrompt?: string, forcedOoc?: boolean) => {
+    // isLoading 要等下一次渲染才变，连点会在那之前再进一次。用 ref 在第一次进入时立刻占住。
+    if (isLoadingRef.current) return;
     if (isGroupScene) {
-      await handleGroupSend(forcedPrompt, forcedOoc);
+      const preview = (forcedPrompt !== undefined ? forcedPrompt : input).trim();
+      if ((!preview && attachedImages.length === 0) || isLoading) return;
+      isLoadingRef.current = true;
+      try {
+        await handleGroupSend(forcedPrompt, forcedOoc);
+      } finally {
+        isLoadingRef.current = false;
+      }
       return;
     }
     const rawText = (forcedPrompt !== undefined ? forcedPrompt : input).trim();
@@ -2459,6 +2422,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
 
     let requestController: AbortController | null = null;
     try {
+      isLoadingRef.current = true;
       // 1. 扫描硬件世界书关键词 (仅在非 OOC 模式触发)
       let lorebookInjected = '';
       let deferredUserActions: LorebookEntry[] = [];
@@ -2516,7 +2480,6 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         },
         currentGenerationConfig,
       );
-      const statusInstruction = buildStatusPromptInstruction(characterStatsRef.current);
       const rpgTurnState = !isOOC && rpgEnabled ? rpgStateRef.current : null;
       const rpgPrompt = rpgTurnState ? buildRpgPrompt(rpgTurnState, { char: rpgCharName, user: userName }) : '';
       const systemPrompt = resolveTavernDebugSystemPrompt(automaticSystemPrompt, promptOverride).prompt;
@@ -2526,7 +2489,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       const promptWithAction = aiActionRequest
         ? `${promptWithLorebook}\n\n${aiActionRequest.instruction}`
         : promptWithLorebook;
-      const fullSystemPrompt = [promptWithAction, voiceCallActiveRef.current ? PHONE_CALL_PROMPT : '', rpgPrompt, statusInstruction].filter(Boolean).join('\n\n');
+      const fullSystemPrompt = [promptWithAction, voiceCallActiveRef.current ? PHONE_CALL_PROMPT : '', rpgPrompt].filter(Boolean).join('\n\n');
 
       const isContinueInstruction = /^[（(]?\s*继续\s*[)）]?$/.test(rawText.trim());
       const lastAssistantMsg = messages.slice().reverse().find((m) => m.role === 'assistant') || null;
@@ -2564,7 +2527,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         }, currentGenerationConfig);
         const dzmmBaseSystemPrompt = promptOverride
           ? fullSystemPrompt
-          : [dzmmAutomaticPrompt, lorebookInjected, aiActionRequest?.instruction, voiceCallActiveRef.current ? PHONE_CALL_PROMPT : '', rpgPrompt, statusInstruction].filter(Boolean).join('\n\n');
+          : [dzmmAutomaticPrompt, lorebookInjected, aiActionRequest?.instruction, voiceCallActiveRef.current ? PHONE_CALL_PROMPT : '', rpgPrompt].filter(Boolean).join('\n\n');
         const dzmmSystemPrompt = continuationGuidance
           ? `${dzmmBaseSystemPrompt}\n\n${continuationGuidance}`
           : dzmmBaseSystemPrompt;
@@ -2659,20 +2622,14 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       resetStreamingReply();
 
       const parsedAiActions = parseLorebookAiActionDecisions(reply, aiActionRequest);
-      // 隐藏标签必须在清洗之前解析：清洗会把 STATUS / RPG 标签一起删掉
+      // 隐藏标签必须在清洗之前解析：清洗会把 RPG 标签一起删掉
       // 推理模型的思考过程里可能出现示例标签，先去掉思考内容再解析
       const rawModelReply = stripThinkingArtifacts(parsedAiActions.cleanedReply || '', false) || '（角色暂时没有说话。）';
       const assistantMessageId = createMessageId('msg');
-      const parsedStatus = parseAndApplyStatusUpdate(rawModelReply, characterStatsRef.current, rawText);
-      if (rpgTurnState && rpgStateRef.current) {
+      if (rpgTurnState && rpgStateRef.current && acceptRpgWrite(requestCardId, activeCardIdRef.current)) {
         commitRpgTurn(rpgStateRef.current, rawModelReply, assistantMessageId);
       }
-      if (parsedStatus.updated) {
-        setCharacterStats(parsedStatus.nextStats);
-        characterStatsRef.current = parsedStatus.nextStats;
-        saveCharacterStats(activeCard.id, parsedStatus.nextStats);
-      }
-      reply = sanitizeTavernVisibleContent(parsedStatus.cleanedText, false, rawText);
+      reply = sanitizeTavernVisibleContent(rawModelReply, false, rawText);
       if (!isOOC && activeCard.hardwareEnchanted) {
         const assistantLorebook = lorebookEngine.processText(reply, 'assistant');
         const assistantEmergencyStop = assistantLorebook.actionEntries.some(
@@ -2759,12 +2716,6 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
 
       const deducedEmotion = deduceTavernEmotion({
         text: reply,
-        biometrics: {
-          arousal: characterStatsRef.current.arousal,
-          shame: characterStatsRef.current.shame,
-          obedience: characterStatsRef.current.obedience,
-          favor: characterStatsRef.current.favor,
-        },
         hasActivePulse: !roundEmergencyStopped && activeCard.hardwareEnchanted,
       });
 
@@ -2841,6 +2792,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       streamingReplyRef.current = '';
       setStreamingReply('');
       setIsLoading(false);
+      isLoadingRef.current = false;
     }
   };
 
@@ -2874,7 +2826,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       return TTSManager.getInstance().prepare(speech, voice);
     },
     stopSpeech: () => TTSManager.getInstance().stop(),
-    sttOptions: buildSttOptions(safetyConfig),
+    sttOptions: buildSttOptions(safetyConfig, [store.getTavernModelConfig(), useAppStore.getState().llmConfig]),
     turnTiming: safetyConfig.voiceCallTurnTiming,
   });
 
@@ -3000,7 +2952,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         setIsVoiceProcessing(processing === true);
         if (error) showFeatureNotice(error);
       },
-      buildSttOptions(safetyConfig),
+      buildSttOptions(safetyConfig, [store.getTavernModelConfig(), useAppStore.getState().llmConfig]),
     );
   };
 
@@ -3575,7 +3527,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           name={activeCard.name}
           avatar={activeCard.avatar}
           userName={store.getTavernModelConfig().userName || '我'}
-          sttOptions={buildSttOptions(safetyConfig)}
+          sttOptions={buildSttOptions(safetyConfig, [store.getTavernModelConfig(), useAppStore.getState().llmConfig])}
           speak={speakAsCharacter}
           stopSpeech={stopTtsPlayback}
           emsCeiling={resolveEnabledEmsCeiling(safetyConfig.maxEmsStrengthA, safetyConfig.maxEmsStrengthB, 200)}
@@ -3621,6 +3573,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           }}
           charName={rpgCharName}
           userName={store.getTavernModelConfig().userName || '你'}
+          cardVoice={readCardVoice(activeCard, 'new-game')}
+          onAdoptCardVoice={() => {
+            const current = rpgStateRef.current;
+            if (!current || !acceptRpgWrite(activeCard.id, activeCardIdRef.current)) return;
+            updateRpgState(adoptCardVoice(current, readCardVoice(activeCard, 'card-edit')));
+          }}
           busy={isLoading}
           emsCeiling={rpgEmsCeiling}
           initialTab={rpgPanelTab}
@@ -3652,7 +3610,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           openingLine={phoneCall === 'outgoing'
             ? '（📞 我给你打了语音电话，你刚刚接起）'
             : '（📞 你给我打了语音电话，我刚刚接起。请你先开口，说说为什么打来）'}
-          sttLabel={`实时语音 · ${describeSttEngine(buildSttOptions(safetyConfig))}`}
+          sttLabel={`实时语音 · ${describeSttEngine(buildSttOptions(safetyConfig, [store.getTavernModelConfig(), useAppStore.getState().llmConfig]))}`}
           onEnd={handlePhoneCallEnd}
           onEmergencyStop={() => void useAppStore.getState().triggerEmergencyStop()}
         />
@@ -3665,19 +3623,13 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           <span>{lorebookToast}</span>
         </div>
       )}
-      {featureNotice && (
-        <div className="absolute top-12 left-1/2 z-50 w-max max-w-[88%] -translate-x-1/2 rounded-full border border-pink-200 bg-white/95 px-3.5 py-1.5 text-center text-[10px] font-bold text-pink-700 shadow-xl backdrop-blur-md">
+      {featureNotice && typeof document !== 'undefined' && createPortal(
+        <div className="fixed top-16 left-1/2 z-[10050] w-max max-w-[88%] -translate-x-1/2 rounded-full border border-pink-200 bg-white/95 px-3.5 py-1.5 text-center text-[10px] font-bold text-pink-700 shadow-xl backdrop-blur-md">
           {featureNotice}
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {/* RPG 属性/好感度状态栏 HUD */}
-      <TavernStatusHudBar
-        characterName={activeCard.name}
-        stats={characterStats}
-        onUpdateStats={handleUpdateStats}
-        onResetStats={handleResetStats}
-      />
       {rpgActive && rpgState && <TavernRpgHud state={rpgState} art={rpgArt[rpgState.currentId]} onOpen={() => setRpgPanelTab('today')} />}
 
       {/* 消息展示区域（相对定位，容纳消息流与浮动立绘） */}

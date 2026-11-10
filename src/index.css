@@ -83,11 +83,19 @@
 
   /* 保证所有内部滚动区域在各类老旧移动端内核上都能正常滑屏与动量滚动 */
   .overflow-y-auto,
-  .overflow-x-auto,
   [class*="overflow-y-auto"] {
     -webkit-overflow-scrolling: touch;
     touch-action: pan-y;
     overscroll-behavior-y: contain;
+  }
+
+  /* 横向条必须能左右滑。以前和竖向滚动共用 pan-y，手指和滚轮都滑不到右边的按钮。 */
+  .overflow-x-auto,
+  [class*="overflow-x-auto"],
+  .rpg-choice-strip {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+    overscroll-behavior-x: contain;
   }
 
   body {

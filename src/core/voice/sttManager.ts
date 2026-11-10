@@ -2,7 +2,8 @@ export type STTResultCallback = (transcript: string, isFinal: boolean) => void;
 export type STTStateCallback = (isListening: boolean, error?: string, isProcessing?: boolean) => void;
 
 import type { SafetyConfig, STTEngineType } from '../../types';
-import { isPrivateNetworkHost } from '../apiBaseUrl';
+import { isPrivateNetworkHost, isVolcengineArkPlanApiBaseUrl } from '../apiBaseUrl';
+import { resolveVolcenginePlanSttResource, transcribePlanAsr } from './volcenginePlanSpeech';
 
 export interface STTOptions {
   engine?: STTEngineType;
@@ -22,14 +23,21 @@ export interface STTOptions {
 }
 
 /** 从设置构建识别参数（伴侣、酒馆按键说话与语音通话共用） */
-export const buildSttOptions = (config: Partial<SafetyConfig>): STTOptions => ({
+export const buildSttOptions = (
+  config: Partial<SafetyConfig>,
+  planCandidates: Array<{ baseUrl?: string; apiKey?: string }> = [],
+): STTOptions => ({
   engine: config.sttEngine,
   siliconflowApiKey: config.siliconflowSttApiKey,
   siliconflowModel: config.siliconflowSttModel,
-  volcengineApiKey: config.volcengineSttApiKey,
+  volcengineApiKey: config.volcengineSttApiKey?.trim()
+    || planCandidates.find((candidate) => isVolcengineArkPlanApiBaseUrl(candidate.baseUrl) && candidate.apiKey?.trim())?.apiKey?.trim()
+    || undefined,
   volcengineAppId: config.volcengineSttAppId,
   volcengineAccessKey: config.volcengineSttAccessKey,
-  volcengineResourceId: config.volcengineSttResourceId,
+  volcengineResourceId: config.sttEngine === 'volcengine' || typeof config.volcengineSttResourceId === 'string'
+    ? resolveVolcenginePlanSttResource(config.volcengineSttResourceId)
+    : undefined,
   openaiBaseUrl: config.openaiSttBaseUrl,
   openaiApiKey: config.openaiSttApiKey,
   openaiModel: config.openaiSttModel,
@@ -41,7 +49,7 @@ export const describeSttEngine = (options: STTOptions): string => {
     case 'siliconflow':
       return `硅基流动 · ${(options.siliconflowModel || 'FunAudioLLM/SenseVoiceSmall').split('/').pop()}`;
     case 'volcengine':
-      return '豆包 · 极速识别';
+      return '方舟 Plan · 语音识别';
     case 'openai': {
       let host = '自定义接口';
       try { host = new URL(String(options.openaiBaseUrl)).hostname.replace(/^api\./, ''); } catch {}
@@ -64,9 +72,8 @@ const isLocalSttBaseUrl = (baseUrl: string | undefined): boolean => {
 /** 识别参数缺少必需凭据时返回提示文案 */
 export const describeMissingSttCredentials = (options: STTOptions): string | null => {
   if (options.engine === 'siliconflow' && !options.siliconflowApiKey?.trim()) return '请先在系统设置中填写硅基流动语音识别 Key';
-  if (options.engine === 'volcengine' && !options.volcengineApiKey?.trim()
-    && !(options.volcengineAppId?.trim() && options.volcengineAccessKey?.trim())) {
-    return '请先在系统设置中填写豆包语音识别凭据';
+  if (options.engine === 'volcengine' && !options.volcengineApiKey?.trim()) {
+    return '请先填写火山方舟 Agent Plan 专属 API Key，或在文字模型里保存 Plan 地址与 Key';
   }
   if (options.engine === 'openai') {
     if (!options.openaiBaseUrl?.trim()) return '请先在系统设置中填写语音识别接口地址';
@@ -77,7 +84,6 @@ export const describeMissingSttCredentials = (options: STTOptions): string | nul
 };
 
 const SILICONFLOW_STT_ENDPOINT = 'https://api.siliconflow.cn/v1/audio/transcriptions';
-const VOLCENGINE_STT_ENDPOINT = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash';
 
 export const encodeWav = (chunks: Float32Array[], sampleRate: number): Blob => {
   const sampleCount = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
@@ -400,33 +406,14 @@ export class STTManager {
   }
 
   private async transcribeVolcengine(wav: Blob, options: STTOptions, signal: AbortSignal): Promise<string> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-Api-Resource-Id': options.volcengineResourceId || 'volc.bigasr.auc_turbo',
-      'X-Api-Request-Id': crypto.randomUUID(),
-      'X-Api-Sequence': '-1',
-    };
-    if (options.volcengineApiKey?.trim()) headers['X-Api-Key'] = options.volcengineApiKey.trim();
-    else {
-      headers['X-Api-App-Key'] = options.volcengineAppId?.trim() || '';
-      headers['X-Api-Access-Key'] = options.volcengineAccessKey?.trim() || '';
-    }
-    const response = await fetch(VOLCENGINE_STT_ENDPOINT, {
-      method: 'POST',
-      headers,
+    const text = await transcribePlanAsr({
+      wav: new Uint8Array(await wav.arrayBuffer()),
+      apiKey: options.volcengineApiKey || '',
+      resourceId: options.volcengineResourceId,
       signal,
-      body: JSON.stringify({
-        user: { uid: 'ycy_voice_input' },
-        audio: { data: await blobToBase64(wav), format: 'wav' },
-        request: { model_name: 'bigmodel', enable_itn: true, enable_punc: true, enable_ddc: true, show_utterances: true },
-      }),
     });
-    const payload = await response.json().catch(() => ({}));
-    const statusCode = response.headers.get('x-api-status-code');
-    if (!response.ok || (statusCode && statusCode !== '20000000')) {
-      throw new Error(response.headers.get('x-api-message') || payload?.message || `火山语音识别失败 (${statusCode || response.status})`);
-    }
-    return extractTranscript(payload);
+    if (!text) throw new Error('没有识别到清晰语音');
+    return text;
   }
 
   /**

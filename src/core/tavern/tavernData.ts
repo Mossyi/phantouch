@@ -87,7 +87,7 @@ export const DEFAULT_TAVERN_IMAGE_MODEL_CONFIG: TavernImageModelConfig = {
 
 export const VOLCENGINE_PLAN_IMAGE_BASE_URL = 'https://ark.cn-beijing.volces.com/api/plan/v3';
 // Seedream is the official model ID. The former extra "d" made Plan reject it.
-export const VOLCENGINE_PLAN_IMAGE_MODEL = 'doubao-seedream-5.0-lite';
+export const VOLCENGINE_PLAN_IMAGE_MODEL = 'doubao-seedream-5.0-flash';
 
 export const getTavernImageCredentialScope = (
   config: Pick<TavernImageModelConfig, 'provider' | 'baseUrl'>,
@@ -906,6 +906,7 @@ export class TavernStore {
         localStorage.removeItem(tavernArchiveLibraryUpdatedKey(safeCardId));
         localStorage.removeItem(`ycy_tavern_memory_${safeCardId}`);
         localStorage.removeItem(`ycy_tavern_author_note_${safeCardId}`);
+        // 已停用的好感状态栏。只在用户删除这张卡时清掉它自己的记录，读档和聊天都不再使用。
         localStorage.removeItem(`ycy_tavern_stats_${safeCardId}`);
         localStorage.removeItem(`ycy_tavern_draft_${safeCardId}`);
         localStorage.removeItem(`ycy_tavern_bookmarks_${safeCardId}`);
