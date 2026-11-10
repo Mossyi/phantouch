@@ -7,6 +7,9 @@ import {
 } from 'lucide-react';
 import { RpgCertificateModal } from './RpgCertificateModal';
 import { RPG_ICON_CREDIT, RPG_ICON_PATHS } from '../../core/tavern/rpgIcons';
+import { equippedTitle } from '../../core/tavern/tavernRpgFun';
+import { loadSceneMode, periodLight, resolveSceneBackground, resolveSceneSprite, saveSceneMode, weatherFx, type SceneMode } from '../../core/tavern/tavernRpgScene';
+import { RpgSceneStage } from './RpgSceneStage';
 import type { TavernCharacterExpressions, TavernEmotionKey } from '../../core/tavern/tavernTypes';
 import { RPG_CARD_FIELD_LABELS, cardVoiceDrift, type RpgCardVoice } from '../../core/tavern/tavernRpgCard';
 import { KIND_ICONS, PERIOD_ICONS, RpgIcon, STAGE_ICONS, courseIcon, itemIcon, traitIcon } from './RpgIcon';
@@ -796,6 +799,7 @@ export type RpgPanelTab = 'map' | 'today' | 'status' | 'chronicle' | 'gallery' |
 export interface TavernRpgPanelProps {
   state: TavernRpgState | null;
   portrait: RpgPortrait;
+  emotion?: TavernEmotionKey;
   art: Record<string, string>;
   artBusyId: string | null;
   artAuto: boolean;
@@ -828,7 +832,7 @@ export interface TavernRpgPanelProps {
 }
 
 export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
-  state, portrait, art, artBusyId, artAuto, onGenerateArt, onToggleArtAuto, onGenerateWorld, onStartGenerated, onExplore, exploring, slots, onSaveSlot, onLoadSlot, onDeleteSlot, onNewRun, onDisableMode,
+  state, portrait, emotion = 'neutral', art, artBusyId, artAuto, onGenerateArt, onToggleArtAuto, onGenerateWorld, onStartGenerated, onExplore, exploring, slots, onSaveSlot, onLoadSlot, onDeleteSlot, onNewRun, onDisableMode,
   charName, userName, cardVoice, onAdoptCardVoice, busy, emsCeiling, initialTab = 'map', onStart, onAction, onAddRule, onRemoveRule, onEnd, onUpdateHardware, onClose,
 }) => {
   const deviceState = useAppStore((s) => s.deviceState);
@@ -865,6 +869,11 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   }, [onClose]);
 
   const [courseOffer, setCourseOffer] = useState<{ courseId: string; name: string; stat: RpgStatKey; dc: number } | null>(null);
+  const [sceneMode, setSceneMode] = useState<SceneMode>(() => loadSceneMode());
+  const changeSceneMode = (mode: SceneMode) => {
+    setSceneMode(mode);
+    saveSceneMode(mode);
+  };
   const gallerySent = useRef('');
   React.useEffect(() => {
     if (!state) return;
@@ -948,6 +957,34 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
           </div>
           <button type="button" onClick={onClose} aria-label="关闭" className="rounded-full p-1.5 text-slate-500 hover:bg-pink-50"><X className="h-4 w-4" /></button>
         </div>
+        {state && (() => {
+          const here = getLocation(state, state.currentId);
+          const background = resolveSceneBackground(here?.kind, art[state.currentId]);
+          const latest = state.fun?.rollHistory?.[state.fun.rollHistory.length - 1];
+          const twist = [...state.pendingEvents].reverse().find((event) => event.startsWith('导演转折：')) ?? null;
+          return (
+            <RpgSceneStage
+              locationName={here?.name ?? '未知地点'}
+              backgroundSrc={background.src}
+              light={periodLight(state.period)}
+              weather={weatherFx(state.weather)}
+              sprite={resolveSceneSprite(portrait, emotion)}
+              speakerName={charName}
+              dayText={dayLabel(state)}
+              periodLabel={RPG_PERIOD_LABELS[state.period] ?? '白天'}
+              title={state.fun ? equippedTitle(state.fun) : null}
+              stamina={state.stamina}
+              stress={state.stress}
+              tension={state.fun?.tension ? tensionCountdown(state.fun.tension) : null}
+              roll={latest ? { id: latest.id, roll: latest.roll, tier: latest.tier, stake: latest.stake, net: latest.net } : null}
+              twistToken={twist}
+              toast={state.fun?.toasts?.[state.fun.toasts.length - 1] ?? null}
+              mode={sceneMode}
+              onMode={changeSceneMode}
+              onDismissToast={() => onAction({ type: 'dismissToast' })}
+            />
+          );
+        })()}
 
         {!state ? (
           <div className="space-y-3 overflow-y-auto p-4" data-allow-scroll>
@@ -999,7 +1036,6 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
                     const courseId = courseOffer.courseId;
                     setCourseOffer(null);
                     onAction({ type: 'course', courseId, stake });
-                    onClose();
                   }}
                 />
               )}
@@ -1441,6 +1477,15 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
 
               {tab === 'settings' && (
                 <>
+                  <div className="rounded-2xl border border-pink-100 bg-white p-3">
+                    <p className="text-[11px] font-black text-slate-800">场景</p>
+                    <p className="mt-1 text-[10px] leading-4 text-slate-500">面板顶部的地点画面。收起只留一条，关闭后这里可以再打开。</p>
+                    <div className="mt-2 flex gap-1.5">
+                      {([['open', '开着'], ['collapsed', '收起'], ['off', '关闭']] as const).map(([mode, label]) => (
+                        <button key={mode} type="button" aria-pressed={sceneMode === mode} onClick={() => changeSceneMode(mode)} className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-bold ${sceneMode === mode ? 'border-pink-300 bg-pink-50 text-pink-700' : 'border-slate-200 text-slate-600'}`}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
                   <div className="rounded-2xl border border-violet-100 bg-white p-3">
                     <p className="text-[11px] font-black text-slate-800">导演转折</p>
                     <p className="mt-1 text-[10px] leading-4 text-slate-500">连续平静、没有检定也没有大变化时，会倒计时然后插入一件小事。默认开着。</p>
