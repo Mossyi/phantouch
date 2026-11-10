@@ -74,6 +74,29 @@ import {
   type TrainingReport,
 } from './tavernRpgGuidance';
 import { voicePremise, type RpgCardVoice } from './tavernRpgCard';
+import {
+  advanceCalm,
+  capStake,
+  checkChances,
+  classifyRoll,
+  COSTLY_STRESS,
+  emptyFun,
+  equippedTitle,
+  formatTierLine,
+  nextWagerStreak,
+  normalizeFun,
+  pickTwist,
+  readCardTwists,
+  achievementProbe,
+  settleWager,
+  syncAchievements,
+  wagerNote,
+  type CheckTier,
+  type FunBook,
+  type RollRecord,
+} from './tavernRpgFun';
+
+export { checkChances, classifyRoll, capStake, settleWager, listAchievements, tensionCountdown, WAGER_PRESETS, equippedTitle, CHECK_TIER_LABEL, readCardTwists } from './tavernRpgFun';
 
 export * from './tavernRpgContent';
 export { TRAINER_STYLES, trustLabel, isTrainerStyle, courseRefusal, bindMissingCardVoice, adoptCardVoice };
@@ -242,6 +265,8 @@ export interface RpgCore {
   log: RpgLogEntry[];
   turn: number;
   hardware: RpgHardwareSettings;
+  /** 检定记录、对赌、导演转折和称号。旧存档没有时按默认补上。 */
+  fun?: FunBook;
 }
 
 export interface TavernRpgState extends RpgCore {
@@ -257,6 +282,10 @@ export interface RpgCheckResult {
   total: number;
   success: boolean;
   critical: 'success' | 'fail' | null;
+  tier: CheckTier;
+  costStress: number;
+  stake: number;
+  wagerNet: number;
 }
 
 export const RPG_PERIOD_LABELS = ['清晨', '白天', '黄昏', '深夜'];
@@ -574,6 +603,7 @@ export const evaluateProgress = (input: TavernRpgState): RpgProgress => {
       milestones.push({ day: state.day, text: `进入阶段「${STAGES[stage].name}」` });
     }
   }
+  state = withAchievements(state);
   return {
     state: { ...state, pendingEvents: events.slice(-6), milestones: [...(state.milestones ?? []), ...milestones].slice(-MAX_MILESTONES) },
     completed,
@@ -617,6 +647,7 @@ const freshCore = () => {
     turn: 0,
     hardware: defaultHardware(),
     snapshots: [] as TavernRpgState['snapshots'],
+    fun: emptyFun(),
   };
 };
 
@@ -632,7 +663,16 @@ export interface RpgCustomConfig {
   cardVoice?: RpgCardVoice;
   inheritedTraits?: string[];
   inheritedPoints?: number;
+  /** 这张角色卡自带的转折，用过一次就标记。 */
+  cardTwists?: Array<{ id?: string; text: string }>;
 }
+
+const attachCardTwists = (state: TavernRpgState, custom?: RpgCustomConfig): TavernRpgState => {
+  const twists = readCardTwists({ rpgTwists: custom?.cardTwists });
+  if (!twists.length) return state;
+  const book = normalizeFun(state.fun);
+  return { ...state, fun: { ...book, tension: { ...book.tension, twists } } };
+};
 
 const sealGuidance = (state: TavernRpgState, style?: TrainerStyleId, voice?: RpgCardVoice): TavernRpgState => ({
   ...state,
@@ -685,7 +725,7 @@ export const createRpgStateFromTemplate = (
     today: freshTally(common.trainee, startPoints),
     log: [{ at: Date.now(), text: `开始：${worldName}${gameMode === 'hardcore' ? '（硬核模式）' : ''}`, tone: 'info' }],
   }, homeId);
-  return sealGuidance({ ...state, plan: buildDailyPlan(state) }, custom?.trainerStyle, custom?.cardVoice);
+  return attachCardTwists(sealGuidance({ ...state, plan: buildDailyPlan(state) }, custom?.trainerStyle, custom?.cardVoice), custom);
 };
 
 export const createRpgState = (
@@ -735,7 +775,7 @@ export const createRpgState = (
     today: freshTally(common.trainee, startPoints),
     log: [{ at: Date.now(), text: `开始：${homeName}${gameMode === 'hardcore' ? '（硬核模式）' : ''}`, tone: 'info' }],
   }, homeId);
-  return sealGuidance({ ...state, plan: buildDailyPlan(state) }, custom?.trainerStyle, custom?.cardVoice);
+  return attachCardTwists(sealGuidance({ ...state, plan: buildDailyPlan(state) }, custom?.trainerStyle, custom?.cardVoice), custom);
 };
 
 // ─── 检定 ──────────────────────────────────────────────────────────────────────
@@ -750,19 +790,77 @@ export const checkModifier = (state: RpgCore, stat: RpgStatKey) =>
   - (state.stamina < RPG_LOW_STAMINA ? 2 : 0)
   - (state.stress >= RPG_HIGH_STRESS ? 2 : 0);
 
-export const rollCheck = (state: RpgCore, check: RpgCheck, random: () => number = Math.random): RpgCheckResult => {
+export const modifierBreakdown = (state: RpgCore, stat: RpgStatKey) => {
+  const fromStat = statModifier(stat, state.trainee[stat] ?? 0);
+  const fromTrait = traitModifier(state, stat);
+  const fromStamina = state.stamina < RPG_LOW_STAMINA ? -2 : 0;
+  const fromStress = state.stress >= RPG_HIGH_STRESS ? -2 : 0;
+  return { fromStat, fromTrait, fromStamina, fromStress, total: fromStat + fromTrait + fromStamina + fromStress };
+};
+
+export const previewCheck = (state: RpgCore, stat: RpgStatKey, dc: number) => {
+  const parts = modifierBreakdown(state, stat);
+  return { ...parts, dc, stat, chances: checkChances(parts.total, dc) };
+};
+
+export const equipRpgTitle = (state: TavernRpgState, id: string | null): TavernRpgState => {
+  const book = normalizeFun(state.fun);
+  if (id && !book.unlocked.includes(id)) return state;
+  return { ...state, fun: { ...book, equipped: id } };
+};
+
+export const dismissFunToast = (state: TavernRpgState): TavernRpgState => ({ ...state, fun: { ...normalizeFun(state.fun), toasts: [] } });
+
+export const setTensionEnabled = (state: TavernRpgState, enabled: boolean): TavernRpgState => {
+  const book = normalizeFun(state.fun);
+  return { ...state, fun: { ...book, tension: { ...book.tension, enabled, calm: enabled ? book.tension.calm : 0 } } };
+};
+
+export const noteGalleryEndings = (state: TavernRpgState, ids: string[]): TavernRpgState => {
+  const book = normalizeFun(state.fun);
+  const endingsSeen = [...book.endingsSeen];
+  ids.filter((id) => typeof id === 'string' && id.trim()).forEach((id) => {
+    if (!endingsSeen.includes(id)) endingsSeen.push(id);
+  });
+  if (endingsSeen.length === book.endingsSeen.length) return state;
+  return withAchievements({ ...state, fun: { ...book, endingsSeen: endingsSeen.slice(-30) } });
+};
+
+/** 回应选项上的检定：先掷骰、结算押注，再交给叙述。 */
+export const applyChoiceCheck = (state: TavernRpgState, check: RpgCheck, stake = 0, random: () => number = Math.random) => {
+  let result = rollCheck(state, check, random, stake);
+  const wager = settleWager(state.points, result.stake, result.tier);
+  result = { ...result, stake: wager.stake, wagerNet: wager.net };
+  let next = rememberRoll(recordCheck(state, result), result);
+  next = { ...next, points: next.points - wager.stake + wager.returned };
+  next = evaluateProgress(finishBeat(next, true)).state;
+  return { state: next, line: formatCheckResult(result), result };
+};
+
+export const rollCheck = (state: RpgCore, check: RpgCheck, random: () => number = Math.random, stake = 0): RpgCheckResult => {
   const roll = clamp(Math.floor(random() * 20) + 1, 1, 20);
   const mod = checkModifier(state, check.stat);
-  const total = roll + mod;
-  const critical = roll === 20 ? 'success' : roll === 1 ? 'fail' : null;
-  const success = critical === 'success' ? true : critical === 'fail' ? false : total >= check.dc;
-  return { stat: check.stat, dc: check.dc, roll, mod, total, success, critical };
+  const judged = classifyRoll(roll, mod, check.dc);
+  return {
+    stat: check.stat,
+    dc: check.dc,
+    roll,
+    mod,
+    total: judged.total,
+    success: judged.success,
+    critical: judged.critical,
+    tier: judged.tier,
+    costStress: judged.cost.stress,
+    stake: capStake(state.points, stake),
+    wagerNet: 0,
+  };
 };
 
 export const formatCheckResult = (result: RpgCheckResult) => {
   const modText = result.mod === 0 ? '' : result.mod > 0 ? ` +${result.mod}` : ` ${result.mod}`;
-  const verdict = result.critical === 'success' ? '大成功' : result.critical === 'fail' ? '大失败' : result.success ? '成功' : '失败';
-  return `🎲 ${RPG_CHECK_LABELS[result.stat]}检定：d20=${result.roll}${modText} = ${result.total} / 难度 ${result.dc} · ${verdict}`;
+  const verdict = formatTierLine(result.tier, result.costStress);
+  const wager = result.stake ? ` · ${wagerNote({ stake: result.stake, multiplier: 0, returned: 0, net: result.wagerNet, points: 0 })}` : '';
+  return `🎲 ${RPG_CHECK_LABELS[result.stat]}检定：d20=${result.roll}${modText} = ${result.total} / 难度 ${result.dc} · ${verdict}${wager}`;
 };
 
 /** 判定具身感应挑战是否达成要求 */
@@ -783,7 +881,15 @@ export const recordCheck = (state: TavernRpgState, result: RpgCheckResult): Tave
     fails: { ...state.counters.fails, [result.stat]: state.counters.fails[result.stat] + (result.success ? 0 : 1) },
   };
   const today = { ...state.today, passed: state.today.passed + (result.success ? 1 : 0), failed: state.today.failed + (result.success ? 0 : 1) };
-  const next = { ...state, counters, today, stress: clamp(state.stress + (result.success ? 0 : FAIL_STRESS), 0, 100) };
+  const stressDelta = result.success ? result.costStress : FAIL_STRESS;
+  const book = normalizeFun(state.fun);
+  const nextBook: FunBook = {
+    ...book,
+    checks: book.checks + 1,
+    crits: book.crits + (result.tier === 'crit' ? 1 : 0),
+    costly: book.costly + (result.tier === 'costly' ? 1 : 0),
+  };
+  const next = { ...state, counters, today, fun: nextBook, stress: clamp(state.stress + stressDelta, 0, 100) };
   return appendRpgLog(next, formatCheckResult(result).replace(/^🎲\s*/, ''), result.success ? 'good' : 'bad');
 };
 
@@ -959,7 +1065,7 @@ export const travelTo = (state: TavernRpgState, locationId: string, random: () =
   if (summoned) lines.push('（按调教者的传唤按时报到）');
   if (arrived !== reported) lines.push('（已按今天的课题报到）');
   if (event) lines.push(`✨ 地点事件：${event.title}`);
-  return { state: evaluateProgress(next).state, message: lines.join('\n') };
+  return { state: evaluateProgress(finishBeat(next, Boolean(event))).state, message: lines.join('\n') };
 };
 
 const addToInventory = (inventory: RpgItem[], item: RpgItem): RpgItem[] | null => {
@@ -1002,12 +1108,67 @@ export const doWork = (state: TavernRpgState, random: () => number = Math.random
   return { state: next, message: `🧭 差事：在${here.name}忙了一个时段（体力 -${WORK_STAMINA_COST}）${bonusNote}，等你检查，做好了能得 ${pay} 积分。现在是${RPG_PERIOD_LABELS[next.period]}` };
 };
 
+const rememberRoll = (state: TavernRpgState, result: RpgCheckResult): TavernRpgState => {
+  const book = normalizeFun(state.fun);
+  const record: RollRecord = {
+    id: `roll_${state.day}_${state.turn}_${result.stat}_${result.roll}`,
+    day: state.day,
+    stat: result.stat,
+    dc: result.dc,
+    roll: result.roll,
+    mod: result.mod,
+    total: result.total,
+    tier: result.tier,
+    stake: result.stake,
+    net: result.wagerNet,
+  };
+  const streak = nextWagerStreak(book.wagerStreak, result.stake, result.tier);
+  return {
+    ...state,
+    fun: {
+      ...book,
+      rollHistory: [...book.rollHistory, record].slice(-8),
+      wagerStreak: streak,
+      wagerBest: Math.max(book.wagerBest, streak),
+    },
+  };
+};
+
+/** 平静回合累加；到点把一条变数放进待回应事件。检定、事件或明显属性变化会清零。 */
+export const finishBeat = (state: TavernRpgState, excited: boolean): TavernRpgState => {
+  const book = normalizeFun(state.fun);
+  const step = advanceCalm(book.tension, !excited && book.tension.enabled);
+  if (!step.fired) return { ...state, fun: { ...book, tension: step.tension } };
+  const picked = pickTwist(step.tension, state.customEvents ?? []);
+  return {
+    ...state,
+    fun: { ...book, tension: { ...picked.tension, calm: 0 }, twists: book.twists + 1 },
+    pendingEvents: [...state.pendingEvents, `导演转折：${picked.twist.text}请让{{char}}顺着这件事反应。这是系统安排的变数，不能跳过，也不能改成没发生。`].slice(-6),
+  };
+};
+
+const withAchievements = (state: TavernRpgState): TavernRpgState => {
+  const book = normalizeFun(state.fun);
+  const synced = syncAchievements(book, achievementProbe(book, {
+    day: state.day,
+    points: state.points,
+    stage: state.stage,
+    gameMode: state.gameMode,
+    cleanDays: state.counters?.cleanDays ?? 0,
+    courses: state.counters?.courses ?? 0,
+    traits: state.traits?.length ?? 0,
+    devotion: state.trainee?.devotion ?? 0,
+    shame: state.trainee?.shame ?? 0,
+  }));
+  return synced.unlockedNow.length ? { ...state, fun: synced.book } : { ...state, fun: book };
+};
+
 /** 进行一门课程：系统掷骰并结算所有数值，AI 只描写过程和反应 */
 export const runCourse = (
   input: TavernRpgState,
   courseId: string,
   random: () => number = Math.random,
-  options?: { challengePassed?: boolean }
+  options?: { challengePassed?: boolean; stake?: number }
 ): RpgActionResult => {
   const entry = getCoursesHere(input).find((item) => item.course.id === courseId);
   if (!entry) return { state: input, error: '这里不能进行这门课程。' };
@@ -1020,19 +1181,22 @@ export const runCourse = (
   let check: RpgCheckResult | undefined;
   let success = true;
   if (course.check) {
-    check = rollCheck(state, course.check, random);
+    check = rollCheck(state, course.check, random, options?.stake ?? 0);
     if (options?.challengePassed !== undefined) {
       if (options.challengePassed) {
         success = true;
-        check = { ...check, success: true, total: Math.max(check.total, check.dc) };
+        check = { ...check, success: true, tier: check.tier === 'crit' ? 'crit' : 'success', costStress: 0, critical: check.critical === 'fail' ? null : check.critical, total: Math.max(check.total, check.dc) };
       } else {
         success = false;
-        check = { ...check, success: false };
+        check = { ...check, success: false, tier: 'fail', costStress: 0, critical: check.critical === 'success' ? null : check.critical };
       }
     } else {
       success = check.success;
     }
+    const wager = settleWager(state.points, check.stake, check.tier);
+    check = { ...check, stake: wager.stake, wagerNet: wager.net };
     state = recordCheck(state, check);
+    state = rememberRoll(state, check);
   }
   const trainee = { ...state.trainee };
   const changes: string[] = [];
@@ -1073,8 +1237,16 @@ export const runCourse = (
     counters: { ...state.counters, courses: state.counters.courses + 1, aftercare: state.counters.aftercare + (course.id === 'aftercare' ? 1 : 0) },
     today: { ...state.today, courses: state.today.courses + 1 },
   };
-  state = appendRpgLog(state, `课程：${course.name}${course.check ? (success ? '（成功）' : '（失败）') : ''}`, success ? 'good' : 'bad');
+  if (check?.stake) {
+    const wager = settleWager(state.points + check.stake, check.stake, check.tier);
+    state = { ...state, points: state.points - check.stake + wager.returned };
+    if (wager.net) changes.push(wager.net > 0 ? `对赌净赚 ${wager.net}` : `对赌失去 ${-wager.net}`);
+    else changes.push('对赌原数退回');
+  }
+  state = appendRpgLog(state, `课程：${course.name}${course.check ? `（${formatTierLine(check?.tier ?? 'success', check?.costStress)}）` : ''}`, success ? 'good' : 'bad');
   state = notePractice(state, success, { relief: course.relief });
+  const statShift = STAT_KEYS.some((key) => Math.abs(state.trainee[key] - input.trainee[key]) >= 3);
+  state = finishBeat(state, Boolean(check) || statShift);
   state = evaluateProgress(afterTimeAdvance(state, random)).state;
 
   const lines = [`🧭 课程：${course.name}（${course.description}）${slotIndex >= 0 ? '· 今日课表' : ''}`];
@@ -1134,7 +1306,12 @@ export const restUntilMorning = (state: TavernRpgState, random: () => number = M
     const ending = computeEnding(next.trainee, next.traits);
     next = appendRpgLog({ ...next, ending: { ...ending, day: finished } }, `契约期满：${ending.title}`, 'good');
     next = { ...next, pendingEvents: [...next.pendingEvents.slice(-5), `约定的 ${next.dayLimit} 天到了。结局评价：「${ending.title}」——${ending.summary} 请让${'{{char}}'}回顾这段训练，并问${'{{user}}'}是否愿意续约。`] };
+    const seen = normalizeFun(next.fun);
+    if (ending.id && !seen.endingsSeen.includes(ending.id)) next = { ...next, fun: { ...seen, endingsSeen: [...seen.endingsSeen, ending.id] } };
   }
+  const book = normalizeFun(next.fun);
+  if (planDone === report.planTotal && report.planTotal > 0) next = { ...next, fun: { ...book, planClears: book.planClears + 1 } };
+  next = evaluateProgress(finishBeat(next, false)).state;
 
   const summary = [
     `完成课程 ${report.courses} 次`,
@@ -1256,6 +1433,8 @@ export const buildRpgPrompt = (state: RpgCore, names: { char: string; user: stri
     summon ? `限时传唤：${summon.objective}（没按时到要追究）` : '',
     milestones ? `训练回忆（重要的时刻，可以在对话里提起）：${milestones}` : '',
     recent ? `最近几天：${recent}` : '',
+    equippedTitle(normalizeFun(state.fun)) ? `当前称号：${equippedTitle(normalizeFun(state.fun))}。可以让${char}偶尔这样称呼${user}，不要每句都喊。` : '',
+    state.fun?.rollHistory?.length ? `上一次系统检定已定论：${formatTierLine(state.fun.rollHistory[state.fun.rollHistory.length - 1].tier, state.fun.rollHistory[state.fun.rollHistory.length - 1].tier === 'costly' ? COSTLY_STRESS : 0)}。叙述必须跟这个档位和代价一致，不能改写成相反的结果。` : '',
     ...guidanceLines,
     state.pendingEvents.length ? `【本轮需要回应的事件】\n${state.pendingEvents.map((event) => `- ${fill(event)}`).join('\n')}` : '',
   ].filter(Boolean);
@@ -1264,7 +1443,7 @@ export const buildRpgPrompt = (state: RpgCore, names: { char: string; user: stri
 
   const rulesText = `【训练规则】
 ${rule1}
-2. 用户消息以「🧭」开头的是系统已经完成的动作（前往、课程、兑换、差事、休息、使用物品、开始）；「🎲 检定」是系统掷骰的结果；「系统已结算」后面的数值已经生效。请直接按结果描写${char}的反应和评价，不得改写成败，也不要在标签里重复给这些数值；课程、差事、休息已经推进过时间，这一轮不要再写 time。
+2. 用户消息以「🧭」开头的是系统已经完成的动作（前往、课程、兑换、差事、休息、使用物品、开始）；「🎲 检定」是系统掷骰的结果，大成功、成功、勉强成功、失败、大失败和写明的代价、押注输赢都已生效。请直接按这个档位描写${char}的反应，不得改写成相反的结果，也不要在标签里重复给这些数值；课程、差事、休息已经推进过时间，这一轮不要再写 time。
 3. 只能移动到「相邻可去」且开放的地点。自由互动会消耗${user}的体力：口头规矩 0-5，日常练习 5-15，强度较高的训练 15-30。
 4. 训练属性随表现缓慢变化（每项每轮 -3 到 +3，特别好或特别差最多 ±8）：服从=听从指令、耐受=能坚持多久、羞耻=越低越放得开、依恋=对${char}的信赖。做得好可以奖励积分（每轮最多 +30）。
 5. ${user}违反家规时，在标签里记下违反了哪一条；你也可以在剧情里立新的家规（每轮最多一条）。
@@ -1825,6 +2004,7 @@ export const normalizeRpgState = (value: unknown): TavernRpgState | null => {
     quests: Array.isArray(raw.quests) ? raw.quests : [],
     choices: Array.isArray(raw.choices) ? raw.choices : [],
     log: Array.isArray(raw.log) ? raw.log.slice(-MAX_LOG) : [],
+    fun: normalizeFun((raw as { fun?: unknown }).fun),
     snapshots: migrateSnapshots(raw.snapshots),
     hardware: normalizeHardware(raw.hardware),
   };

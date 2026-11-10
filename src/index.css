@@ -930,3 +930,14 @@ button[class*="bg-rose-500"] {
   to { width: 0%; }
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .rpg-die-roll {
+    animation: rpg-die-pop 0.7s var(--ease-out, ease-out) both;
+  }
+}
+
+@keyframes rpg-die-pop {
+  from { opacity: 0; transform: rotate(-16deg) scale(0.7); }
+  to { opacity: 1; transform: none; }
+}
+

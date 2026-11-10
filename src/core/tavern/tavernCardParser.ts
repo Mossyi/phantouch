@@ -5,6 +5,7 @@ import {
   normalizeSceneWallpaper,
   normalizeSceneWallpaperOverlay,
 } from './tavernData';
+import { readCardTwists } from './tavernRpgFun';
 
 /**
  * 役次元 SillyTavern 兼容角色卡解析与可选硬件联动引擎
@@ -187,6 +188,7 @@ export class TavernCardParser {
         expressions: normalizeExpressions(charData.expressions || charData.extensions?.yiciyuan?.expressions || data?.extensions?.yiciyuan?.expressions),
         // 社区角色卡中的提示词不应在未确认时获得硬件权限。
         hardwareEnchanted: false,
+        ...(readCardTwists(charData).length ? { rpgTwists: readCardTwists(charData).map(({ id, text }) => ({ id, text })) } : {}),
         creator: this.cleanText(charData.creator, '社区创作者', 100),
         source: 'imported_json',
       };
