@@ -873,6 +873,29 @@ export const evaluateSensorChallenge = (challenge: RpgSensorChallenge, actualVal
   return false;
 };
 
+/** 未连接的设备残留读数（心率引擎默认 75）不能当成正在测量。未连接时心率按偏高显示，必须按住屏幕才算平复。 */
+export const sensorDisplayedValue = (input: {
+  type: RpgSensorChallenge['type'];
+  holding: boolean;
+  deviceConnected: boolean;
+  deviceValue: number;
+}): number => {
+  if (input.type === 'pressure') {
+    const device = Number.isFinite(input.deviceValue) ? Math.max(0, input.deviceValue) : 0;
+    return input.holding ? Math.max(device, 32.5) : device;
+  }
+  if (input.holding) return 72;
+  if (input.deviceConnected && Number.isFinite(input.deviceValue) && input.deviceValue > 0) return input.deviceValue;
+  return 108;
+};
+
+/** 同一次挑战的完成和跳过只能落地一次。后到的定时器或按钮返回 false。 */
+export const claimSettlement = (claim: { token: number | null }, token: number): boolean => {
+  if (!Number.isFinite(token) || claim.token === token) return false;
+  claim.token = token;
+  return true;
+};
+
 /** 记录一次检定：计入特质计数和当天统计，失败会增加压力 */
 export const recordCheck = (state: TavernRpgState, result: RpgCheckResult): TavernRpgState => {
   const counters = {
@@ -1906,6 +1929,22 @@ export const applyRpgUpdate = (input: TavernRpgState, update: RpgUpdate | null, 
 
 // ─── 存储 ──────────────────────────────────────────────────────────────────────
 
+const normalizeInventory = (value: unknown): RpgItem[] => {
+  if (!Array.isArray(value)) return [];
+  const items: RpgItem[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const raw = entry as Partial<RpgItem>;
+    const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, 40) : '';
+    const qty = Math.min(99, Math.max(0, toInt(raw.qty, 1)));
+    if (!name || qty <= 0) continue;
+    const effect = raw.effect && typeof raw.effect === 'object' ? raw.effect : undefined;
+    items.push({ name, qty, effect });
+    if (items.length >= MAX_ITEMS) break;
+  }
+  return items;
+};
+
 const normalizeHardware = (value: unknown): RpgHardwareSettings => {
   const raw = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
   return {
@@ -2000,7 +2039,7 @@ export const normalizeRpgState = (value: unknown): TavernRpgState | null => {
     guidance: normalizeGuidance(raw.guidance, raw.locations, Math.max(1, toInt(raw.day, 1)), trainee.devotion, raw.gameMode === 'reversal'),
     renewCount: Math.max(0, toInt(raw.renewCount, 0)),
     pendingEvents: Array.isArray(raw.pendingEvents) ? raw.pendingEvents.slice(-6) : [],
-    inventory: Array.isArray(raw.inventory) ? raw.inventory : [],
+    inventory: normalizeInventory(raw.inventory),
     quests: Array.isArray(raw.quests) ? raw.quests : [],
     choices: Array.isArray(raw.choices) ? raw.choices : [],
     log: Array.isArray(raw.log) ? raw.log.slice(-MAX_LOG) : [],

@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Activity, CheckCircle2, HeartPulse, Sparkles, X, XCircle, Zap } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
-import type { RpgSensorChallenge } from '../../core/tavern/tavernRpg';
+import { evaluateSensorChallenge, sensorDisplayedValue, type RpgSensorChallenge } from '../../core/tavern/tavernRpg';
+import { useOverlayBack } from './useOverlayBack';
 
 export interface RpgSensorChallengeModalProps {
   challenge: RpgSensorChallenge;
@@ -25,6 +26,11 @@ export const RpgSensorChallengeModal: React.FC<RpgSensorChallengeModalProps> = (
   const [holdSuccessMs, setHoldSuccessMs] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
   const [outcome, setOutcome] = useState<'success' | 'fail' | null>(null);
+  const onCompleteRef = useRef(onComplete);
+  const onCancelRef = useRef(onCancel);
+  const settledRef = useRef(false);
+  onCompleteRef.current = onComplete;
+  onCancelRef.current = onCancel;
 
   const totalMs = challenge.durationSeconds * 1000;
   const isPressure = challenge.type === 'pressure';
@@ -39,19 +45,20 @@ export const RpgSensorChallengeModal: React.FC<RpgSensorChallengeModalProps> = (
   const hrDeviceConnected = Boolean(heartRateState.isConnected);
   const physicalHr = Number(heartRateState.currentBpm) || 0;
 
-  // Actual effective value (physical reading or touch hold simulation)
-  const currentPressure = isPressure
-    ? (isHoldingTouch ? Math.max(physicalPressure, 32.5) : physicalPressure)
-    : 0;
-
-  const currentHr = !isPressure
-    ? (isHoldingTouch ? 72 : (physicalHr > 0 ? physicalHr : 108))
-    : 0;
-
-  // Check if condition is currently met
-  const isConditionMet = isPressure
-    ? currentPressure >= challenge.targetValue
-    : currentHr > 0 && currentHr <= challenge.targetValue;
+  const currentPressure = sensorDisplayedValue({
+    type: 'pressure',
+    holding: isHoldingTouch,
+    deviceConnected: sensorDeviceConnected,
+    deviceValue: physicalPressure,
+  });
+  const currentHr = sensorDisplayedValue({
+    type: 'heart_rate',
+    holding: isHoldingTouch,
+    deviceConnected: hrDeviceConnected,
+    deviceValue: physicalHr,
+  });
+  const displayedValue = isPressure ? currentPressure : currentHr;
+  const isConditionMet = evaluateSensorChallenge(challenge, displayedValue);
 
   const isConditionMetRef = useRef(isConditionMet);
   isConditionMetRef.current = isConditionMet;
@@ -79,17 +86,36 @@ export const RpgSensorChallengeModal: React.FC<RpgSensorChallengeModalProps> = (
     return () => clearInterval(timer);
   }, [totalMs, isFinished]);
 
+  const settle = (success: boolean) => {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    onCompleteRef.current(success);
+  };
+  const cancel = () => {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    onCancelRef.current();
+  };
+  useOverlayBack(cancel);
+
   useEffect(() => {
-    if (isFinished && outcome === null) {
-      // 70% hold ratio counts as a triumph
-      const pass = holdSuccessMs >= totalMs * 0.7;
-      setOutcome(pass ? 'success' : 'fail');
-      const finishTimer = setTimeout(() => {
-        onComplete(pass);
-      }, 1500);
-      return () => clearTimeout(finishTimer);
-    }
-  }, [isFinished, holdSuccessMs, totalMs, outcome, onComplete]);
+    const stop = () => setIsHoldingTouch(false);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+    return () => {
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isFinished) return undefined;
+    // outcome 不能放进依赖：写完结果再渲染会清掉这个定时器，挑战就停在结果页不结算。
+    const pass = holdSuccessMs >= totalMs * 0.7;
+    setOutcome(pass ? 'success' : 'fail');
+    const finishTimer = window.setTimeout(() => settle(pass), 1500);
+    return () => window.clearTimeout(finishTimer);
+  }, [isFinished, holdSuccessMs, totalMs]);
 
   const remainingSeconds = Math.max(0, Math.ceil((totalMs - elapsedMs) / 1000));
   const progressPercent = Math.min(100, Math.round((holdSuccessMs / totalMs) * 100));
@@ -119,7 +145,7 @@ export const RpgSensorChallengeModal: React.FC<RpgSensorChallengeModalProps> = (
           </div>
           <button
             type="button"
-            onClick={onCancel}
+            onClick={cancel}
             className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
             aria-label="放弃挑战"
           >
@@ -232,15 +258,15 @@ export const RpgSensorChallengeModal: React.FC<RpgSensorChallengeModalProps> = (
         <div className="flex items-center gap-2 pt-1 border-t border-pink-100/60">
           <button
             type="button"
-            onClick={onCancel}
+            onClick={cancel}
             className="flex-1 rounded-xl border border-slate-200 bg-white py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition"
           >
             跳过挑战（投骰检定）
           </button>
-          {isFinished && (
+          {outcome && (
             <button
               type="button"
-              onClick={() => onComplete(outcome === 'success')}
+              onClick={() => settle(outcome === 'success')}
               className="flex-1 rounded-xl bg-violet-600 py-2 text-xs font-black text-white hover:bg-violet-700 shadow-md shadow-violet-500/20 transition"
             >
               完成结算

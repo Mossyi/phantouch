@@ -30,7 +30,7 @@ test('称号、转折和提示在生成中仍然能点，出行和课程会先�
   assert.match(body, /上一条还在生成/);
   assert.equal(body.includes('if (!current || isLoading) return'), false);
   const cancel = chat.indexOf('const handleSensorChallengeCancel');
-  const cancelBody = chat.slice(cancel, cancel + 420);
+  const cancelBody = chat.slice(cancel, cancel + 700);
   assert.match(cancelBody, /sensorBypassed:\s*true/);
   assert.match(cancelBody, /pendingStakeRef\.current/);
   assert.match(chat, /challengePassed === undefined && !action\.sensorBypassed/);

@@ -6,6 +6,7 @@ import {
   ChevronLeft, ChevronRight, Map as MapIcon, MessageCircleHeart, NotebookText, Plus, RefreshCw, RotateCcw, ScrollText, Settings2, Sparkles, Star, Trophy, UserRound, Wrench, X, Zap,
 } from 'lucide-react';
 import { RpgCertificateModal } from './RpgCertificateModal';
+import { useOverlayBack } from './useOverlayBack';
 import { RPG_ICON_CREDIT, RPG_ICON_PATHS } from '../../core/tavern/rpgIcons';
 import type { TavernCharacterExpressions, TavernEmotionKey } from '../../core/tavern/tavernTypes';
 import { RPG_CARD_FIELD_LABELS, cardVoiceDrift, type RpgCardVoice } from '../../core/tavern/tavernRpgCard';
@@ -869,6 +870,7 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [onClose]);
+  useOverlayBack(onClose);
 
   const [courseOffer, setCourseOffer] = useState<{ courseId: string; name: string; stat: RpgStatKey; dc: number } | null>(null);
   const [wallNote, setWallNote] = useState('');

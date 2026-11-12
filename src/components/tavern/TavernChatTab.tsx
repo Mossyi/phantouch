@@ -175,6 +175,7 @@ import {
   buyItem,
   consumePardon,
   countNewlyExpiredSummons,
+  claimSettlement,
   createRpgState,
   createRpgStateFromTemplate,
   discoverLocations,
@@ -498,7 +499,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const rpgOwnerRef = useRef(activeCard.id);
   const [rpgPanelTab, setRpgPanelTab] = useState<RpgPanelTab | null>(null);
   const pendingStakeRef = useRef(0);
+  const sensorTokenRef = useRef(0);
+  const sensorClaimRef = useRef<{ token: number | null }>({ token: null });
   const [activeSensorChallenge, setActiveSensorChallenge] = useState<{
+    token: number;
+    ownerCardId: string;
     courseId: string;
     courseName: string;
     challenge: RpgSensorChallenge;
@@ -771,6 +776,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const nextCardId = activeCard.id;
     const previousCardId = rpgOwnerRef.current;
     activeCardIdRef.current = nextCardId;
+    pendingStakeRef.current = 0;
+    setActiveSensorChallenge(null);
     ttsSequenceRef.current += 1;
     TTSManager.getInstance().stop();
     STTManager.getInstance().stopListening();
@@ -2130,10 +2137,13 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       if (course?.sensorChallenge && current.hardware.sensorChallengesEnabled) {
         pendingStakeRef.current = action.stake ?? 0;
         setActiveSensorChallenge({
+          token: sensorTokenRef.current + 1,
+          ownerCardId: activeCardIdRef.current,
           courseId: course.id,
           courseName: course.name,
           challenge: course.sensorChallenge,
         });
+        sensorTokenRef.current += 1;
         return;
       }
     }
@@ -2212,21 +2222,23 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   const handleSensorChallengeComplete = (success: boolean) => {
-    if (!activeSensorChallenge) return;
-    const courseId = activeSensorChallenge.courseId;
+    const challenge = activeSensorChallenge;
+    if (!challenge || !claimSettlement(sensorClaimRef.current, challenge.token)) return;
+    if (activeCardIdRef.current !== challenge.ownerCardId) return;
     const stake = pendingStakeRef.current;
     pendingStakeRef.current = 0;
     setActiveSensorChallenge(null);
-    runRpgAction({ type: 'course', courseId, challengePassed: success, stake });
+    runRpgAction({ type: 'course', courseId: challenge.courseId, challengePassed: success, stake });
   };
 
   const handleSensorChallengeCancel = () => {
-    if (!activeSensorChallenge) return;
-    const courseId = activeSensorChallenge.courseId;
+    const challenge = activeSensorChallenge;
+    if (!challenge || !claimSettlement(sensorClaimRef.current, challenge.token)) return;
+    if (activeCardIdRef.current !== challenge.ownerCardId) return;
     const stake = pendingStakeRef.current;
     pendingStakeRef.current = 0;
     setActiveSensorChallenge(null);
-    runRpgAction({ type: 'course', courseId, sensorBypassed: true, stake });
+    runRpgAction({ type: 'course', courseId: challenge.courseId, sensorBypassed: true, stake });
   };
 
   /** 用户的回应选项：带检定的先掷骰（用户的训练属性和特质做修正） */
