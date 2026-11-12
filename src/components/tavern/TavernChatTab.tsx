@@ -2100,9 +2100,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   /** 移动、课程、兑换、差事、休息、使用物品、续约：系统先结算，再把结果作为一条消息发给 AI 描写 */
-  const runRpgAction = (action: RpgSystemAction & { challengePassed?: boolean }) => {
+  const runRpgAction = (action: RpgSystemAction & { challengePassed?: boolean; sensorBypassed?: boolean }) => {
     const current = rpgStateRef.current;
-    if (!current || isLoading) return;
+    if (!current) return;
     if (action.type === 'equipTitle') {
       updateRpgState(equipRpgTitle(current, action.id));
       return;
@@ -2119,9 +2119,13 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       updateRpgState(noteGalleryEndings(current, action.ids));
       return;
     }
+    if (isLoading) {
+      showFeatureNotice('上一条还在生成，请等它结束或先停掉，再点这里。');
+      return;
+    }
 
     // 具身感应挑战拦截
-    if (action.type === 'course' && action.challengePassed === undefined) {
+    if (action.type === 'course' && action.challengePassed === undefined && !action.sensorBypassed) {
       const course = findCourse(current, action.courseId);
       if (course?.sensorChallenge && current.hardware.sensorChallengesEnabled) {
         pendingStakeRef.current = action.stake ?? 0;
@@ -2219,8 +2223,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const handleSensorChallengeCancel = () => {
     if (!activeSensorChallenge) return;
     const courseId = activeSensorChallenge.courseId;
+    const stake = pendingStakeRef.current;
+    pendingStakeRef.current = 0;
     setActiveSensorChallenge(null);
-    runRpgAction({ type: 'course', courseId });
+    runRpgAction({ type: 'course', courseId, sensorBypassed: true, stake });
   };
 
   /** 用户的回应选项：带检定的先掷骰（用户的训练属性和特质做修正） */

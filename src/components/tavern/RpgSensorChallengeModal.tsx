@@ -95,7 +95,7 @@ export const RpgSensorChallengeModal: React.FC<RpgSensorChallengeModalProps> = (
   const progressPercent = Math.min(100, Math.round((holdSuccessMs / totalMs) * 100));
 
   const content = (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[10050] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
       <div
         className="w-full max-w-sm rounded-3xl bg-gradient-to-b from-white via-pink-50/30 to-violet-50/40 p-5 shadow-2xl border border-pink-100 flex flex-col gap-4"
         role="dialog"
