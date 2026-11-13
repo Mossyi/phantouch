@@ -80,7 +80,7 @@ export const PWAInstallBanner: React.FC = () => {
   if (isStandalone || !showBanner) return null;
 
   return (
-    <div className="fixed top-14 left-3 right-3 z-50 max-w-md mx-auto animate-in fade-in slide-in-from-top-4">
+    <div className="relative z-20 mx-auto w-full max-w-md shrink-0 px-3 pt-2">
       <div className="modern-card bg-gradient-to-r from-pink-950/90 via-rose-950/80 to-pink-950/90 border border-pink-300/25 rounded-3xl p-4 shadow-2xl">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-start gap-2.5">

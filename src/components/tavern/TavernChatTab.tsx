@@ -154,6 +154,7 @@ import {
 } from 'lucide-react';
 import { TavernRpgChoices, TavernRpgHud, TavernRpgPanel, type RpgPanelTab, type RpgSystemAction } from './TavernRpgPanel';
 import { RpgSensorChallengeModal } from './RpgSensorChallengeModal';
+import { useOverlayBack } from './useOverlayBack';
 import { buildLocationArtPrompt, deleteRpgArt, fetchImageAsDataUrl, isRpgArtAutoEnabled, loadRpgArt, saveRpgArt, setRpgArtAutoEnabled } from '../../core/tavern/tavernRpgArt';
 import { deleteRpgSlot, listRpgSlots, loadRpgSlot, saveRpgSlot, slotLocationIds, type RpgSaveSlot } from '../../core/tavern/tavernRpgSlots';
 import { WORLD_GEN_SYSTEM, buildExploreRequest, buildWorldGenRequest, parseExploredLocations, parseGeneratedWorld, type GeneratedWorld, type WorldGenInput } from '../../core/tavern/tavernRpgWorldGen';
@@ -175,6 +176,7 @@ import {
   buyItem,
   consumePardon,
   countNewlyExpiredSummons,
+  claimSettlement,
   createRpgState,
   createRpgStateFromTemplate,
   discoverLocations,
@@ -498,7 +500,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const rpgOwnerRef = useRef(activeCard.id);
   const [rpgPanelTab, setRpgPanelTab] = useState<RpgPanelTab | null>(null);
   const pendingStakeRef = useRef(0);
+  const sensorTokenRef = useRef(0);
+  const sensorClaimRef = useRef<{ token: number | null }>({ token: null });
   const [activeSensorChallenge, setActiveSensorChallenge] = useState<{
+    token: number;
+    ownerCardId: string;
     courseId: string;
     courseName: string;
     challenge: RpgSensorChallenge;
@@ -667,6 +673,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [cardSourceMessageIds, setCardSourceMessageIds] = useState<string[]>([]);
   const [cardExtractionPrompt, setCardExtractionPrompt] = useState('');
   const [showGroupModal, setShowGroupModal] = useState(false);
+  useOverlayBack(() => setShowActionMenu(false), showActionMenu);
+  useOverlayBack(() => setShowGroupModal(false), showGroupModal);
   const [groupParticipantIds, setGroupParticipantIds] = useState<string[]>(() => store.getGroupScene(activeCard.id).participantIds);
   const [suggestionPanel, setSuggestionPanel] = useState<{
     messageId: string;
@@ -771,6 +779,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const nextCardId = activeCard.id;
     const previousCardId = rpgOwnerRef.current;
     activeCardIdRef.current = nextCardId;
+    pendingStakeRef.current = 0;
+    setActiveSensorChallenge(null);
     ttsSequenceRef.current += 1;
     TTSManager.getInstance().stop();
     STTManager.getInstance().stopListening();
@@ -2100,9 +2110,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   /** 移动、课程、兑换、差事、休息、使用物品、续约：系统先结算，再把结果作为一条消息发给 AI 描写 */
-  const runRpgAction = (action: RpgSystemAction & { challengePassed?: boolean }) => {
+  const runRpgAction = (action: RpgSystemAction & { challengePassed?: boolean; sensorBypassed?: boolean }) => {
     const current = rpgStateRef.current;
-    if (!current || isLoading) return;
+    if (!current) return;
     if (action.type === 'equipTitle') {
       updateRpgState(equipRpgTitle(current, action.id));
       return;
@@ -2119,17 +2129,24 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       updateRpgState(noteGalleryEndings(current, action.ids));
       return;
     }
+    if (isLoading) {
+      showFeatureNotice('上一条还在生成，请等它结束或先停掉，再点这里。');
+      return;
+    }
 
     // 具身感应挑战拦截
-    if (action.type === 'course' && action.challengePassed === undefined) {
+    if (action.type === 'course' && action.challengePassed === undefined && !action.sensorBypassed) {
       const course = findCourse(current, action.courseId);
       if (course?.sensorChallenge && current.hardware.sensorChallengesEnabled) {
         pendingStakeRef.current = action.stake ?? 0;
         setActiveSensorChallenge({
+          token: sensorTokenRef.current + 1,
+          ownerCardId: activeCardIdRef.current,
           courseId: course.id,
           courseName: course.name,
           challenge: course.sensorChallenge,
         });
+        sensorTokenRef.current += 1;
         return;
       }
     }
@@ -2208,19 +2225,23 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   const handleSensorChallengeComplete = (success: boolean) => {
-    if (!activeSensorChallenge) return;
-    const courseId = activeSensorChallenge.courseId;
+    const challenge = activeSensorChallenge;
+    if (!challenge || !claimSettlement(sensorClaimRef.current, challenge.token)) return;
+    if (activeCardIdRef.current !== challenge.ownerCardId) return;
     const stake = pendingStakeRef.current;
     pendingStakeRef.current = 0;
     setActiveSensorChallenge(null);
-    runRpgAction({ type: 'course', courseId, challengePassed: success, stake });
+    runRpgAction({ type: 'course', courseId: challenge.courseId, challengePassed: success, stake });
   };
 
   const handleSensorChallengeCancel = () => {
-    if (!activeSensorChallenge) return;
-    const courseId = activeSensorChallenge.courseId;
+    const challenge = activeSensorChallenge;
+    if (!challenge || !claimSettlement(sensorClaimRef.current, challenge.token)) return;
+    if (activeCardIdRef.current !== challenge.ownerCardId) return;
+    const stake = pendingStakeRef.current;
+    pendingStakeRef.current = 0;
     setActiveSensorChallenge(null);
-    runRpgAction({ type: 'course', courseId });
+    runRpgAction({ type: 'course', courseId: challenge.courseId, sensorBypassed: true, stake });
   };
 
   /** 用户的回应选项：带检定的先掷骰（用户的训练属性和特质做修正） */

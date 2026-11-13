@@ -64,7 +64,7 @@ export const RpgCertificateModal: React.FC<RpgCertificateModalProps> = ({
     + (state.counters.passes.devotion ?? 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+    <div className="fixed inset-0 z-[10040] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
       <div className="relative w-full max-w-xl my-8 bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
         {/* 顶部控制栏 */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800 bg-slate-900/90">

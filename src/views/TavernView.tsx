@@ -42,7 +42,7 @@ export const TavernView: React.FC = () => {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col w-full overflow-hidden">
-      <div className="subnav-bar shrink-0 px-3 py-2 z-30">
+      <div className="subnav-bar relative z-[60] shrink-0 px-3 py-2">
         <SegmentedTabs
           ariaLabel="酒馆分区"
           items={subTabs}
