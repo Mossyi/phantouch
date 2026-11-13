@@ -276,9 +276,6 @@ export const App: React.FC = () => {
       {/* 顶部设备状态栏 */}
       <DeviceStatusBar />
 
-      {/* PWA 桌面化安装横幅提示 */}
-      <PWAInstallBanner />
-
       {/* 突击查岗悬浮响应弹窗 */}
       <ContractSurgeModal />
 
@@ -288,6 +285,8 @@ export const App: React.FC = () => {
 
       {/* 主视图区域 (自适应填满剩余空间，杜绝双滚动条) */}
       <main className="flex-1 min-h-0 flex flex-col relative overflow-hidden">
+        {/* 安装提示占住自己的高度，不盖住二级导航和训练日程开关 */}
+        <PWAInstallBanner />
         <Suspense fallback={<div className="flex-1 grid place-items-center text-sm font-semibold text-slate-500">正在打开…</div>}>
           {activeTab === 'chat' && <ChatView />}
           {activeTab === 'tavern' && <TavernView />}

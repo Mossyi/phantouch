@@ -142,7 +142,7 @@ export const FemboyTrainingView: React.FC = () => {
 
   return (
     <div className="max-w-md mx-auto px-3.5 py-4 pb-10 space-y-4">
-      <div className="sticky top-0 z-20 -mx-3.5 -mt-4 subnav-bar px-3 py-2">
+      <div className="sticky top-0 z-[60] -mx-3.5 -mt-4 subnav-bar px-3 py-2">
         <SegmentedTabs
           ariaLabel="重塑分区"
           items={femboySubTabs}

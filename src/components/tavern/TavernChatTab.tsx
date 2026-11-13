@@ -154,6 +154,7 @@ import {
 } from 'lucide-react';
 import { TavernRpgChoices, TavernRpgHud, TavernRpgPanel, type RpgPanelTab, type RpgSystemAction } from './TavernRpgPanel';
 import { RpgSensorChallengeModal } from './RpgSensorChallengeModal';
+import { useOverlayBack } from './useOverlayBack';
 import { buildLocationArtPrompt, deleteRpgArt, fetchImageAsDataUrl, isRpgArtAutoEnabled, loadRpgArt, saveRpgArt, setRpgArtAutoEnabled } from '../../core/tavern/tavernRpgArt';
 import { deleteRpgSlot, listRpgSlots, loadRpgSlot, saveRpgSlot, slotLocationIds, type RpgSaveSlot } from '../../core/tavern/tavernRpgSlots';
 import { WORLD_GEN_SYSTEM, buildExploreRequest, buildWorldGenRequest, parseExploredLocations, parseGeneratedWorld, type GeneratedWorld, type WorldGenInput } from '../../core/tavern/tavernRpgWorldGen';
@@ -672,6 +673,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [cardSourceMessageIds, setCardSourceMessageIds] = useState<string[]>([]);
   const [cardExtractionPrompt, setCardExtractionPrompt] = useState('');
   const [showGroupModal, setShowGroupModal] = useState(false);
+  useOverlayBack(() => setShowActionMenu(false), showActionMenu);
+  useOverlayBack(() => setShowGroupModal(false), showGroupModal);
   const [groupParticipantIds, setGroupParticipantIds] = useState<string[]>(() => store.getGroupScene(activeCard.id).participantIds);
   const [suggestionPanel, setSuggestionPanel] = useState<{
     messageId: string;
