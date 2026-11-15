@@ -17,5 +17,6 @@ test('安装条让开顶栏和二级导航，分区条可以翻到屏幕外的�
   assert.match(tabsSrc, /aria-label=\{\`\$\{ariaLabel\}向右\`\}/);
   assert.match(chatSrc, /useOverlayBack\(\(\) => setShowActionMenu\(false\), showActionMenu\)/);
   assert.match(chatSrc, /useOverlayBack\(\(\) => setShowGroupModal\(false\), showGroupModal\)/);
-  assert.match(sensorSrc, /if \(event\.key === 'Escape'\) cancel\(\)/);
+  assert.match(sensorSrc, /useOverlayBack\(cancel\)/);
+  assert.match(appSrc, /handleEscape\(\)/);
 });

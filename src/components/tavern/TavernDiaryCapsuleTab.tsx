@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useOverlayBack } from './useOverlayBack';
 import { DiaryCapsuleEngine, DiaryEntry, TimeCapsule } from '../../core/tavern/diaryCapsuleEngine';
 import { TavernStore } from '../../core/tavern/tavernData';
 import { HapticEngine } from '../../core/haptics/hapticEngine';
@@ -15,6 +16,7 @@ export const TavernDiaryCapsuleTab: React.FC = () => {
 
   // 胶囊新建弹窗
   const [showCreateCapsule, setShowCreateCapsule] = useState(false);
+  useOverlayBack(() => setShowCreateCapsule(false), showCreateCapsule);
   const [capTitle, setCapTitle] = useState('');
   const [capPledge, setCapPledge] = useState('');
   const [capDays, setCapDays] = useState(7);
@@ -265,7 +267,7 @@ export const TavernDiaryCapsuleTab: React.FC = () => {
 
       {/* 封存时间胶囊弹窗 */}
       {showCreateCapsule && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white/98 border border-pink-200 rounded-3xl p-5 w-full max-w-sm space-y-3.5 shadow-2xl backdrop-blur-xl">
             <h3 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
               <Clock className="w-4 h-4 text-pink-500" />
@@ -315,7 +317,8 @@ export const TavernDiaryCapsuleTab: React.FC = () => {
               </button>
               <button
                 onClick={handleCreateCapsule}
-                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 text-white text-xs font-black shadow-sm"
+                disabled={!capTitle.trim() || !capPledge.trim()}
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 text-white text-xs font-black shadow-sm disabled:opacity-40"
               >
                 封存胶囊
               </button>

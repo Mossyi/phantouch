@@ -674,7 +674,20 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [cardExtractionPrompt, setCardExtractionPrompt] = useState('');
   const [showGroupModal, setShowGroupModal] = useState(false);
   useOverlayBack(() => setShowActionMenu(false), showActionMenu);
+  useOverlayBack(() => setShowQuickMenu(false), showQuickMenu);
   useOverlayBack(() => setShowGroupModal(false), showGroupModal);
+  useOverlayBack(() => setShowCallMenu(false), showCallMenu);
+  useOverlayBack(() => setShowArchives(false), showArchives);
+  useOverlayBack(() => setShowAuthorNoteModal(false), showAuthorNoteModal);
+  useOverlayBack(() => setShowMemoryModal(false), showMemoryModal);
+  useOverlayBack(() => setShowCardExtractionModal(false), showCardExtractionModal);
+  useOverlayBack(() => setShowMessageFinder(false), showMessageFinder);
+  useOverlayBack(() => setShowAssemblyModal(false), showAssemblyModal);
+  useOverlayBack(() => setDrillOpen(false), drillOpen);
+  useOverlayBack(() => setViewingFlashImage(null), Boolean(viewingFlashImage));
+  useOverlayBack(() => setEditingMessage(null), Boolean(editingMessage));
+  useOverlayBack(() => setAssistantMessageMenu(null), Boolean(assistantMessageMenu));
+  useOverlayBack(() => setPreviewModalImage(null), Boolean(previewModalImage));
   const [groupParticipantIds, setGroupParticipantIds] = useState<string[]>(() => store.getGroupScene(activeCard.id).participantIds);
   const [suggestionPanel, setSuggestionPanel] = useState<{
     messageId: string;

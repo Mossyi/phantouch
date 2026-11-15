@@ -1,4 +1,5 @@
 import React from 'react';
+import { useOverlayBack } from './useOverlayBack';
 import { Check, Mic, OctagonX, Play, RotateCcw, Volume2, X, Zap } from 'lucide-react';
 import { TavernAvatar } from './TavernAvatar';
 import {
@@ -145,6 +146,7 @@ export const ObedienceDrillOverlay: React.FC<ObedienceDrillOverlayProps> = (prop
     stopDrill();
     onClose(summary);
   };
+  useOverlayBack(close);
 
   const last = snapshot?.results[snapshot.results.length - 1];
   const showResult = snapshot?.phase === 'feedback' && last;

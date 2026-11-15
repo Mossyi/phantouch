@@ -1,4 +1,5 @@
 import React from 'react';
+import { useOverlayBack } from './useOverlayBack';
 import { Mic, MicOff, PhoneOff, Phone, Hand, OctagonX, Captions, CaptionsOff, Ear, EarOff } from 'lucide-react';
 import { TavernAvatar } from './TavernAvatar';
 import { VoiceCallSession, type VoiceCallDeps, type VoiceCallSnapshot } from '../../core/voice/voiceCallSession';
@@ -126,6 +127,7 @@ export const PhoneCallOverlay: React.FC<PhoneCallOverlayProps> = ({
     missed: false,
     declined: direction === 'incoming' && snapshot.phase === 'ringing_in',
   });
+  useOverlayBack(hangUp);
 
   const phase = snapshot.phase;
   const isRinging = phase === 'ringing_in' || phase === 'ringing_out';

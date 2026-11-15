@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useScrollIntoView } from './useScrollIntoView';
+import { useOverlayBack } from './useOverlayBack';
 import { Capacitor } from '@capacitor/core';
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -34,6 +35,7 @@ export const TavernWorldbookManager: React.FC = () => {
   const [notice, setNotice] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const entryEditorRef = useScrollIntoView<HTMLDivElement>(entryDraft?.id ?? null);
+  useOverlayBack(() => setEntryDraft(null), Boolean(entryDraft));
   // 提示条自动消失的定时器：卸载时清理，并在新提示到来时重置，避免上一条的定时器提前清掉新提示。
   const noticeTimerRef = useRef<number | null>(null);
   useEffect(() => () => {

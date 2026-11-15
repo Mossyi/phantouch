@@ -10,6 +10,7 @@ import { TavernApiTab } from '../components/tavern/TavernApiTab';
 import { TavernPlayerPresetsTab } from '../components/tavern/TavernPlayerPresetsTab';
 import { TavernTextRulesTab } from '../components/tavern/TavernTextRulesTab';
 import { SegmentedTabs, SegmentedTabItem } from '../components/SegmentedTabs';
+import { useBackLayer } from '../components/tavern/useOverlayBack';
 import { BookOpen, Contact, MessagesSquare, NotebookPen, Puzzle, SlidersHorizontal, Target, UserRound } from 'lucide-react';
 
 export const TavernView: React.FC = () => {
@@ -18,6 +19,7 @@ export const TavernView: React.FC = () => {
   const [activeCard, setActiveCard] = useState<TavernCharacterCard>(store.getActiveCard());
   const [openCardWriterRequest, setOpenCardWriterRequest] = useState(0);
   const [conversationWriterRequest, setConversationWriterRequest] = useState<{ id: number; brief: string } | null>(null);
+  useBackLayer(activeSubTab !== 'chat', () => setActiveSubTab('chat'), 'subnav');
 
   const handleSelectCard = (card: TavernCharacterCard) => {
     setActiveCard(card);

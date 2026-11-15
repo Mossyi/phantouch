@@ -18,6 +18,7 @@ import { BountyQuestEngine } from '../../core/tavern/bountyQuestEngine';
 import { deleteRpgDataForCard } from '../../core/tavern/tavernRpgSlots';
 import { exportTextFile } from '../../core/ui/exportFile';
 import { useAppStore } from '../../store/useAppStore';
+import { useOverlayBack } from './useOverlayBack';
 import { Download, Upload, Zap, Trash2, WandSparkles, Sparkles, Save, X, RefreshCw, Pencil, Plus, Image as ImageIcon, BookOpen, Volume2, Eye, Check } from 'lucide-react';
 
 const MAX_AVATAR_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -361,6 +362,8 @@ export const TavernCardsTab: React.FC<Props> = ({ onSelectCard, onSelectCardAndC
     setGeneratingFieldKey(null);
     setEditingCard(null);
   };
+  useOverlayBack(closeStudioEditor, Boolean(editingCard));
+  useOverlayBack(() => setShowAiWriter(false), showAiWriter);
 
   const buildCharacterSummary = (card: TavernCharacterCard): string => {
     const parts: string[] = [];

@@ -97,13 +97,6 @@ export const RpgSensorChallengeModal: React.FC<RpgSensorChallengeModalProps> = (
     onCancelRef.current();
   };
   useOverlayBack(cancel);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') cancel();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
 
   useEffect(() => {
     const stop = () => setIsHoldingTouch(false);

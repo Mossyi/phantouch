@@ -1,4 +1,5 @@
 import React from 'react';
+import { useOverlayBack } from './tavern/useOverlayBack';
 import { Bluetooth, Smartphone, Globe, ExternalLink, X, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 interface BluetoothHelpModalProps {
@@ -7,10 +8,11 @@ interface BluetoothHelpModalProps {
 }
 
 export const BluetoothHelpModal: React.FC<BluetoothHelpModalProps> = ({ isOpen, onClose }) => {
+  useOverlayBack(onClose, isOpen);
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-[80] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
       <div className="bg-white border border-pink-200 rounded-3xl w-full max-w-sm max-h-[90vh] overflow-y-auto p-5 space-y-4 shadow-2xl relative">
         <div className="flex items-center justify-between border-b border-pink-100 pb-3">
           <div className="flex items-center gap-2 text-pink-600">

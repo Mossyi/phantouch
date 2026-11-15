@@ -1,4 +1,5 @@
 import React, { useDeferredValue, useEffect, useRef, useState } from 'react';
+import { useOverlayBack } from '../tavern/useOverlayBack';
 import {
   BookOpen,
   Camera,
@@ -163,6 +164,7 @@ export const WardrobeDiaryTab: React.FC = () => {
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
   const [onlyFavorites, setOnlyFavorites] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
+  useOverlayBack(() => setShowEditor(false), showEditor);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<DiaryDraft>(() => createDraft());
   const [formError, setFormError] = useState('');

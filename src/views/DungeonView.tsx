@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
+import { useOverlayBack } from '../components/tavern/useOverlayBack';
 import { DUNGEON_SCRIPTS } from '../core/dungeon/dungeonData';
 import { DungeonEndingType, DungeonHardwareMode, DungeonRunState, DungeonScript, DungeonStep, DungeonChoice } from '../types';
 import { DeviceManager } from '../core/deviceManager';
@@ -80,6 +81,11 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
   const [customActionInput, setCustomActionInput] = useState<string>('');
   const [showHistoryDrawer, setShowHistoryDrawer] = useState<boolean>(false);
   const [promptResumeScript, setPromptResumeScript] = useState<{ script: DungeonScript; save: DungeonSaveRecord } | null>(null);
+  useOverlayBack(() => setShowEndingGallery(false), showEndingGallery);
+  useOverlayBack(() => setShowRecycleBin(false), showRecycleBin);
+  useOverlayBack(() => setShowAiCreator(false), showAiCreator);
+  useOverlayBack(() => setShowHistoryDrawer(false), showHistoryDrawer);
+  useOverlayBack(() => setPromptResumeScript(null), Boolean(promptResumeScript));
   const viewGenerationRef = useRef(0);
   const aiRequestRef = useRef<AbortController | null>(null);
 
@@ -1061,7 +1067,7 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
       )}
 
       {showAiCreator && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <div className="w-full max-w-sm space-y-4 rounded-3xl border border-pink-200 bg-white p-5 shadow-2xl">
             <div className="flex items-start gap-3">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-pink-200 bg-pink-50 text-2xl shadow-xs">🪄</span>
@@ -1111,7 +1117,7 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
       )}
 
       {showRecycleBin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <div className="flex max-h-[86vh] w-full max-w-sm flex-col overflow-hidden rounded-3xl border border-pink-200 bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-pink-100 px-4 py-3.5">
               <div>
@@ -1155,7 +1161,7 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
 
       {/* ================= 弹窗：选择继续阅读还是重开 ================= */}
       {promptResumeScript && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white border border-pink-200 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl animate-in zoom-in-95">
             <div className="flex items-center gap-3">
               <span className="text-3xl">{promptResumeScript.script.avatar}</span>
@@ -1204,7 +1210,7 @@ export const DungeonView: React.FC<{ embedded?: boolean }> = ({ embedded }) => {
       )}
 
       {showEndingGallery && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <div className="flex max-h-[85vh] w-full max-w-sm flex-col rounded-3xl border border-amber-200 bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-amber-100 p-4">
               <h3 className="flex items-center gap-2 text-sm font-black text-amber-900"><Library className="h-4 w-4 text-amber-600" />地牢结局图鉴</h3>

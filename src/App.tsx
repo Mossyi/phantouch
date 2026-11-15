@@ -8,6 +8,8 @@ import { ContractSurgeModal } from './components/ContractSurgeModal';
 import { OutputRefusalToast } from './components/OutputRefusalToast';
 import { FloatingPipWindow } from './components/FloatingPipWindow';
 import { GlobalUpdateChecker } from './components/GlobalUpdateChecker';
+import { ensureAppBackListener, handleEscape } from './core/platform/overlayBack';
+import { useBackLayer } from './components/tavern/useOverlayBack';
 import { ChatView } from './views/ChatView';
 const FemboyTrainingView = lazy(() => import('./views/FemboyTrainingView').then((module) => ({ default: module.FemboyTrainingView })));
 const DisciplineHubView = lazy(() => import('./views/DisciplineHubView').then((module) => ({ default: module.DisciplineHubView })));
@@ -205,6 +207,23 @@ export const App: React.FC = () => {
       window.removeEventListener('focusout', handleFocusCheck);
       window.removeEventListener('focusin', resetNonScrollContainers, { capture: true });
     };
+  }, []);
+
+  const atHome = activeTab === 'tavern';
+  const disciplineChild = ['patterns', 'heartrate', 'edging', 'contract'].includes(activeTab);
+  const spaceChild = activeTab === 'device' || activeTab === 'achievements';
+  useBackLayer(!atHome, () => setActiveTab('tavern'), 'tab');
+  useBackLayer(disciplineChild, () => setActiveTab('control'), 'subnav');
+  useBackLayer(spaceChild, () => setActiveTab('settings'), 'subnav');
+
+  React.useEffect(() => {
+    ensureAppBackListener();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (handleEscape()) event.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   // 动态同步 body.keyboard-open 类，驱动底部输入框紧贴软键盘

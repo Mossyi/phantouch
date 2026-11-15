@@ -865,14 +865,14 @@ export const TavernRpgPanel: React.FC<TavernRpgPanelProps> = ({
   const selected = state ? getLocation(state, selectedId) ?? getLocation(state, state.currentId) : null;
   const reachableIds = useMemo(() => new Set(state ? getReachableLocations(state).map((loc) => loc.id) : []), [state]);
 
-  React.useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [onClose]);
   useOverlayBack(onClose);
+  useOverlayBack(() => setConfirmEnd(false), confirmEnd);
+  useOverlayBack(() => setConfirmLoad(null), Boolean(confirmLoad));
+  useOverlayBack(() => setShowNewGamePlusModal(false), showNewGamePlusModal);
+  useOverlayBack(() => setViewCertificateEnding(null), Boolean(viewCertificateEnding));
 
   const [courseOffer, setCourseOffer] = useState<{ courseId: string; name: string; stat: RpgStatKey; dc: number } | null>(null);
+  useOverlayBack(() => setCourseOffer(null), Boolean(courseOffer));
   const [wallNote, setWallNote] = useState('');
   const [busyNote, setBusyNote] = useState('');
   const gallerySent = useRef('');
