@@ -31,3 +31,41 @@ test('更新下载只接受 http 链接，方舟请求会带上图片', async ()
   assert.equal(llm.nextToolCallIndex(2, 1), 2);
   assert.equal(llm.nextToolCallIndex('nope', 1), null);
 });
+
+test('硬件世界书只在动作下发后才进入冷却', async () => {
+  const values = new Map();
+  const timers = new Set();
+  const originalInterval = globalThis.setInterval;
+  globalThis.setInterval = ((...args) => {
+    const id = originalInterval(...args);
+    timers.add(id);
+    return id;
+  });
+  globalThis.localStorage = {
+    get length() { return values.size; },
+    key(index) { return [...values.keys()][index] ?? null; },
+    getItem(key) { return values.get(key) ?? null; },
+    setItem(key, value) { values.set(key, String(value)); },
+    removeItem(key) { values.delete(key); },
+  };
+  try {
+    const { HardwareLorebookEngine } = await load('src/core/tavern/hardwareLorebook.ts');
+    const engine = HardwareLorebookEngine.getInstance();
+    const entry = engine.addEntry({
+      keywords: ['ZZQXLORE9'],
+      content: '测试规则',
+      enabled: true,
+      cooldownSec: 30,
+      matchScope: 'user',
+      hardwareAction: { type: 'ems_strength', target: 'AB', stopMode: 'timed', durationSec: 2 },
+    });
+    const first = engine.processText('请触发 ZZQXLORE9', 'user');
+    const second = engine.processText('再触发 ZZQXLORE9', 'user');
+    assert.equal(first.deferredActionEntries.some((item) => item.id === entry.id), true);
+    assert.equal(second.deferredActionEntries.some((item) => item.id === entry.id), true);
+  } finally {
+    for (const id of timers) clearInterval(id);
+    globalThis.setInterval = originalInterval;
+    delete globalThis.localStorage;
+  }
+});

@@ -66,9 +66,12 @@ const CANONICAL_BOUNTY_QUESTS: readonly BountyQuest[] = [
 const cloneCanonicalQuests = (): BountyQuest[] => CANONICAL_BOUNTY_QUESTS.map((quest) => ({ ...quest }));
 
 const parseStoredQuestEntries = (value: unknown): unknown[] => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return [];
   const raw = value as { version?: unknown; quests?: unknown };
-  if ((raw.version !== 2 && raw.version !== 3) || !Array.isArray(raw.quests)) return [];
+  const version = raw.version;
+  const knownVersion = version === undefined || version === 1 || version === 2 || version === 3;
+  if (!knownVersion || !Array.isArray(raw.quests)) return [];
   return raw.quests;
 };
 
