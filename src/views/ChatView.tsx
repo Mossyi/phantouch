@@ -714,7 +714,14 @@ export const ChatView: React.FC = () => {
                   : '请在【系统设置】中填入 API Key'
               }
               disabled={isChatLoading}
-              className="liquid-input flex-1 min-w-0 min-h-[3.25rem] max-h-28 resize-none text-xs sm:text-sm px-3.5 py-2 outline-none font-medium leading-relaxed"
+              onInput={(event) => {
+                const el = event.currentTarget;
+                const maxHeight = Math.round((window.visualViewport?.height ?? window.innerHeight) * 0.4);
+                el.style.height = 'auto';
+                el.style.height = `${Math.min(Math.max(el.scrollHeight, 52), maxHeight)}px`;
+              }}
+              data-allow-scroll="true"
+              className="liquid-input flex-1 min-w-0 min-h-[3.25rem] max-h-[40vh] resize-none overflow-y-auto text-xs sm:text-sm px-3.5 py-2 outline-none font-medium leading-relaxed"
             />
 
             {isChatLoading ? (

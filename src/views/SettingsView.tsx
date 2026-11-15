@@ -1342,7 +1342,8 @@ export const SettingsView: React.FC = () => {
                 value={backupText}
                 onChange={(e) => setBackupText(e.target.value)}
                 placeholder='{"llmConfig": {...}, "safetyConfig": {...}}'
-                className="w-full bg-slate-50/80 border border-pink-100 text-slate-800 text-xs rounded-xl p-2.5 outline-none font-mono resize-none leading-relaxed focus:border-pink-400 focus:bg-white"
+                data-allow-scroll="true"
+                className="max-h-[40vh] w-full overflow-y-auto bg-slate-50/80 border border-pink-100 text-slate-800 text-xs rounded-xl p-2.5 outline-none font-mono resize-none leading-relaxed focus:border-pink-400 focus:bg-white"
               />
             </div>
 

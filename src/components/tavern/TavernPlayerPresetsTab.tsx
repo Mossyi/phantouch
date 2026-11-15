@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useScrollIntoView } from './useScrollIntoView';
 import { Capacitor } from '@capacitor/core';
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -37,6 +38,7 @@ export const TavernPlayerPresetsTab: React.FC = () => {
   const [draft, setDraft] = useState<PresetDraft | null>(null);
   const [notice, setNotice] = useState('');
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const draftRef = useScrollIntoView<HTMLDivElement>(draft ? (draft.id || 'new-preset') : null);
   // 提示条自动消失的定时器：卸载时清理，并在新提示到来时重置，避免上一条的定时器提前清掉新提示。
   const noticeTimerRef = useRef<number | null>(null);
   useEffect(() => () => {
@@ -218,7 +220,7 @@ export const TavernPlayerPresetsTab: React.FC = () => {
             </div>
 
             {draft && (
-              <div className="space-y-3 rounded-2xl border border-pink-200 bg-pink-50/50 p-3 shadow-xs">
+              <div ref={draftRef} className="scroll-mt-3 space-y-3 rounded-2xl border border-pink-200 bg-pink-50/50 p-3 shadow-xs">
                 <div className="flex items-center justify-between">
                   <h4 className="text-[11px] font-black text-pink-700">{draft.id ? '编辑玩家预设' : '新建玩家预设'}</h4>
                   <button type="button" onClick={() => setDraft(null)} className="rounded-lg p-1 text-slate-400 hover:bg-white"><X className="h-4 w-4" /></button>

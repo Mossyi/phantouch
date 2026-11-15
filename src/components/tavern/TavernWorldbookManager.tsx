@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useScrollIntoView } from './useScrollIntoView';
 import { Capacitor } from '@capacitor/core';
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -32,6 +33,7 @@ export const TavernWorldbookManager: React.FC = () => {
   const [previewText, setPreviewText] = useState('');
   const [notice, setNotice] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const entryEditorRef = useScrollIntoView<HTMLDivElement>(entryDraft?.id ?? null);
   // 提示条自动消失的定时器：卸载时清理，并在新提示到来时重置，避免上一条的定时器提前清掉新提示。
   const noticeTimerRef = useRef<number | null>(null);
   useEffect(() => () => {
@@ -325,7 +327,7 @@ export const TavernWorldbookManager: React.FC = () => {
               </button>
             </div>
             {entryDraft && (
-              <div className="space-y-2.5 rounded-2xl border-2 border-pink-200 bg-white/98 p-4 shadow-xl backdrop-blur-xl">
+              <div ref={entryEditorRef} className="scroll-mt-3 space-y-2.5 rounded-2xl border-2 border-pink-200 bg-white/98 p-4 shadow-xl backdrop-blur-xl">
                 <div className="flex items-center justify-between">
                   <h5 className="text-[11px] font-black text-slate-800">编辑剧情条目</h5>
                   <button type="button" onClick={() => setEntryDraft(null)} aria-label="关闭条目编辑" className="text-slate-400 hover:text-slate-600">
