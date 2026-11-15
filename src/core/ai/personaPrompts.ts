@@ -450,6 +450,6 @@ export function getPersonaPrompt(
     return customSystemPromptOverride;
   }
   const all = [...PRESET_PERSONAS, ...customPersonas];
-  const persona = all.find((p) => p.id === personaId) || PRESET_PERSONAS[0];
+  const persona = all.find((p) => p.id === personaId) || all.find((p) => p.id === 'male_dom') || PRESET_PERSONAS[0];
   return persona.systemPrompt;
 }

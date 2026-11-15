@@ -37,7 +37,15 @@ export const createBalancedPavlovImprintTrials = (
       const roll = random();
       const normalizedRoll = Number.isFinite(roll) ? Math.max(0, Math.min(1, roll)) : 0.5;
       next = normalizedRoll < rewardsLeft / (rewardsLeft + punishmentsLeft) ? 'reward' : 'punish';
-    } else break;
+    } else {
+      const remaining = (['reward', 'punish'] as const).filter((candidate) => (
+        candidate === 'reward' ? rewardsLeft > 0 : punishmentsLeft > 0
+      ));
+      if (remaining.length === 0) break;
+      const roll = random();
+      const normalizedRoll = Number.isFinite(roll) ? Math.max(0, Math.min(1, roll)) : 0.5;
+      next = remaining.length === 1 || normalizedRoll < 0.5 ? remaining[0] : remaining[1];
+    }
 
     trials.push(next);
     if (next === 'reward') rewardsLeft -= 1;

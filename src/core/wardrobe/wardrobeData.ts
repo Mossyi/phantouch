@@ -567,6 +567,12 @@ export class WardrobeEngine {
     if (!outfit) throw new Error('所选装扮不存在');
     const content = this.safeText(input.content, '', 4000);
     if (!content) throw new Error('日记内容不能为空');
+    const minutes = Number.isFinite(input.minutes) ? Math.max(0, Math.min(1440, Math.round(input.minutes))) : 0;
+    const styleScore = this.safeRating(input.styleScore);
+    const bonus = outfit.category === 'toy'
+      ? 0
+      : outfit.femininityBonus + Math.min(minutes * 2, 50) + styleScore * 2;
+    const previousBonus = Number.isFinite(existing.femininityEarned) ? existing.femininityEarned : 0;
 
     const updated: DiaryEntry = {
       ...existing,
@@ -577,14 +583,16 @@ export class WardrobeEngine {
       mood: this.safeText(input.mood, '平静', 100),
       scene: this.safeText(input.scene, '日常练习', 40),
       tags: this.safeTags(input.tags),
-      minutes: Number.isFinite(input.minutes) ? Math.max(0, Math.min(1440, Math.round(input.minutes))) : 0,
+      minutes,
       comfort: this.safeRating(input.comfort),
       confidence: this.safeRating(input.confidence),
-      styleScore: this.safeRating(input.styleScore),
+      styleScore,
       photo: this.safePhoto(input.photo),
       favorite: input.favorite === true,
+      femininityEarned: bonus,
     };
     this.state.diaries = this.state.diaries.map((entry) => entry.id === id ? updated : entry);
+    this.state.totalFemininityScore = Math.min(1_000_000, Math.max(0, this.state.totalFemininityScore - previousBonus + bonus));
     this.save();
     return { ...updated };
   }

@@ -53,9 +53,19 @@ export const getLastCheckTime = (): number => {
 /**
  * 在多个 APK 下载地址中挑选一个最合适的（优先国内加速镜像）。
  */
+export const isHttpDownloadUrl = (url?: string): url is string => {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+};
+
 export const pickApkUrl = (info?: RemoteVersionInfo | null): string | undefined => {
   if (!info) return undefined;
-  return info.mirrorApkUrl || info.apkUrl || info.backupUrl;
+  return [info.mirrorApkUrl, info.apkUrl, info.backupUrl].find(isHttpDownloadUrl);
 };
 
 /**
@@ -133,7 +143,7 @@ export const checkForUpdates = async (): Promise<CheckUpdateResult> => {
  * 打开外部下载链接
  */
 export const openDownloadUrl = (url?: string): boolean => {
-  if (!url) return false;
+  if (!isHttpDownloadUrl(url)) return false;
   try {
     window.open(url, '_blank', 'noopener,noreferrer');
     return true;

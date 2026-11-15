@@ -138,7 +138,7 @@ export class DungeonAIEngine {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              ...(llmConfig.apiKey.trim() ? { Authorization: `Bearer ${llmConfig.apiKey.trim()}` } : {}),
+              ...(llmConfig.apiKey?.trim() ? { Authorization: `Bearer ${llmConfig.apiKey.trim()}` } : {}),
             },
             body: JSON.stringify({
               model: llmConfig.model || 'deepseek-chat',
@@ -295,7 +295,7 @@ ${safeCustomAction ? `用户主动采取了以下行动：【${safeCustomAction}
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              ...(llmConfig.apiKey.trim() ? { 'Authorization': `Bearer ${llmConfig.apiKey.trim()}` } : {}),
+              ...(llmConfig.apiKey?.trim() ? { 'Authorization': `Bearer ${llmConfig.apiKey.trim()}` } : {}),
             },
             body: JSON.stringify({
               model: llmConfig.model || 'deepseek-chat',
