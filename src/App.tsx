@@ -162,7 +162,12 @@ export const App: React.FC = () => {
       }
       const target = e?.target;
       if (target && target instanceof HTMLElement) {
+        const tag = target.tagName;
         if (
+          tag === 'TEXTAREA' ||
+          tag === 'INPUT' ||
+          tag === 'SELECT' ||
+          target.isContentEditable ||
           target.classList.contains('overflow-y-auto') ||
           target.classList.contains('overflow-x-auto') ||
           target.dataset.allowScroll === 'true'

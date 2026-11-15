@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { TavernStore } from '../../core/tavern/tavernData';
 import { TavernCardParser } from '../../core/tavern/tavernCardParser';
 import { TavernCharacterCard, TavernEmotionKey } from '../../core/tavern/tavernTypes';
@@ -886,8 +887,15 @@ export const TavernCardsTab: React.FC<Props> = ({ onSelectCard, onSelectCardAndC
         </section>
       )}
 
-      {editingCard && (
-        <section className="tavern-card-studio rounded-3xl border border-pink-200/90 bg-white/98 backdrop-blur-xl p-5 shadow-2xl">
+      {editingCard && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[10020] flex items-end justify-center bg-black/50 sm:items-center sm:p-4" onClick={closeStudioEditor}>
+        <section
+          role="dialog"
+          aria-modal="true"
+          aria-label={editingCard.name ? `编辑角色：${editingCard.name}` : '手动新建角色卡'}
+          onClick={(event) => event.stopPropagation()}
+          className="tavern-card-studio max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-3xl border border-pink-200/90 bg-white p-5 shadow-2xl sm:rounded-3xl"
+        >
           <div className="flex items-start justify-between gap-3">
             <div>
               <h3 className="flex items-center gap-1.5 text-sm font-black text-slate-800">
@@ -1469,6 +1477,8 @@ export const TavernCardsTab: React.FC<Props> = ({ onSelectCard, onSelectCardAndC
 
           <div className="mt-4 flex gap-2 border-t border-pink-100 pt-3"><button type="button" onClick={() => setEditingCard(null)} className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 transition active:scale-95">取消</button><button type="button" onClick={saveStudioCard} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 py-2.5 text-xs font-black text-white shadow-sm shadow-pink-500/20 active:scale-95"><Save className="h-4 w-4" />保存本地角色卡</button></div>
         </section>
+        </div>,
+        document.body,
       )}
 
       {/* 角色卡展厅列表 */}

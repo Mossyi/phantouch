@@ -966,12 +966,13 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     }
   }, [streamingReply]);
 
-  // 当输入文本变动或切换草稿时，自适应调整打字框高度（默认保持容纳两行字，约 60px）
+  // 当输入文本变动或切换草稿时，自适应调整打字框高度；超过视口四成后在框内滚动
   useEffect(() => {
-    if (inputRef.current) {
-      inputRef.current.style.height = 'auto';
-      inputRef.current.style.height = `${Math.min(Math.max(inputRef.current.scrollHeight, 60), 128)}px`;
-    }
+    const field = inputRef.current;
+    if (!field) return;
+    const maxHeight = Math.round((window.visualViewport?.height ?? window.innerHeight) * 0.4);
+    field.style.height = 'auto';
+    field.style.height = `${Math.min(Math.max(field.scrollHeight, 60), maxHeight)}px`;
   }, [input]);
 
   // 视口变动（软键盘弹起/收起）时，若用户在最底部，自动保持贴底，确保最新消息与气泡始终在视野内
@@ -3890,6 +3891,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
             <textarea
               ref={inputRef}
               rows={2}
+              data-allow-scroll="true"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onFocus={(e) => {
@@ -3899,8 +3901,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               }}
               onInput={(e) => {
                 const el = e.currentTarget;
+                const maxHeight = Math.round((window.visualViewport?.height ?? window.innerHeight) * 0.4);
                 el.style.height = 'auto';
-                el.style.height = `${Math.min(Math.max(el.scrollHeight, 60), 128)}px`;
+                el.style.height = `${Math.min(Math.max(el.scrollHeight, 60), maxHeight)}px`;
               }}
               onPaste={handlePaste}
               onDrop={handleDrop}
@@ -3923,7 +3926,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
                   ? `🔥 已开启狂暴模式，尽情与 ${activeCard.name} 展开极限调教...`
                   : `和 ${activeCard.name} 展开沉浸式角色扮演...`
               }
-              className={`min-h-[3.75rem] max-h-32 min-w-0 flex-1 resize-none bg-white/95 border text-slate-800 placeholder-slate-400 text-xs leading-relaxed rounded-2xl px-3.5 py-2.5 outline-none transition-all shadow-inner ${
+              className={`min-h-[3.75rem] max-h-[40vh] min-w-0 flex-1 resize-none overflow-y-auto bg-white/95 border text-slate-800 placeholder-slate-400 text-xs leading-relaxed rounded-2xl px-3.5 py-2.5 outline-none transition-all shadow-inner ${
                 isSeseBoosted ? 'border-pink-400 focus:border-pink-500 ring-2 ring-pink-400/30' : 'border-white/80 focus:border-pink-300 focus:ring-2 focus:ring-pink-200/40'
               }`}
             />
