@@ -27,7 +27,7 @@ export const SpaceHubView: React.FC = () => {
 
   return (
     <div className="flex flex-col min-h-full">
-      <div className="subnav-bar sticky top-0 z-20 shrink-0 px-3 py-2">
+      <div className="subnav-bar sticky top-0 z-[60] shrink-0 px-3 py-2">
         <SegmentedTabs
           ariaLabel="设置分区"
           items={subTabs}

@@ -154,6 +154,7 @@ import {
 } from 'lucide-react';
 import { TavernRpgChoices, TavernRpgHud, TavernRpgPanel, type RpgPanelTab, type RpgSystemAction } from './TavernRpgPanel';
 import { RpgSensorChallengeModal } from './RpgSensorChallengeModal';
+import { useOverlayBack } from './useOverlayBack';
 import { buildLocationArtPrompt, deleteRpgArt, fetchImageAsDataUrl, isRpgArtAutoEnabled, loadRpgArt, saveRpgArt, setRpgArtAutoEnabled } from '../../core/tavern/tavernRpgArt';
 import { deleteRpgSlot, listRpgSlots, loadRpgSlot, saveRpgSlot, slotLocationIds, type RpgSaveSlot } from '../../core/tavern/tavernRpgSlots';
 import { WORLD_GEN_SYSTEM, buildExploreRequest, buildWorldGenRequest, parseExploredLocations, parseGeneratedWorld, type GeneratedWorld, type WorldGenInput } from '../../core/tavern/tavernRpgWorldGen';
@@ -175,6 +176,7 @@ import {
   buyItem,
   consumePardon,
   countNewlyExpiredSummons,
+  claimSettlement,
   createRpgState,
   createRpgStateFromTemplate,
   discoverLocations,
@@ -498,7 +500,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const rpgOwnerRef = useRef(activeCard.id);
   const [rpgPanelTab, setRpgPanelTab] = useState<RpgPanelTab | null>(null);
   const pendingStakeRef = useRef(0);
+  const sensorTokenRef = useRef(0);
+  const sensorClaimRef = useRef<{ token: number | null }>({ token: null });
   const [activeSensorChallenge, setActiveSensorChallenge] = useState<{
+    token: number;
+    ownerCardId: string;
     courseId: string;
     courseName: string;
     challenge: RpgSensorChallenge;
@@ -667,6 +673,21 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [cardSourceMessageIds, setCardSourceMessageIds] = useState<string[]>([]);
   const [cardExtractionPrompt, setCardExtractionPrompt] = useState('');
   const [showGroupModal, setShowGroupModal] = useState(false);
+  useOverlayBack(() => setShowActionMenu(false), showActionMenu);
+  useOverlayBack(() => setShowQuickMenu(false), showQuickMenu);
+  useOverlayBack(() => setShowGroupModal(false), showGroupModal);
+  useOverlayBack(() => setShowCallMenu(false), showCallMenu);
+  useOverlayBack(() => setShowArchives(false), showArchives);
+  useOverlayBack(() => setShowAuthorNoteModal(false), showAuthorNoteModal);
+  useOverlayBack(() => setShowMemoryModal(false), showMemoryModal);
+  useOverlayBack(() => setShowCardExtractionModal(false), showCardExtractionModal);
+  useOverlayBack(() => setShowMessageFinder(false), showMessageFinder);
+  useOverlayBack(() => setShowAssemblyModal(false), showAssemblyModal);
+  useOverlayBack(() => setDrillOpen(false), drillOpen);
+  useOverlayBack(() => setViewingFlashImage(null), Boolean(viewingFlashImage));
+  useOverlayBack(() => setEditingMessage(null), Boolean(editingMessage));
+  useOverlayBack(() => setAssistantMessageMenu(null), Boolean(assistantMessageMenu));
+  useOverlayBack(() => setPreviewModalImage(null), Boolean(previewModalImage));
   const [groupParticipantIds, setGroupParticipantIds] = useState<string[]>(() => store.getGroupScene(activeCard.id).participantIds);
   const [suggestionPanel, setSuggestionPanel] = useState<{
     messageId: string;
@@ -771,6 +792,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const nextCardId = activeCard.id;
     const previousCardId = rpgOwnerRef.current;
     activeCardIdRef.current = nextCardId;
+    pendingStakeRef.current = 0;
+    setActiveSensorChallenge(null);
     ttsSequenceRef.current += 1;
     TTSManager.getInstance().stop();
     STTManager.getInstance().stopListening();
@@ -956,12 +979,13 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     }
   }, [streamingReply]);
 
-  // 当输入文本变动或切换草稿时，自适应调整打字框高度（默认保持容纳两行字，约 60px）
+  // 当输入文本变动或切换草稿时，自适应调整打字框高度；超过视口四成后在框内滚动
   useEffect(() => {
-    if (inputRef.current) {
-      inputRef.current.style.height = 'auto';
-      inputRef.current.style.height = `${Math.min(Math.max(inputRef.current.scrollHeight, 60), 128)}px`;
-    }
+    const field = inputRef.current;
+    if (!field) return;
+    const maxHeight = Math.round((window.visualViewport?.height ?? window.innerHeight) * 0.4);
+    field.style.height = 'auto';
+    field.style.height = `${Math.min(Math.max(field.scrollHeight, 60), maxHeight)}px`;
   }, [input]);
 
   // 视口变动（软键盘弹起/收起）时，若用户在最底部，自动保持贴底，确保最新消息与气泡始终在视野内
@@ -2100,9 +2124,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   /** 移动、课程、兑换、差事、休息、使用物品、续约：系统先结算，再把结果作为一条消息发给 AI 描写 */
-  const runRpgAction = (action: RpgSystemAction & { challengePassed?: boolean }) => {
+  const runRpgAction = (action: RpgSystemAction & { challengePassed?: boolean; sensorBypassed?: boolean }) => {
     const current = rpgStateRef.current;
-    if (!current || isLoading) return;
+    if (!current) return;
     if (action.type === 'equipTitle') {
       updateRpgState(equipRpgTitle(current, action.id));
       return;
@@ -2119,17 +2143,24 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       updateRpgState(noteGalleryEndings(current, action.ids));
       return;
     }
+    if (isLoading) {
+      showFeatureNotice('上一条还在生成，请等它结束或先停掉，再点这里。');
+      return;
+    }
 
     // 具身感应挑战拦截
-    if (action.type === 'course' && action.challengePassed === undefined) {
+    if (action.type === 'course' && action.challengePassed === undefined && !action.sensorBypassed) {
       const course = findCourse(current, action.courseId);
       if (course?.sensorChallenge && current.hardware.sensorChallengesEnabled) {
         pendingStakeRef.current = action.stake ?? 0;
         setActiveSensorChallenge({
+          token: sensorTokenRef.current + 1,
+          ownerCardId: activeCardIdRef.current,
           courseId: course.id,
           courseName: course.name,
           challenge: course.sensorChallenge,
         });
+        sensorTokenRef.current += 1;
         return;
       }
     }
@@ -2208,19 +2239,23 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   const handleSensorChallengeComplete = (success: boolean) => {
-    if (!activeSensorChallenge) return;
-    const courseId = activeSensorChallenge.courseId;
+    const challenge = activeSensorChallenge;
+    if (!challenge || !claimSettlement(sensorClaimRef.current, challenge.token)) return;
+    if (activeCardIdRef.current !== challenge.ownerCardId) return;
     const stake = pendingStakeRef.current;
     pendingStakeRef.current = 0;
     setActiveSensorChallenge(null);
-    runRpgAction({ type: 'course', courseId, challengePassed: success, stake });
+    runRpgAction({ type: 'course', courseId: challenge.courseId, challengePassed: success, stake });
   };
 
   const handleSensorChallengeCancel = () => {
-    if (!activeSensorChallenge) return;
-    const courseId = activeSensorChallenge.courseId;
+    const challenge = activeSensorChallenge;
+    if (!challenge || !claimSettlement(sensorClaimRef.current, challenge.token)) return;
+    if (activeCardIdRef.current !== challenge.ownerCardId) return;
+    const stake = pendingStakeRef.current;
+    pendingStakeRef.current = 0;
     setActiveSensorChallenge(null);
-    runRpgAction({ type: 'course', courseId });
+    runRpgAction({ type: 'course', courseId: challenge.courseId, sensorBypassed: true, stake });
   };
 
   /** 用户的回应选项：带检定的先掷骰（用户的训练属性和特质做修正） */
@@ -3869,6 +3904,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
             <textarea
               ref={inputRef}
               rows={2}
+              data-allow-scroll="true"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onFocus={(e) => {
@@ -3878,8 +3914,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               }}
               onInput={(e) => {
                 const el = e.currentTarget;
+                const maxHeight = Math.round((window.visualViewport?.height ?? window.innerHeight) * 0.4);
                 el.style.height = 'auto';
-                el.style.height = `${Math.min(Math.max(el.scrollHeight, 60), 128)}px`;
+                el.style.height = `${Math.min(Math.max(el.scrollHeight, 60), maxHeight)}px`;
               }}
               onPaste={handlePaste}
               onDrop={handleDrop}
@@ -3902,7 +3939,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
                   ? `🔥 已开启狂暴模式，尽情与 ${activeCard.name} 展开极限调教...`
                   : `和 ${activeCard.name} 展开沉浸式角色扮演...`
               }
-              className={`min-h-[3.75rem] max-h-32 min-w-0 flex-1 resize-none bg-white/95 border text-slate-800 placeholder-slate-400 text-xs leading-relaxed rounded-2xl px-3.5 py-2.5 outline-none transition-all shadow-inner ${
+              className={`min-h-[3.75rem] max-h-[40vh] min-w-0 flex-1 resize-none overflow-y-auto bg-white/95 border text-slate-800 placeholder-slate-400 text-xs leading-relaxed rounded-2xl px-3.5 py-2.5 outline-none transition-all shadow-inner ${
                 isSeseBoosted ? 'border-pink-400 focus:border-pink-500 ring-2 ring-pink-400/30' : 'border-white/80 focus:border-pink-300 focus:ring-2 focus:ring-pink-200/40'
               }`}
             />
@@ -4429,7 +4466,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           >
             <h3 className="flex items-center gap-1.5 text-sm font-black text-slate-800"><Pencil className="h-4 w-4 text-pink-500" />{messages.find((message) => message.id === editingMessage.id)?.role === 'assistant' ? '编辑 AI 回复' : '编辑消息并重写后续'}</h3>
             <p className="mt-1 text-[10px] leading-relaxed text-slate-500">{messages.find((message) => message.id === editingMessage.id)?.role === 'assistant' ? '保存后仅更新当前 AI 文本并保留为回复候选；不会执行任何硬件动作。' : '当前会话会先保存为分支，再从这条消息重新生成纯文本回复；不会重新执行历史硬件动作。'}</p>
-            <textarea value={editingMessage.content} onChange={(event) => setEditingMessage({ ...editingMessage, content: event.target.value })} rows={5} className="mt-3 w-full resize-none rounded-2xl border border-pink-100 bg-slate-50/60 p-3 text-xs leading-relaxed text-slate-800 outline-none focus:border-pink-300 focus:bg-white" />
+            <textarea value={editingMessage.content} onChange={(event) => setEditingMessage({ ...editingMessage, content: event.target.value })} rows={5} data-allow-scroll="true" className="mt-3 max-h-[40vh] w-full resize-none overflow-y-auto rounded-2xl border border-pink-100 bg-slate-50/60 p-3 text-xs leading-relaxed text-slate-800 outline-none focus:border-pink-300 focus:bg-white" />
             <div className="mt-3 flex gap-2"><button onClick={() => setEditingMessage(null)} className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 transition active:scale-95">取消</button><button onClick={() => void commitMessageEdit()} disabled={!editingMessage.content.trim()} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 py-2.5 text-xs font-black text-white shadow-sm shadow-pink-500/20 disabled:opacity-40 transition active:scale-95"><Check className="h-4 w-4" />{messages.find((message) => message.id === editingMessage.id)?.role === 'assistant' ? '保存回复' : '保存并重写'}</button></div>
           </div>
         </div>

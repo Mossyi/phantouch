@@ -729,7 +729,7 @@ export class HardwareLorebookEngine {
       now - (this.lastTriggeredAt.get(entry.id) || 0) >= (entry.cooldownSec || 3) * 1000
     ));
     const actionEntries = selectHardwareLorebookActions(cooledEntries);
-    actionEntries.forEach((entry) => this.lastTriggeredAt.set(entry.id, now));
+    // 冷却从动作真正下发后才开始。只是命中并等待 AI 决定时，不占用冷却。
 
     const deferredActionEntries = options.deferAiActions === false
       ? []
@@ -770,14 +770,16 @@ export class HardwareLorebookEngine {
       if (decision.durationSec === null || !Number.isFinite(decision.durationSec)) return false;
       durationSec = Math.max(1, Math.min(action.durationSec || 10, Math.round(decision.durationSec)));
     }
-    await this.executeHardwareAction(entry, level, durationSec);
+    const issued = await this.executeHardwareAction(entry, level, durationSec);
+    if (!issued) return false;
+    this.lastTriggeredAt.set(entry.id, Date.now());
     return true;
   }
 
   private async executeActionsSequentially(entries: LorebookEntry[]): Promise<void> {
     for (const entry of entries) {
       if (entry.hardwareAction?.type === 'brake_stop') {
-        await this.executeHardwareAction(entry);
+        if (await this.executeHardwareAction(entry)) this.lastTriggeredAt.set(entry.id, Date.now());
       } else if (entry.hardwareAction) {
         // 立即模式（非急停动作）：基于用户当前安全上下限与条目默认配置安全执行
         const safety = useAppStore.getState().safetyConfig;
@@ -792,7 +794,9 @@ export class HardwareLorebookEngine {
           : 1;
         const defaultLevel = Math.max(minLevel, Math.min(maxLevel, isToy ? 5 : 15));
         const durationSec = act.durationSec ?? 10;
-        await this.executeHardwareAction(entry, defaultLevel, durationSec);
+        if (await this.executeHardwareAction(entry, defaultLevel, durationSec)) {
+          this.lastTriggeredAt.set(entry.id, Date.now());
+        }
       }
     }
   }
@@ -801,38 +805,46 @@ export class HardwareLorebookEngine {
     entry: LorebookEntry,
     aiLevel?: number,
     aiDurationSec: number | null = null,
-  ): Promise<void> {
-    if (!entry.hardwareAction) return;
+  ): Promise<boolean> {
+    if (!entry.hardwareAction) return false;
     const dev = DeviceManager.getInstance();
     const act = entry.hardwareAction;
 
     if (act.type === 'brake_stop') {
       await dev.emergencyStop();
-      return;
+      return true;
     }
-    if (!Number.isFinite(aiLevel) || Number(aiLevel) <= 0) return;
+    if (!Number.isFinite(aiLevel) || Number(aiLevel) <= 0) return false;
     const level = Math.round(Number(aiLevel));
 
     const outputType: 'ems' | 'toy' | 'enema' = act.type === 'toy_motor' || act.type === 'toy_pattern'
       ? 'toy'
       : act.type === 'enema_fill' || act.type === 'enema_drain' ? 'enema' : 'ems';
 
+    let issued = false;
     if (act.type === 'ems_wave' && act.target) {
       // 先把强度压到 AI 本轮的安全决策值，避免切换波形时短暂沿用旧的较高强度。
       await dev.setEmsStrength('AB', level);
       await dev.sendEmsWave('AB', act.target);
+      issued = true;
     } else if (act.type === 'ems_strength') {
       const channel = act.target === 'A' || act.target === 'B' ? act.target : 'AB';
       await dev.setEmsStrength(channel, level);
+      issued = true;
     } else if (act.type === 'toy_motor') {
       await dev.setToyMotor(level, Math.round(level * 0.8), Math.round(level * 0.9));
+      issued = true;
     } else if (act.type === 'toy_pattern' && act.target && aiDurationSec !== null) {
       await dev.playToyPattern(act.target, aiDurationSec);
+      issued = true;
     } else if (act.type === 'enema_fill' && aiDurationSec !== null) {
       await dev.enemaFill(aiDurationSec);
+      issued = true;
     } else if (act.type === 'enema_drain' && aiDurationSec !== null) {
       await dev.enemaDrain(aiDurationSec);
+      issued = true;
     }
+    if (!issued) return false;
 
     if (act.stopMode === 'timed' && aiDurationSec !== null) {
       if (outputType === 'ems') dev.scheduleOutputStop('ems', aiDurationSec);
@@ -843,5 +855,6 @@ export class HardwareLorebookEngine {
       if (outputType === 'ems') dev.scheduleOutputStop('ems', fallbackMaxSec);
       else if (act.type === 'toy_motor') dev.scheduleOutputStop('toy', fallbackMaxSec);
     }
+    return true;
   }
 }

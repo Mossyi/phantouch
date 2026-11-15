@@ -876,6 +876,15 @@ button[class*="bg-rose-500"] {
   padding-bottom: calc(4.6rem + clamp(0px, env(safe-area-inset-bottom, 0px), 1.75rem));
 }
 
+.tavern-chat-composer textarea,
+.tavern-card-studio textarea {
+  max-height: 40vh;
+  overflow-y: auto;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
 /* 软键盘唤起时，输入区紧贴键盘顶沿，释放聊天高度 */
 .keyboard-open .tavern-chat-composer,
 .keyboard-open .companion-chat-composer {

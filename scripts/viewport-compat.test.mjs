@@ -45,6 +45,7 @@ test('viewport compat: soft keyboard resize configuration for AndroidManifest an
 
   const appTsx = await readFile(resolve(ROOT, 'src/App.tsx'), 'utf-8');
   assert.ok(appTsx.includes('handleOuterScroll'), 'App.tsx must stabilize outer window scroll');
+  assert.ok(appTsx.includes("tag === 'TEXTAREA'"), 'textarea scrolling must not be reset by the outer scroll guard');
 
   const indexCss = await readFile(resolve(ROOT, 'src/index.css'), 'utf-8');
   assert.match(indexCss, /\.app-viewport\s*\{[^}]*max-height:\s*100%;/s, 'app-viewport must have max-height: 100%');

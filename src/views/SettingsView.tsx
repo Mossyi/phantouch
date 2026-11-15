@@ -11,6 +11,7 @@ import { BuildInfoPanel } from '../components/BuildInfoPanel';
 import { AppDiagnosticsPanel } from '../components/AppDiagnosticsPanel';
 import { TavernMessageContent } from '../components/tavern/TavernMessageContent';
 import { useAppStore } from '../store/useAppStore';
+import { useOverlayBack } from '../components/tavern/useOverlayBack';
 import { parseApiBaseUrl } from '../core/apiBaseUrl';
 import { resolveEnabledEmsCeiling } from '../core/safetyLimits';
 import { hasSameApiCredentialScope } from '../core/llmConfig';
@@ -52,6 +53,7 @@ export const SettingsView: React.FC = () => {
   const [savedToast, setSavedToast] = useState(false);
   const [backupText, setBackupText] = useState('');
   const [showBackupModal, setShowBackupModal] = useState(false);
+  useOverlayBack(() => setShowBackupModal(false), showBackupModal);
   const [backupSuccess, setBackupSuccess] = useState(false);
   const [nativeTtsStatus, setNativeTtsStatus] = useState('');
   const [checkingNativeTts, setCheckingNativeTts] = useState(false);
@@ -311,7 +313,7 @@ export const SettingsView: React.FC = () => {
     <div className="max-w-md mx-auto px-3.5 py-4 pb-10 space-y-4">
       {/* 设置分区：与顶部导航同一套分段样式；不吸顶，避免滚动时盖住上方的「系统设置 / 设备连接 / 成就殿堂」 */}
       <SegmentedTabs
-        ariaLabel="设置分区"
+        ariaLabel="设置内容分区"
         value={activeSection}
         onChange={setActiveSection}
         items={[
@@ -1324,7 +1326,7 @@ export const SettingsView: React.FC = () => {
 
       {/* ================= 导入配置弹窗 ================= */}
       {showBackupModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white/98 backdrop-blur-2xl border border-pink-200/90 rounded-3xl w-full max-w-sm p-5 space-y-3.5 shadow-[0_24px_50px_-10px_rgba(244,63,142,0.22)] text-slate-800">
             <div className="flex items-center justify-between border-b border-pink-100 pb-2.5">
               <h3 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
@@ -1342,7 +1344,8 @@ export const SettingsView: React.FC = () => {
                 value={backupText}
                 onChange={(e) => setBackupText(e.target.value)}
                 placeholder='{"llmConfig": {...}, "safetyConfig": {...}}'
-                className="w-full bg-slate-50/80 border border-pink-100 text-slate-800 text-xs rounded-xl p-2.5 outline-none font-mono resize-none leading-relaxed focus:border-pink-400 focus:bg-white"
+                data-allow-scroll="true"
+                className="max-h-[40vh] w-full overflow-y-auto bg-slate-50/80 border border-pink-100 text-slate-800 text-xs rounded-xl p-2.5 outline-none font-mono resize-none leading-relaxed focus:border-pink-400 focus:bg-white"
               />
             </div>
 

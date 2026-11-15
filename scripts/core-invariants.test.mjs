@@ -1717,6 +1717,15 @@ test('bounty storage can only restore progress for canonical quests', async () =
     const defaults = normalizeStoredBountyQuests(null);
     assert.equal(defaults.length, 17);
     assert.equal(defaults[0].id, 'quest_1');
+    const versionOne = normalizeStoredBountyQuests({
+      version: 1,
+      quests: [{ id: 'quest_4', currentCount: 7, status: 'in_progress' }],
+    });
+    assert.equal(versionOne.find((quest) => quest.id === 'quest_4').currentCount, 7);
+    const bareList = normalizeStoredBountyQuests([
+      { id: 'quest_6', currentCount: 4, status: 'in_progress' },
+    ]);
+    assert.equal(bareList.find((quest) => quest.id === 'quest_6').currentCount, 4);
 
     const engine = BountyQuestEngine.getInstance();
     const quests = engine.getQuests();
@@ -1842,6 +1851,11 @@ test('Pavlov imprint cues lead feedback and output cooldowns are deterministic',
   assert.equal(trials.filter(trial => trial === 'reward').length, 50);
   assert.equal(trials.filter(trial => trial === 'punish').length, 50);
   assert.doesNotMatch(trials.join(','), /(?:reward,){3}reward|(?:punish,){3}punish/);
+  for (const count of [0, 1, 7, 8, 40]) {
+    for (const roll of [0, 0.5, 1, Number.NaN]) {
+      assert.equal(createBalancedPavlovImprintTrials(count, () => roll).length, count);
+    }
+  }
 });
 
 test('Pavlov progress keeps 21 unique stages and rejects forged history', async () => {

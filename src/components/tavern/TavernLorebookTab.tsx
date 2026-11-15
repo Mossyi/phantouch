@@ -8,6 +8,7 @@ import {
 import { LorebookEntry } from '../../core/tavern/tavernTypes';
 import { resolveEnabledEmsCeiling } from '../../core/safetyLimits';
 import { useAppStore } from '../../store/useAppStore';
+import { useOverlayBack } from './useOverlayBack';
 import { TavernWorldbookManager } from './TavernWorldbookManager';
 import {
   CheckCircle2,
@@ -45,6 +46,7 @@ const TavernHardwareLorebookPanel: React.FC = () => {
   const safetyConfig = useAppStore((state) => state.safetyConfig);
   const [entries, setEntries] = useState<LorebookEntry[]>(engine.getEntries());
   const [showEditor, setShowEditor] = useState(false);
+  useOverlayBack(() => setShowEditor(false), showEditor);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [keywords, setKeywords] = useState('');
   const [secondaryKeywords, setSecondaryKeywords] = useState('');
@@ -321,7 +323,7 @@ const TavernHardwareLorebookPanel: React.FC = () => {
       </section>
 
       {showEditor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
           <div className="max-h-[86vh] w-full max-w-sm space-y-3 overflow-y-auto rounded-3xl border border-pink-200/90 bg-white/98 p-5 shadow-2xl backdrop-blur-xl">
             <h3 className="text-xs font-black text-slate-800">{editingId ? '编辑' : '新建'}硬件世界书规则</h3>
             <label className="block text-[10px] font-bold text-slate-500">

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '../store/useAppStore';
+import { useOverlayBack } from '../components/tavern/useOverlayBack';
 import { PRESET_PERSONAS } from '../core/ai/personaPrompts';
 import { CompanionMatchCandidate } from '../core/ai/companionMatcher';
 import { CompanionMatchModal } from '../components/CompanionMatchModal';
@@ -62,6 +63,9 @@ export const ChatView: React.FC = () => {
   const [showPersonaMenu, setShowPersonaMenu] = useState(false);
   const [showMoreActions, setShowMoreActions] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  useOverlayBack(() => setShowPersonaMenu(false), showPersonaMenu);
+  useOverlayBack(() => setShowMoreActions(false), showMoreActions);
+  useOverlayBack(() => setShowModal(false), showModal);
   const [showMatchModal, setShowMatchModal] = useState(false);
   const [editingPersonaId, setEditingPersonaId] = useState<string | null>(null);
 
@@ -714,7 +718,14 @@ export const ChatView: React.FC = () => {
                   : '请在【系统设置】中填入 API Key'
               }
               disabled={isChatLoading}
-              className="liquid-input flex-1 min-w-0 min-h-[3.25rem] max-h-28 resize-none text-xs sm:text-sm px-3.5 py-2 outline-none font-medium leading-relaxed"
+              onInput={(event) => {
+                const el = event.currentTarget;
+                const maxHeight = Math.round((window.visualViewport?.height ?? window.innerHeight) * 0.4);
+                el.style.height = 'auto';
+                el.style.height = `${Math.min(Math.max(el.scrollHeight, 52), maxHeight)}px`;
+              }}
+              data-allow-scroll="true"
+              className="liquid-input flex-1 min-w-0 min-h-[3.25rem] max-h-[40vh] resize-none overflow-y-auto text-xs sm:text-sm px-3.5 py-2 outline-none font-medium leading-relaxed"
             />
 
             {isChatLoading ? (
@@ -743,7 +754,7 @@ export const ChatView: React.FC = () => {
       {/* ================= 自定义人格弹窗 Modal ================= */}
       {showMatchModal && <CompanionMatchModal onClose={() => setShowMatchModal(false)} onStart={handleMatchedCompanion} />}
       {showModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
+        <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white/98 backdrop-blur-2xl border border-pink-200/90 rounded-3xl w-full max-w-sm max-h-[90vh] overflow-y-auto p-5 space-y-3.5 shadow-[0_24px_50px_-10px_rgba(244,63,142,0.22)] text-slate-800">
             <div className="flex items-center justify-between border-b border-pink-100 pb-2.5">
               <h3 className="text-sm font-black text-slate-800 flex items-center gap-1.5">

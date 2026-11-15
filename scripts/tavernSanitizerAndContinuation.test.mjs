@@ -132,6 +132,13 @@ test('tavern text sanitizer completely strips thinking tags, leaked proxy codes,
   const dedupedComma = sanitizeTavernVisibleContent(commaLoop, false);
   assert.ok((dedupedComma.match(/主人/g) || []).length <= 3);
 
+  const phrase = '边界上的这一句会重复出现。';
+  const head = Array.from({ length: 160 }, (_, index) => `段${String(index).padStart(3, '0')} `).join('').slice(0, 490);
+  const straddling = `${head}${phrase.repeat(3)}`;
+  const dedupedBoundary = sanitizeTavernVisibleContent(straddling, false);
+  assert.equal(dedupedBoundary.split(phrase).length - 1, 1);
+  assert.equal(dedupedBoundary.startsWith(head), true);
+
   // 10. Truncation detection (safely ignores trailing leaked think tags)
   assert.equal(isSentenceTruncated('让你牢牢记住！'), false);
   assert.equal(isSentenceTruncated('（握着你的手微笑道）“明天见。”'), false);

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useOverlayBack } from './tavern/useOverlayBack';
 import { App } from '@capacitor/app';
 import { useUpdateStore } from '../core/updater/updateStore';
 import { openDownloadUrl, pickApkUrl } from '../core/updater/appUpdater';
@@ -51,6 +52,8 @@ export function UpdateModal() {
   const [otaDownloading, setOtaDownloading] = useState(false);
   const [otaProgress, setOtaProgress] = useState(0);
   const [otaApplying, setOtaApplying] = useState(false);
+  const updateBusy = installing || otaDownloading || otaApplying;
+  useOverlayBack(() => { if (!updateBusy) closeModal(); }, Boolean(modalKind) && !updateBusy);
 
   // 弹窗打开时重置临时状态，并探测安装权限
   useEffect(() => {
@@ -195,7 +198,7 @@ export function UpdateModal() {
   const isBusy = downloading || installing || otaDownloading || otaApplying;
   // APK 下载可以取消；安装程序已弹出、或热更新正在下载/切换包时不能关闭。
   // 这个值同时驱动按钮禁用与蒙层点击，避免出现“按钮可点但点了没反应”。
-  const closeBlocked = installing || otaDownloading || otaApplying;
+  const closeBlocked = updateBusy;
 
   const handleClose = async () => {
     if (closeBlocked) return;
@@ -212,7 +215,7 @@ export function UpdateModal() {
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[80] bg-black/75 flex items-center justify-center p-4 backdrop-blur-sm"
       onClick={closeBlocked ? undefined : handleClose}
     >
       <div

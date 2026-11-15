@@ -41,7 +41,7 @@ export const DisciplineHubView: React.FC = () => {
 
   return (
     <div className="flex flex-col min-h-full">
-      <div className="subnav-bar sticky top-0 z-20 shrink-0 px-3 py-2">
+      <div className="subnav-bar sticky top-0 z-[60] shrink-0 px-3 py-2">
         <SegmentedTabs
           ariaLabel="强度调控分区"
           items={subTabs}

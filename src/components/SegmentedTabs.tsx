@@ -1,5 +1,5 @@
 import React from 'react';
-import type { LucideIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
 
 export interface SegmentedTabItem<T extends string> {
   id: T;
@@ -49,16 +49,23 @@ export function SegmentedTabs<T extends string>({ items, value, onChange, ariaLa
     track.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
   }, [value]);
 
+  const scrollBy = (distance: number) => trackRef.current?.scrollBy({ left: distance, behavior: 'smooth' });
   return (
-    // data-allow-scroll：App 的滚动拦截器会把未标记容器的横向偏移强制归零
-    <div
-      ref={trackRef}
-      role="tablist"
-      aria-label={ariaLabel}
-      data-allow-scroll="true"
-      onScroll={updateOverflow}
-      className={`segmented-track ${overflow.left ? 'segmented-track--more-left' : ''} ${overflow.right ? 'segmented-track--more-right' : ''} ${className}`}
-    >
+    <div className={`relative ${className}`}>
+      {overflow.left && (
+        <button type="button" aria-label={`${ariaLabel}向左`} onClick={() => scrollBy(-160)} className="absolute left-1 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm">
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+      )}
+      {/* data-allow-scroll：App 的滚动拦截器会把未标记容器的横向偏移强制归零 */}
+      <div
+        ref={trackRef}
+        role="tablist"
+        aria-label={ariaLabel}
+        data-allow-scroll="true"
+        onScroll={updateOverflow}
+        className={`segmented-track ${overflow.left || overflow.right ? '!px-8' : ''} ${overflow.left ? 'segmented-track--more-left' : ''} ${overflow.right ? 'segmented-track--more-right' : ''}`}
+      >
       {items.map((item) => {
         const Icon = item.icon;
         const selected = item.id === value;
@@ -77,6 +84,12 @@ export function SegmentedTabs<T extends string>({ items, value, onChange, ariaLa
           </button>
         );
       })}
+      </div>
+      {overflow.right && (
+        <button type="button" aria-label={`${ariaLabel}向右`} onClick={() => scrollBy(160)} className="absolute right-1 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm">
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      )}
     </div>
   );
 }

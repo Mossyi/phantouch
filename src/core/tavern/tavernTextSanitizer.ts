@@ -145,34 +145,40 @@ export function deduplicateRepetitiveText(raw: string, userPrompt?: string): str
   text = text.replace(/((?:[\*＊_~～]{1,3}|[（(【\[])[^\s\*＊_()（）\[\]【】~～]{1,10}(?:[\*＊_~～]{1,3}|[）)\]】]))(?:\s*\1){2,}/gu, '$1 $1');
 
   // 3. 连续重复整句/长短语去重（长度在 4 到 120 字符之间紧邻或由空格换行分隔出现的重复）
-  // 使用限定窗口避免 O(N²) 回溯：仅在 500 字符片段内扫描，然后滑动前进
+  // 使用限定窗口避免 O(N²) 回溯。窗口重叠 120 字，跨过 500 字边界的重复仍能被看见。
   {
     const chunkSize = 500;
     const overlap = 120;
-    let result = '';
+    const repeatPattern = /(.{4,120}?)(?:\s*\1)+/gu;
+    const ranges: Array<[number, number, string]> = [];
     let pos = 0;
     while (pos < text.length) {
       const end = Math.min(pos + chunkSize, text.length);
-      let chunk = text.slice(pos, end);
-      chunk = chunk.replace(/(.{4,120}?)(?:\s*\1)+/gu, (match, group) => {
+      const chunk = text.slice(pos, end);
+      const ownEnd = end < text.length ? pos + (chunkSize - overlap) : end;
+      repeatPattern.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = repeatPattern.exec(chunk))) {
+        const absStart = pos + match.index;
+        if (absStart >= ownEnd) break;
+        const group = match[1];
         const trimmed = group.trim();
         if (trimmed.length >= 4 && !/^[\s。！？…~,，.!?]+$/.test(trimmed)) {
-          return group;
+          ranges.push([absStart, absStart + match[0].length, group]);
         }
-        return match;
-      });
-      if (pos === 0) {
-        result = chunk;
-      } else {
-        result += chunk;
+        if (match.index === repeatPattern.lastIndex) repeatPattern.lastIndex += 1;
       }
-      pos = end < text.length ? end - overlap : end;
-      if (pos > 0 && pos < text.length) {
-        // Skip overlap region (already processed)
-        pos = end;
-      }
+      if (end >= text.length) break;
+      pos = end - overlap;
     }
-    text = result;
+    let result = '';
+    let cursor = 0;
+    for (const [start, rangeEnd, group] of ranges) {
+      if (start < cursor) continue;
+      result += text.slice(cursor, start) + group;
+      cursor = rangeEnd;
+    }
+    text = result + text.slice(cursor);
   }
 
   // 4. 标点差异/标点变异的相邻重复句子去重（例如：“你也是这么想的吧……你也是这么想的吧。”）

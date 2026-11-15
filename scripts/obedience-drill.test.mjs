@@ -90,6 +90,9 @@ test('训练流程：通过给奖励；连续失败逐级加强惩罚且不超�
   assert.equal(summary.passed, 2);
   assert.equal(summary.rounds, 6);
   assert.equal(summary.bestStreak, 1);
+  const answered = results.filter((result) => !result.timedOut);
+  const expectedAccuracy = Math.round(answered.reduce((sum, result) => sum + result.score.accuracy, 0) / answered.length);
+  assert.equal(summary.averageAccuracy, expectedAccuracy);
 });
 
 test('训练流程：未开启惩罚时失败也不触发任何硬件；中途停止立即收尾', async () => {

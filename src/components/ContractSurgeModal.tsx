@@ -1,4 +1,5 @@
 import React from 'react';
+import { useOverlayBack } from './tavern/useOverlayBack';
 import { useAppStore } from '../store/useAppStore';
 import { AlertTriangle, Mic, CheckCircle2, ShieldAlert } from 'lucide-react';
 
@@ -6,6 +7,9 @@ export const ContractSurgeModal: React.FC = () => {
   const { contractState, answerSurgeCheck, startVoiceInput, isListening, speechTranscript } = useAppStore();
 
   const surge = contractState?.currentSurgeCheck;
+  const surgeOpen = Boolean(contractState?.isActive && surge && !surge.isAnswered);
+  // 返回键只挡住退出，不把查岗记成合格。
+  useOverlayBack(() => undefined, surgeOpen);
 
   if (!contractState?.isActive || !surge || surge.isAnswered) {
     return null;

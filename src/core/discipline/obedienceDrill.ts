@@ -324,7 +324,7 @@ export const summarizeDrill = (results: DrillRoundResult[], difficulty: DrillDif
     difficulty,
     rounds: results.length,
     passed: results.filter((result) => result.passed).length,
-    averageAccuracy: answered.length ? Math.round(answered.reduce((sum, result) => sum + result.score.accuracy, 0) / results.length) : 0,
+    averageAccuracy: answered.length ? Math.round(answered.reduce((sum, result) => sum + result.score.accuracy, 0) / answered.length) : 0,
     averageResponseMs: responseTimes.length ? Math.round(responseTimes.reduce((sum, value) => sum + value, 0) / responseTimes.length) : null,
     bestStreak,
   };

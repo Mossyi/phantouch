@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useOverlayBack } from '../tavern/useOverlayBack';
 import { useAppStore } from '../../store/useAppStore';
 import { DeviceManager } from '../../core/deviceManager';
 import { resolveEnabledEmsCeiling } from '../../core/safetyLimits';
@@ -65,6 +66,7 @@ export const YoloVisionTab: React.FC = () => {
   const [failStreak, setFailStreak] = useState(0);
   const [shockLevel, setShockLevel] = useState(1); // 1到5级
   const [isBlindfold, setIsBlindfold] = useState(false);
+  useOverlayBack(() => setIsBlindfold(false), isBlindfold);
   const [videoEnabled, setVideoEnabled] = useState(false);
   const [videoFrameUrl, setVideoFrameUrl] = useState<string | null>(null);
 

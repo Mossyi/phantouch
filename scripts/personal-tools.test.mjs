@@ -33,6 +33,10 @@ test('personal items and combinations survive reload and preserve diary name sna
   engine.saveLook({ id: 'look-test', name: 'Weekend', itemIds: ['personal-test', 'outfit_maid_classic'] });
   const entry = engine.addDiary({ outfitId: 'look-test', title: 'Today', content: 'Comfortable', mood: 'calm', scene: 'home', tags: [], minutes: 10, comfort: 4, confidence: 4, styleScore: 4 });
   assert.deepEqual(entry.outfitSnapshot, ['Blue shirt', '经典黑白蕾丝女仆裙']);
+  const scoreBefore = engine.getState().totalFemininityScore;
+  const edited = engine.updateDiary(entry.id, { outfitId: 'look-test', title: 'Today', content: 'Comfortable', mood: 'calm', scene: 'home', tags: [], minutes: 30, comfort: 4, confidence: 4, styleScore: 4 });
+  assert.ok(edited.femininityEarned > entry.femininityEarned);
+  assert.equal(engine.getState().totalFemininityScore, scoreBefore - entry.femininityEarned + edited.femininityEarned);
   engine.savePersonalItem({ id: 'personal-test', name: 'Renamed', archived: true });
   engine.saveLook({ id: 'look-test', name: 'Weekend', itemIds: ['personal-test'], archived: true });
   const recovered = normalizeWardrobeState(JSON.parse(localStorage.getItem('ycy_wardrobe_state')));

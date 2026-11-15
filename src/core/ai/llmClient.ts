@@ -60,6 +60,14 @@ export const normalizeLlmRequestTemperature = (model: unknown, value: unknown): 
   return Math.max(0, Math.min(2, temperature));
 };
 
+/** 流式工具分片没带 index 时，沿用上一个工具，避免并行调用被并进第 0 个。 */
+export const nextToolCallIndex = (raw: unknown, last: number): number | null => {
+  if (raw === undefined || raw === null) return last;
+  const index = Number(raw);
+  if (!Number.isInteger(index) || index < 0 || index >= 5) return null;
+  return index;
+};
+
 export const isMultimodalUnsupportedError = (err: any): boolean => {
   if (!err) return false;
   const msg = String(err?.message || err || '').toLowerCase();
@@ -195,14 +203,19 @@ export const convertChatMessagesToResponsesInput = (messages: any[]): Record<str
     }
     if (['system', 'developer', 'user', 'assistant'].includes(message.role)) {
       if (Array.isArray(message.content)) {
-        const textParts = message.content
-          .filter((p: any) => p && typeof p.text === 'string')
-          .map((p: any) => p.text)
-          .join('\n');
-        input.push({
-          role: message.role,
-          content: textParts.slice(0, 500_000),
-        });
+        const parts: Array<Record<string, string>> = [];
+        for (const part of message.content) {
+          if (part && typeof part.text === 'string' && part.text) {
+            parts.push({ type: 'input_text', text: part.text.slice(0, 500_000) });
+          } else if (part?.type === 'image_url' || part?.image_url) {
+            const url = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url;
+            if (typeof url === 'string' && url) parts.push({ type: 'input_image', image_url: url.slice(0, 2_000_000) });
+          }
+        }
+        const text = parts.filter((part) => part.type === 'input_text').map((part) => part.text).join('\n');
+        input.push(parts.some((part) => part.type === 'input_image')
+          ? { role: message.role, content: parts }
+          : { role: message.role, content: text.slice(0, 500_000) });
       } else {
         input.push({
           role: message.role,
@@ -770,6 +783,7 @@ export class LLMClient {
       type?: string;
       function?: { name?: string; arguments?: string };
     }>();
+    let lastToolIndex = 0;
     const consumeEvent = (event: string) => {
       const data = event.split('\n')
         .filter((line) => line.startsWith('data:'))
@@ -805,9 +819,9 @@ export class LLMClient {
         }
         if (!Array.isArray(delta?.tool_calls)) return;
         for (const partialCall of delta.tool_calls) {
-          const rawIndex = partialCall?.index;
-          const index = rawIndex === undefined ? 0 : Number(rawIndex);
-          if (!Number.isInteger(index) || index < 0 || index >= 5) continue;
+          const index = nextToolCallIndex(partialCall?.index, lastToolIndex);
+          if (index === null) continue;
+          lastToolIndex = index;
           const current = streamedToolCalls.get(index) || {};
           if (typeof partialCall?.id === 'string') current.id = partialCall.id.slice(0, 200);
           if (typeof partialCall?.type === 'string') current.type = partialCall.type;

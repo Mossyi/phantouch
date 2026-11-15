@@ -36,6 +36,7 @@ import {
   Dumbbell,
 } from 'lucide-react';
 import { SegmentedTabs, SegmentedTabItem } from '../components/SegmentedTabs';
+import { useBackLayer } from '../components/tavern/useOverlayBack';
 
 export const FemboyTrainingView: React.FC = () => {
   const engine = FemboyTrainingEngine.getInstance();
@@ -60,6 +61,7 @@ export const FemboyTrainingView: React.FC = () => {
   const [taskCategory, setTaskCategory] = useState<'all' | NonNullable<TrainingTask['category']>>('all');
   const [campHardwareEnabled, setCampHardwareEnabled] = useState(false);
   const [campMessage, setCampMessage] = useState('');
+  useBackLayer(activeSubTab !== 'lab', () => setActiveSubTab('lab'), 'subnav');
 
   useEffect(() => {
     const unsub = engine.subscribe((s) => {
@@ -142,7 +144,7 @@ export const FemboyTrainingView: React.FC = () => {
 
   return (
     <div className="max-w-md mx-auto px-3.5 py-4 pb-10 space-y-4">
-      <div className="sticky top-0 z-20 -mx-3.5 -mt-4 subnav-bar px-3 py-2">
+      <div className="sticky top-0 z-[60] -mx-3.5 -mt-4 subnav-bar px-3 py-2">
         <SegmentedTabs
           ariaLabel="重塑分区"
           items={femboySubTabs}
