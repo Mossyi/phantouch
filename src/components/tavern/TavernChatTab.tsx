@@ -91,6 +91,7 @@ import {
 import {
   acceptMemorySummaryWrite,
   adoptUnplacedSummary,
+  mergeImportedBranchLibrary,
   archiveBranchSnapshot,
   forkBranchSession,
   loadBranchLibrary,
@@ -3466,14 +3467,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       const result = await store.importChatArchivesAsync(activeCard.id, candidates);
       const importedLibrary = raw && normalizeBranchLibrary(raw.branchLibrary);
       if (importedLibrary && branchLibraryRef.current) {
-        const local = branchLibraryRef.current;
-        const known = new Set(local.sessions.map((session) => session.sessionId));
-        commitLibrary({
-          ...local,
-          pinnedMemory: local.pinnedMemory || importedLibrary.pinnedMemory,
-          unplacedSummary: local.unplacedSummary || importedLibrary.unplacedSummary,
-          sessions: [...local.sessions, ...importedLibrary.sessions.filter((session) => !known.has(session.sessionId))].slice(0, 40),
-        });
+        commitLibrary(mergeImportedBranchLibrary(branchLibraryRef.current, importedLibrary));
       }
       await refreshArchives();
       showFeatureNotice(result.imported > 0

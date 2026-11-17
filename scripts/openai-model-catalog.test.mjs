@@ -17,7 +17,10 @@ test('模型目录地址会剥掉对话端点、斜杠和查询，并停在用�
   assert.equal(catalog.resolveOpenAIModelsUrl('http://localhost:11434/v1').url, 'http://localhost:11434/v1/models');
   assert.equal(catalog.resolveOpenAIModelsUrl('https://api.example.com/v1?x=1').ok, false);
   assert.equal(catalog.resolveOpenAIModelsUrl('http://203.0.113.5:8080/v1').url, 'http://203.0.113.5:8080/v1/models');
-  assert.equal(catalog.resolveOpenAIModelsUrl('file:///tmp/models').ok, false);
+  const rejected = catalog.resolveOpenAIModelsUrl('file:///tmp/models');
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.message, /http 或 https/);
+  assert.equal(rejected.message.includes('只有本机'), false);
   const plan = catalog.resolveOpenAIModelsUrl('https://ark.cn-beijing.volces.com/api/plan/v3');
   assert.equal(plan.code, 'plan-unsupported');
   assert.equal(plan.requestUrl, undefined);

@@ -327,6 +327,25 @@ export const restoreBranchSnapshot = (
   return withActiveSession(library, reconciled);
 };
 
+/** 导入时保留本机已有会话和已填写的固定事实；只补空位，不让另一条分支的摘要盖住当前会话。 */
+export const mergeImportedBranchLibrary = (
+  local: TavernBranchLibrary,
+  imported: TavernBranchLibrary,
+): TavernBranchLibrary => {
+  const known = new Set(local.sessions.map((session) => session.sessionId));
+  const keepLocalUnplaced = local.unplacedSummary.trim().length > 0;
+  return {
+    ...local,
+    pinnedMemory: local.pinnedMemory || imported.pinnedMemory,
+    unplacedSummary: keepLocalUnplaced ? local.unplacedSummary : imported.unplacedSummary,
+    unplacedThroughMessageId: keepLocalUnplaced ? local.unplacedThroughMessageId : imported.unplacedThroughMessageId,
+    sessions: [
+      ...local.sessions,
+      ...imported.sessions.filter((session) => !known.has(session.sessionId)),
+    ].slice(0, 40),
+  };
+};
+
 export const adoptUnplacedSummary = (library: TavernBranchLibrary): TavernBranchLibrary => {
   if (!library.unplacedSummary) return library;
   const current = activeBranchSession(library);

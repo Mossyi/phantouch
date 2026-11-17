@@ -50,7 +50,7 @@ export const resolveOpenAIModelsUrl = (value: unknown): { url: string } | ModelC
     return {
       ok: false,
       code: 'invalid-url',
-      message: 'API 地址无效。需要 HTTPS；只有本机 localhost 可以用 HTTP。地址里不能带账号、查询参数或锚点。',
+      message: 'API 地址无效。只支持 http 或 https，且不能包含账号密码、查询串或片段。已有模型 ID 保持不变。',
     };
   }
   if (isVolcengineArkPlanApiBaseUrl(parsed)) {
