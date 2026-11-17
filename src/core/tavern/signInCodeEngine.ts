@@ -88,6 +88,7 @@ export class SignInCodeEngine {
       || /^ycy_tavern_archives_[a-zA-Z0-9_-]{1,160}$/.test(key)
       || /^ycy_tavern_author_note_[a-zA-Z0-9_-]{1,160}$/.test(key)
       || /^ycy_tavern_memory_[a-zA-Z0-9_-]{1,160}$/.test(key)
+      || /^ycy_tavern_branch_library_[a-zA-Z0-9_-]{1,160}$/.test(key)
       || /^ycy_tavern_draft_[a-zA-Z0-9_-]{1,160}$/.test(key)
       || /^ycy_tavern_bookmarks_[a-zA-Z0-9_-]{1,160}$/.test(key)
       // 好感状态栏已停用。备份仍带走旧字段，恢复后应用不再读取。
