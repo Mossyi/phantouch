@@ -18,6 +18,7 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   server: {
     androidScheme: 'https',
+    // 自定义模型允许 http://。安卓明文还依赖 AndroidManifest 的 usesCleartextTraffic。
     cleartext: true,
   },
   android: {

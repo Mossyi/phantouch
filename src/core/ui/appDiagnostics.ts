@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import build from '../../../version.json';
-import { parseApiBaseUrl } from '../apiBaseUrl';
+import { parseCustomModelApiBaseUrl } from '../apiBaseUrl';
 import { getDiagnosticEvents } from './diagnosticEvents';
 export type PermissionReading = 'granted' | 'denied' | 'prompt' | 'unavailable';
 export interface DiagnosticSource {
@@ -11,7 +11,7 @@ export function summarizeDiagnosticSource(source: DiagnosticSource) {
   return {
     connectionMode: ['ble', 'bridge', 'simulator', 'dglab'].includes(String(source.deviceState.connectionMode)) ? String(source.deviceState.connectionMode) : 'unknown',
     connectionStatus: ['disconnected', 'connecting', 'connected', 'error'].includes(String(source.deviceState.connectionStatus)) ? String(source.deviceState.connectionStatus) : 'unknown',
-    apiAddressValid: !!parseApiBaseUrl(source.llmConfig.baseUrl),
+    apiAddressValid: !!parseCustomModelApiBaseUrl(source.llmConfig.baseUrl),
     apiKeyPresent: typeof source.llmConfig.apiKey === 'string' && !!source.llmConfig.apiKey.trim(),
     modelNamePresent: typeof source.llmConfig.model === 'string' && !!source.llmConfig.model.trim(),
   };

@@ -1,6 +1,6 @@
 import { DungeonEndingType, DungeonRunState, DungeonScript, DungeonStep, DungeonChoice } from '../../types';
 import { useAppStore } from '../../store/useAppStore';
-import { isLocalApiBaseUrl, parseApiBaseUrl } from '../apiBaseUrl';
+import { buildCustomModelChatUrl, isLocalApiBaseUrl } from '../apiBaseUrl';
 import { fetchTextWithTimeout } from '../httpClient';
 import { buildDungeonEnding, DEFAULT_DUNGEON_RUN_STATE, normalizeDungeonRunState } from './dungeonRunState';
 
@@ -108,9 +108,8 @@ export class DungeonAIEngine {
 
     if ((llmConfig.apiKey && llmConfig.apiKey.trim()) || localModel) {
       try {
-        const rawUrl = parseApiBaseUrl(llmConfig.baseUrl || 'https://api.deepseek.com/v1');
-        if (!rawUrl) throw new Error('地牢 AI API 地址无效');
-        const url = rawUrl.endsWith('/chat/completions') ? rawUrl : `${rawUrl}/chat/completions`;
+        const url = buildCustomModelChatUrl(llmConfig.baseUrl || 'https://api.deepseek.com/v1');
+        if (!url) throw new Error('地牢 AI API 地址无效');
         const prompt = `你是一名互动小说总编剧。请根据用户设定创作一个可无限续写的中文互动地牢开篇。
 用户设定：${safeConcept}
 
@@ -285,9 +284,8 @@ ${safeCustomAction ? `用户主动采取了以下行动：【${safeCustomAction}
 
     if ((llmConfig.apiKey && llmConfig.apiKey.trim()) || isLocalApiBaseUrl(llmConfig.baseUrl)) {
       try {
-        const rawUrl = parseApiBaseUrl(llmConfig.baseUrl || 'https://api.deepseek.com/v1');
-        if (!rawUrl) throw new Error('地牢 AI API 地址无效');
-        const url = rawUrl.endsWith('/chat/completions') ? rawUrl : `${rawUrl}/chat/completions`;
+        const url = buildCustomModelChatUrl(llmConfig.baseUrl || 'https://api.deepseek.com/v1');
+        if (!url) throw new Error('地牢 AI API 地址无效');
 
         const { response: resp, text: responseText } = await fetchTextWithTimeout(
           url,
@@ -322,7 +320,7 @@ ${safeCustomAction ? `用户主动采取了以下行动：【${safeCustomAction}
             const rawChoices = Array.isArray(parsed.choices) ? parsed.choices.slice(0, 3) : [];
             if (!narrative || rawChoices.length < 2) throw new Error('AI 地牢返回的数据结构不完整');
             const nextId = `step_ai_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-            const source: DungeonStep['generationSource'] = isLocalApiBaseUrl(rawUrl) ? 'local' : 'cloud';
+            const source: DungeonStep['generationSource'] = isLocalApiBaseUrl(llmConfig.baseUrl) ? 'local' : 'cloud';
             return {
               id: nextId,
               speaker: currentStep.speaker,

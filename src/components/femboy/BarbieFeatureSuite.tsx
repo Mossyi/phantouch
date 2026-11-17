@@ -8,7 +8,7 @@ import { resolveEnabledEmsCeiling } from '../../core/safetyLimits';
 import { PitchData, PitchTracker } from '../../core/voice/pitchTracker';
 import { TTSManager } from '../../core/voice/ttsManager';
 import { HeartRateState } from '../../types';
-import { parseApiBaseUrl } from '../../core/apiBaseUrl';
+import { buildCustomModelChatUrl } from '../../core/apiBaseUrl';
 import { fetchTextWithTimeout } from '../../core/httpClient';
 import { BARBIE_SUITE_DEFAULT_STATE, BarbiePostureSessionRecord, BarbieSuiteState, normalizeBarbieSuiteState } from '../../core/discipline/barbieSuiteState';
 import { BarbieLabEngine } from '../../core/discipline/barbieLabEngine';
@@ -187,9 +187,8 @@ const MirrorCheck: React.FC<{ state: SuiteState; update: (patch: Partial<SuiteSt
              setStatus('analyzing');
              void TTSManager.getInstance().speak('咔嚓。照片已上传至AI大模型，正在进行雌堕视觉分析...');
 
-             let rawUrl = parseApiBaseUrl(llmConfig.baseUrl || 'https://api.openai.com/v1');
+             const rawUrl = buildCustomModelChatUrl(llmConfig.baseUrl || 'https://api.openai.com/v1');
              if (!rawUrl) throw new Error('视觉 API 地址无效');
-             rawUrl = rawUrl.endsWith('/chat/completions') ? rawUrl : `${rawUrl}/chat/completions`;
              activeController = new AbortController();
              requestRef.current = activeController;
              

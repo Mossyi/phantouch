@@ -1,5 +1,5 @@
 import { TavernGenerationConfig, normalizeTavernGenerationConfig } from './tavernGeneration';
-import { isLocalApiBaseUrl, parseApiBaseUrl } from '../apiBaseUrl';
+import { isLocalApiBaseUrl, isPrivateNetworkHost, parseCustomModelApiBaseUrl } from '../apiBaseUrl';
 import { estimateTavernTokenCount } from './tavernMemory';
 import { TavernTextRule, normalizeTavernTextRules, validateTavernRegexPattern } from './tavernTextRules';
 import { TavernWorldbook, matchTavernWorldbooks, normalizeTavernWorldbooks } from './tavernWorldbooks';
@@ -96,8 +96,8 @@ export const isTavernModelChannelConfigured = (
   const apiKey = cleanText(apiKeyValue, 1_000);
   if (!model) return false;
   if (provider === 'dzmm') return Boolean(apiKey);
-  const baseUrl = parseApiBaseUrl(baseUrlValue);
-  return Boolean(baseUrl && (apiKey || isLocalApiBaseUrl(baseUrl)));
+  const baseUrl = parseCustomModelApiBaseUrl(baseUrlValue);
+  return Boolean(baseUrl && (apiKey || isLocalApiBaseUrl(baseUrl) || isPrivateNetworkHost(new URL(baseUrl).hostname)));
 };
 
 export const inspectTavernPromptSections = (promptValue: unknown): TavernDiagnosticPromptSection[] => {

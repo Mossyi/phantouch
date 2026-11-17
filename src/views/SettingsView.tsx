@@ -12,7 +12,7 @@ import { AppDiagnosticsPanel } from '../components/AppDiagnosticsPanel';
 import { TavernMessageContent } from '../components/tavern/TavernMessageContent';
 import { useAppStore } from '../store/useAppStore';
 import { useOverlayBack } from '../components/tavern/useOverlayBack';
-import { parseApiBaseUrl } from '../core/apiBaseUrl';
+import { parseCustomModelApiBaseUrl } from '../core/apiBaseUrl';
 import { resolveEnabledEmsCeiling } from '../core/safetyLimits';
 import { hasSameApiCredentialScope } from '../core/llmConfig';
 import { findLlmProviderPreset, LLM_PROVIDER_PRESETS, LlmProviderPreset } from '../core/llmProviders';
@@ -68,6 +68,7 @@ export const SettingsView: React.FC = () => {
   const [planModelTestResults, setPlanModelTestResults] = useState<Record<string, { ok?: boolean; latencyMs?: number; message: string }>>({});
   const planTestAbortRef = useRef<AbortController | null>(null);
   const [showAdvancedLlm, setShowAdvancedLlm] = useState(false);
+  const [showHttpNotice, setShowHttpNotice] = useState(false);
 
   const mountedRef = useRef(true);
   const toastTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -78,6 +79,18 @@ export const SettingsView: React.FC = () => {
       toastTimersRef.current.forEach(clearTimeout);
     };
   }, []);
+
+  useEffect(() => {
+    const parsed = parseCustomModelApiBaseUrl(baseUrlInput);
+    if (!parsed?.startsWith('http://')) {
+      setShowHttpNotice(false);
+      return;
+    }
+    try {
+      if (localStorage.getItem('ycy_custom_model_http_notice') === '1') return;
+    } catch {}
+    setShowHttpNotice(true);
+  }, [baseUrlInput]);
 
   useEffect(() => {
     setApiKeyInput(llmConfig.apiKey);
@@ -170,9 +183,9 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleSaveApi = () => {
-    const safeBaseUrl = parseApiBaseUrl(baseUrlInput);
+    const safeBaseUrl = parseCustomModelApiBaseUrl(baseUrlInput);
     if (!safeBaseUrl) {
-      alert('API 地址无效：必须使用 HTTPS（仅本机 localhost 可使用 HTTP），且不能包含凭据、查询串或片段');
+      alert('API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
       return;
     }
     const nextModel = modelInput.trim().slice(0, 200);
@@ -229,7 +242,7 @@ export const SettingsView: React.FC = () => {
       }
       if (data.llmConfig && typeof data.llmConfig === 'object') {
         const importedBaseUrl = typeof data.llmConfig.baseUrl === 'string'
-          ? parseApiBaseUrl(data.llmConfig.baseUrl)
+          ? parseCustomModelApiBaseUrl(data.llmConfig.baseUrl)
           : llmConfig.baseUrl;
         if (!importedBaseUrl) throw new Error('备份中的 API 地址无效');
         const importedModel = typeof data.llmConfig.model === 'string' ? data.llmConfig.model.slice(0, 200) : llmConfig.model;
@@ -507,6 +520,20 @@ export const SettingsView: React.FC = () => {
                 {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
+
+            {showHttpNotice && (
+              <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-relaxed text-amber-900">
+                这个地址是 HTTP，密钥和对话会以明文传输。只建议用于你自己的局域网或本机。
+                <button
+                  type="button"
+                  className="ml-2 font-black text-amber-800 underline"
+                  onClick={() => {
+                    try { localStorage.setItem('ycy_custom_model_http_notice', '1'); } catch {}
+                    setShowHttpNotice(false);
+                  }}
+                >知道了</button>
+              </p>
+            )}
 
             <button
               onClick={handleSaveApi}

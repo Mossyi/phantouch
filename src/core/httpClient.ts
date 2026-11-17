@@ -57,13 +57,19 @@ const describeNetworkFailure = (input: RequestInfo | URL, error: unknown): Error
   const isVolcengineTts = typeof url === 'string'
     && VOLCENGINE_TTS_PATHS.some((path) => url.startsWith(`${VOLCENGINE_TTS_ORIGIN}${path}`));
   const isLocalComfyUi = typeof url === 'string' && COMFYUI_DEV_ORIGINS.some((origin) => url.startsWith(`${origin}/`));
+  const pageIsHttps = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+  const targetIsHttp = typeof url === 'string' && url.startsWith('http://');
   return new Error(isArkAgentPlan
     ? '火山方舟 Agent Plan 网络请求未建立。请在本地调试时重启开发服务以启用兼容代理；APK 会使用 Capacitor 原生 HTTP。'
     : isVolcengineTts
       ? '火山豆包 TTS 网络请求未建立。请在本地调试时重启开发服务以启用语音兼容代理；APK 会使用 Capacitor 原生 HTTP。'
     : isLocalComfyUi
       ? 'ComfyUI 网络请求未建立。请确认 8188 端口服务正在运行，并重启本地开发服务以启用调试代理。'
-    : '模型服务网络请求未建立。请检查 API 地址、网络连接、TLS 证书，以及服务端是否允许浏览器跨域请求。');
+    : targetIsHttp && pageIsHttps
+      ? '当前页面是 HTTPS，浏览器拦截了发往 HTTP 接口的请求（混合内容）。安装后的安卓 App 可以访问你填写的 HTTP 地址；手机浏览器里打不开这个限制。'
+      : targetIsHttp
+        ? 'HTTP 模型接口没有连通。请确认地址、端口和局域网是否可达。如果在浏览器里使用，服务端还要允许跨域；网页无法绕过浏览器的跨域限制。'
+        : '模型服务网络请求未建立。请检查 API 地址、网络连接、TLS 证书，以及服务端是否允许浏览器跨域请求。');
 };
 
 const readResponseTextWithLimit = async (response: Response, maxBytes: number): Promise<string> => {

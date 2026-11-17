@@ -23,7 +23,7 @@ import {
   normalizeSiliconflowNegativePrompt,
   SILICONFLOW_IMAGE_BASE_URL,
 } from './tavernImageModels';
-import { parseApiBaseUrl, parseLocalNetworkApiBaseUrl } from '../apiBaseUrl';
+import { parseApiBaseUrl, parseCustomModelApiBaseUrl, parseLocalNetworkApiBaseUrl } from '../apiBaseUrl';
 import { inferTavernVoiceEngine } from './tavernVoice';
 import {
   createTavernPlayerPresetId,
@@ -108,7 +108,7 @@ export const getTavernCredentialScope = (
   if (config.provider === 'system') return 'system';
   const baseUrl = config.provider === 'dzmm'
     ? DZMM_CARD_CHAT_BASE_URL
-    : parseApiBaseUrl(config.baseUrl);
+    : parseCustomModelApiBaseUrl(config.baseUrl);
   if (!baseUrl) return null;
   return new URL(baseUrl).origin.toLowerCase();
 };
@@ -311,7 +311,7 @@ export const normalizeTavernModelConfig = (value: unknown): TavernModelConfig =>
     ? raw.provider as TavernModelConfig['provider']
     : 'system';
   const isLegacyUnverifiedDzmm = raw.baseUrl === 'https://api.dzmm.ai/v1';
-  const configuredBaseUrl = parseApiBaseUrl(raw.baseUrl);
+  const configuredBaseUrl = parseCustomModelApiBaseUrl(raw.baseUrl);
   // A damaged custom endpoint must not silently fall back to a different host while retaining its key.
   const provider: TavernModelConfig['provider'] = isLegacyUnverifiedDzmm
     || (requestedProvider === 'custom' && !configuredBaseUrl)
@@ -964,8 +964,8 @@ export class TavernStore {
     const provider = ['system', 'dzmm', 'custom'].includes(String(merged.provider))
       ? merged.provider as TavernModelConfig['provider']
       : 'system';
-    if (provider === 'custom' && !parseApiBaseUrl(merged.baseUrl)) {
-      throw new Error('兼容 API 地址无效，必须使用 HTTPS（仅本机 localhost 可使用 HTTP）');
+    if (provider === 'custom' && !parseCustomModelApiBaseUrl(merged.baseUrl)) {
+      throw new Error('兼容 API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
     }
     const nextScope = getTavernCredentialScope({ ...merged, provider });
     const scopeChanged = getTavernCredentialScope(current) !== nextScope;

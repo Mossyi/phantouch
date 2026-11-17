@@ -1,4 +1,4 @@
-import { parseApiBaseUrl, isVolcengineArkLegacyApiBaseUrl, VOLCENGINE_ARK_PLAN_BASE_URL } from '../apiBaseUrl';
+import { parseCustomModelApiBaseUrl, isVolcengineArkLegacyApiBaseUrl, VOLCENGINE_ARK_PLAN_BASE_URL } from '../apiBaseUrl';
 import { readPreference, writePreference } from '../ui/localPreferences';
 import type { CapabilityResult } from './modelCapabilities';
 export const MODEL_PROFILES_KEY = 'ycy_model_profiles';
@@ -8,7 +8,7 @@ export function loadModelProfiles(): ModelProfile[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   return value.flatMap(v => {
-    const base = parseApiBaseUrl(v?.baseUrl);
+    const base = parseCustomModelApiBaseUrl(v?.baseUrl);
     if (!base || typeof v.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(v.id) || seen.has(v.id) || typeof v.name !== 'string' || typeof v.model !== 'string' || !v.model.trim()) return [];
     seen.add(v.id);
     const migrated = isVolcengineArkLegacyApiBaseUrl(base);
@@ -16,7 +16,7 @@ export function loadModelProfiles(): ModelProfile[] {
   }).slice(0, 20);
 }
 export function saveModelProfile(input: ModelProfile) {
-  const base = parseApiBaseUrl(input.baseUrl);
+  const base = parseCustomModelApiBaseUrl(input.baseUrl);
   if (!base || !input.name.trim() || !input.model.trim()) throw new Error('请填写方案名称、有效地址和模型名');
   if (isVolcengineArkLegacyApiBaseUrl(base)) throw new Error('请先将火山地址切换到 Plan，不能保存旧版计费地址');
   const current = loadModelProfiles();
@@ -30,7 +30,7 @@ export function deleteModelProfile(id: string) { const next = loadModelProfiles(
 
 const REPORT_KEY = 'ycy_model_capability_reports';
 export async function modelFingerprint(config: { baseUrl: string; model: string; apiKey: string }) {
-  const bytes = new TextEncoder().encode(JSON.stringify([parseApiBaseUrl(config.baseUrl), config.model.trim(), config.apiKey.trim()]));
+  const bytes = new TextEncoder().encode(JSON.stringify([parseCustomModelApiBaseUrl(config.baseUrl), config.model.trim(), config.apiKey.trim()]));
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
 }

@@ -15,6 +15,28 @@ export const parseApiBaseUrl = (value: unknown): string | null => {
   }
 };
 
+/** 自定义模型接口允许任意主机的 http 或 https。不用于更新下载、生图或硬件地址。 */
+export const parseCustomModelApiBaseUrl = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim().replace(/\/+$/, '');
+  if (!raw || raw.length > 2048) return null;
+  try {
+    const url = new URL(raw);
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname || url.username || url.password || url.search || url.hash) {
+      return null;
+    }
+    return raw;
+  } catch {
+    return null;
+  }
+};
+
+export const buildCustomModelChatUrl = (value: unknown): string | null => {
+  const raw = parseCustomModelApiBaseUrl(value);
+  if (!raw) return null;
+  return /\/chat\/completions$/i.test(raw) ? raw : `${raw}/chat/completions`;
+};
+
 const isPrivateIpv4Host = (hostname: string): boolean => {
   const parts = hostname.split('.').map(Number);
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;

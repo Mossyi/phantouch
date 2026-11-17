@@ -2,7 +2,7 @@ import { LLMConfig, ChatMessage, ToolActionLog, AIPersona } from '../../types';
 import { LLM_TOOLS } from './toolDefinitions';
 import { getPersonaPrompt } from './personaPrompts';
 import { DeviceManager } from '../deviceManager';
-import { isLocalApiBaseUrl, isVolcengineArkPlanApiBaseUrl, parseApiBaseUrl } from '../apiBaseUrl';
+import { buildCustomModelChatUrl, isLocalApiBaseUrl, isVolcengineArkPlanApiBaseUrl, parseApiBaseUrl, parseCustomModelApiBaseUrl } from '../apiBaseUrl';
 import { normalizeLlmConfig } from '../llmConfig';
 import { fetchTextStreamWithTimeout, fetchTextWithTimeout } from '../httpClient';
 import { stripThinkingArtifacts, deduplicateRepetitiveText } from '../tavern/tavernTextSanitizer';
@@ -695,12 +695,13 @@ export class LLMClient {
   }
 
   private async callOpenAICompatibleAPI(messages: any[], signal?: AbortSignal): Promise<CompatibleAssistantMessage | null> {
-    const rawUrl = parseApiBaseUrl(this.config.baseUrl);
-    if (!rawUrl) throw new Error('API 地址无效，必须使用 HTTPS；仅本机 localhost 允许 HTTP');
+    const rawUrl = parseCustomModelApiBaseUrl(this.config.baseUrl);
+    if (!rawUrl) throw new Error('API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
     const useResponsesApi = isVolcengineArkPlanApiBaseUrl(rawUrl);
     const url = useResponsesApi
       ? (rawUrl.endsWith('/responses') ? rawUrl : `${rawUrl}/responses`)
-      : (rawUrl.endsWith('/chat/completions') ? rawUrl : `${rawUrl}/chat/completions`);
+      : buildCustomModelChatUrl(rawUrl);
+    if (!url) throw new Error('API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
 
     const body = useResponsesApi
       ? {
@@ -768,12 +769,13 @@ export class LLMClient {
     onTextDelta: (fullText: string) => void,
     includeTools: boolean,
   ): Promise<CompatibleAssistantMessage> {
-    const rawUrl = parseApiBaseUrl(this.config.baseUrl);
-    if (!rawUrl) throw new Error('API 地址无效，必须使用 HTTPS；仅本机 localhost 允许 HTTP');
+    const rawUrl = parseCustomModelApiBaseUrl(this.config.baseUrl);
+    if (!rawUrl) throw new Error('API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
     if (isVolcengineArkPlanApiBaseUrl(rawUrl)) {
       return this.streamOpenAIResponsesAPI(messages, signal, onTextDelta, includeTools, rawUrl);
     }
-    const url = rawUrl.endsWith('/chat/completions') ? rawUrl : `${rawUrl}/chat/completions`;
+    const url = buildCustomModelChatUrl(rawUrl);
+    if (!url) throw new Error('API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
     let buffer = '';
     let reply = '';
     let reasoningContent = '';
