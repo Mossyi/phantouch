@@ -22,6 +22,8 @@ import { TavernCharacterCard } from '../../core/tavern/tavernTypes';
 import { resolveActiveCardSprite } from '../../core/tavern/tavernEmotions';
 import { isSentenceTruncated } from '../../core/tavern/tavernTextSanitizer';
 import { TavernMessageContent } from './TavernMessageContent';
+import { ImmersiveStoryCard } from './ImmersiveStoryCard';
+import { parseImmersiveStory, type ImmersiveCastContext, type ImmersiveMemoryFacts } from '../../core/tavern/immersiveStory';
 import { TavernAvatar } from './TavernAvatar';
 import type { ChatMsg } from './TavernChatTab';
 
@@ -66,6 +68,12 @@ export interface TavernMessageItemProps {
   onGenerateAiImage: (msg: ChatMsg) => void;
   onSwitchCandidate: (msgId: string, direction: -1 | 1) => void;
   onDeleteCandidate: (msgId: string) => void;
+  immersive?: {
+    enabled: boolean;
+    context: ImmersiveCastContext;
+    memory: ImmersiveMemoryFacts;
+    onPickMove: (text: string) => void;
+  } | null;
 }
 
 export const TavernMessageItem: React.FC<TavernMessageItemProps> = React.memo(({
@@ -104,7 +112,13 @@ export const TavernMessageItem: React.FC<TavernMessageItemProps> = React.memo(({
   onGenerateAiImage,
   onSwitchCandidate,
   onDeleteCandidate,
+  immersive = null,
 }) => {
+  const immersiveView = !isUser
+    ? parseImmersiveStory(msg.content, immersive?.context || { protagonist: messageSpeaker.name, playerName: '', cardText: '' })
+    : null;
+  const showImmersive = Boolean(immersive?.enabled && immersiveView?.structured);
+  const visibleText = immersiveView && msg.content.includes('<<<YCY_IMMERSIVE') ? immersiveView.body : msg.content;
   const isLocalGeneratedImage = msg.flashImage?.kind === 'generated';
   const isAiGeneratedImage = msg.flashImage?.kind === 'ai';
   const isPersistentImage = isLocalGeneratedImage || isAiGeneratedImage;
@@ -129,8 +143,10 @@ export const TavernMessageItem: React.FC<TavernMessageItemProps> = React.memo(({
           event.preventDefault();
           onContextMenu(event, msg);
         }}
-        className={`max-w-[85%] rounded-2xl p-3 text-xs leading-relaxed space-y-2 relative ${
-          isUser
+        className={`${showImmersive ? 'w-full max-w-[92%] border border-rose-300/40 bg-[#3a1020] text-rose-50' : 'max-w-[85%]'} min-w-0 rounded-2xl p-3 text-xs leading-relaxed space-y-2 relative ${
+          showImmersive
+            ? 'shadow-md'
+            : isUser
             ? msg.isOOC
               ? 'bg-slate-100/95 text-slate-700 border border-slate-300/80 italic shadow-sm'
               : 'liquid-bubble-user shadow-md'
@@ -170,13 +186,15 @@ export const TavernMessageItem: React.FC<TavernMessageItemProps> = React.memo(({
           </div>
         )}
 
-        {msg.content ? (
+        {showImmersive && immersiveView && immersive ? (
+          <ImmersiveStoryCard view={immersiveView} memory={immersive.memory} onPickMove={immersive.onPickMove} />
+        ) : msg.content ? (
           <p
             className="whitespace-pre-wrap font-sans"
             style={{ fontSize, lineHeight: 1.6 }}
           >
             <TavernMessageContent
-              content={msg.content}
+              content={visibleText}
               searchQuery={searchQuery}
               enabled={narrativeHighlight}
               isUser={isUser && !msg.isOOC}
@@ -279,8 +297,8 @@ export const TavernMessageItem: React.FC<TavernMessageItemProps> = React.memo(({
                 <RotateCcw className="h-3 w-3" />
                 <span>帮我想想</span>
               </button>
-              <button onClick={() => void onCopyMessage(msg.content)} aria-label="复制回复" title="复制回复" className="rounded-full p-1.5 hover:bg-pink-50 hover:text-pink-600 transition-colors"><Copy className="h-3.5 w-3.5" /></button>
-              <button onClick={() => onSpeak(msg.content, msg.speakerCardId)} aria-label="朗读回复" title="朗读回复" className="rounded-full p-1.5 hover:bg-pink-50 hover:text-pink-600 transition-colors"><Volume2 className="h-3.5 w-3.5" /></button>
+              <button onClick={() => void onCopyMessage(visibleText)} aria-label="复制回复" title="复制回复" className="rounded-full p-1.5 hover:bg-pink-50 hover:text-pink-600 transition-colors"><Copy className="h-3.5 w-3.5" /></button>
+              <button onClick={() => onSpeak(visibleText, msg.speakerCardId)} aria-label="朗读回复" title="朗读回复" className="rounded-full p-1.5 hover:bg-pink-50 hover:text-pink-600 transition-colors"><Volume2 className="h-3.5 w-3.5" /></button>
               <button onClick={() => onSaveCheckpoint(msg)} aria-label="保存消息检查点" title="保存到这条回复并创建分支检查点" className="rounded-full p-1.5 hover:bg-pink-50 hover:text-pink-600 transition-colors"><GitBranch className="h-3.5 w-3.5" /></button>
               <button
                 onClick={() => void onGenerateAiImage(msg)}
