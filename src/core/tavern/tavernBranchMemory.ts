@@ -20,6 +20,8 @@ export interface BranchSessionMemory {
   staleSummary: string;
   recallEnabled: boolean;
   blockedMessageIds: string[];
+  /** 沉浸剧情只影响展示和这一条会话的文本格式，默认关闭。 */
+  immersiveStory?: boolean;
   updatedAt?: number;
   enabled: boolean;
   autoSummarize: boolean;
@@ -35,6 +37,7 @@ export interface ArchiveBranchMemory {
   summaryValid: boolean;
   recallEnabled: boolean;
   blockedMessageIds: string[];
+  immersiveStory?: boolean;
 }
 
 export interface TavernBranchLibrary {
@@ -109,6 +112,7 @@ const normalizeSession = (value: unknown, fallbackId: string): BranchSessionMemo
     enabled: base.enabled,
     autoSummarize: base.autoSummarize,
     autoEveryMessages: base.autoEveryMessages,
+    ...(raw.immersiveStory === true ? { immersiveStory: true } : {}),
   });
 };
 
@@ -267,6 +271,7 @@ export const forkBranchSession = (
     autoEveryMessages: current.autoEveryMessages,
     recallEnabled: current.recallEnabled,
     blockedMessageIds: current.blockedMessageIds,
+    ...(current.immersiveStory === true ? { immersiveStory: true } : {}),
     summary: current.summaryValid ? current.summary : '',
     previousSummary: current.summaryValid ? current.previousSummary : '',
     summarizedThroughMessageId: current.summaryValid ? current.summarizedThroughMessageId : undefined,
@@ -290,6 +295,7 @@ export const archiveBranchSnapshot = (
     summaryValid: true,
     recallEnabled: session.recallEnabled,
     blockedMessageIds: session.blockedMessageIds,
+    ...(session.immersiveStory === true ? { immersiveStory: true } : {}),
   };
 };
 
@@ -305,6 +311,7 @@ export const normalizeArchiveBranchMemory = (value: unknown): ArchiveBranchMemor
     summaryValid: session.summaryValid,
     recallEnabled: session.recallEnabled,
     blockedMessageIds: session.blockedMessageIds,
+    ...(session.immersiveStory === true ? { immersiveStory: true } : {}),
   };
 };
 
@@ -322,6 +329,7 @@ export const restoreBranchSnapshot = (
     summaryValid: snapshot.summaryValid,
     recallEnabled: snapshot.recallEnabled,
     blockedMessageIds: snapshot.blockedMessageIds,
+    ...(snapshot.immersiveStory === true ? { immersiveStory: true } : {}),
   } : { summary: '', summaryValid: true });
   const reconciled = reconcileBranchSession(restored, messages);
   return withActiveSession(library, reconciled);
@@ -344,6 +352,14 @@ export const mergeImportedBranchLibrary = (
       ...imported.sessions.filter((session) => !known.has(session.sessionId)),
     ].slice(0, 40),
   };
+};
+
+export const setActiveSessionImmersive = (library: TavernBranchLibrary, enabled: boolean): TavernBranchLibrary => {
+  const current = activeBranchSession(library);
+  const session = enabled
+    ? { ...current, immersiveStory: true }
+    : { ...current, immersiveStory: undefined };
+  return withActiveSession(library, session);
 };
 
 export const adoptUnplacedSummary = (library: TavernBranchLibrary): TavernBranchLibrary => {

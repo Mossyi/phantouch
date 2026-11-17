@@ -103,9 +103,19 @@ import {
   replaceActiveBranchMemory,
   restoreBranchSnapshot,
   saveBranchLibrary,
+  setActiveSessionImmersive,
   startFreshBranchSession,
+  activeBranchSession,
   type TavernBranchLibrary,
 } from '../../core/tavern/tavernBranchMemory';
+import {
+  buildImmersiveStoryPrompt,
+  finalizeImmersiveReply,
+  immersiveCardText,
+  immersiveStreamingText,
+  readImmersiveMemoryFacts,
+  type ImmersiveCastContext,
+} from '../../core/tavern/immersiveStory';
 import {
   buildTavernAuthorNoteContext,
   injectTavernAuthorNote,
@@ -434,6 +444,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const [isVoiceProcessing, setIsVoiceProcessing] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [isOOCMode, setIsOOCMode] = useState(false);
+  const [immersiveStory, setImmersiveStory] = useState(false);
   const [isSeseBoosted, setIsSeseBoosted] = useState(false); // 🔥 狂暴瑟瑟增强模式
   const [isLoading, setIsLoading] = useState(false);
   // 语音通话
@@ -761,6 +772,25 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     .map((id) => availableCards.find((card) => card.id === id))
     .filter((card): card is TavernCharacterCard => Boolean(card));
   const isGroupScene = groupParticipants.length > 1;
+  const immersiveMemory = useMemo(() => readImmersiveMemoryFacts(messages, memoryState), [messages, memoryState]);
+  const immersiveCast = useMemo(() => ({
+    protagonist: activeCard.name,
+    playerName: store.getTavernModelConfig().userName || '旅人',
+    cardText: immersiveCardText(activeCard),
+  }), [activeCard]);
+  const fillImmersiveMove = (text: string) => {
+    setInput(text);
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+      const end = inputRef.current?.value.length ?? text.length;
+      inputRef.current?.setSelectionRange(end, end);
+    }, 0);
+  };
+  const toggleImmersiveStory = () => {
+    const library = branchLibraryRef.current;
+    if (!library) return;
+    commitLibrary(setActiveSessionImmersive(library, activeBranchSession(library).immersiveStory !== true), false);
+  };
   const memoryContext = useMemo(() => {
     const summary = buildTavernMemoryContext(memoryState);
     const latestUser = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
@@ -871,6 +901,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const loadedMessages = store.getSession(activeCard.id) || [];
     const nextLibrary = reconcileBranchLibrary(loadBranchLibrary(activeCard.id, store.getMemory(activeCard.id), loadedMessages), loadedMessages);
     branchLibraryRef.current = nextLibrary;
+    setImmersiveStory(activeBranchSession(nextLibrary).immersiveStory === true);
     saveBranchLibrary(activeCard.id, nextLibrary);
     const nextMemory = projectBranchMemory(nextLibrary);
     setMemoryState(nextMemory);
@@ -1257,6 +1288,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       return null;
     }
     branchLibraryRef.current = reconciled;
+    setImmersiveStory(activeBranchSession(reconciled).immersiveStory === true);
     const saved = projectBranchMemory(reconciled);
     setMemoryState(saved);
     if (updateDraft) setMemoryDraft(saved);
@@ -1651,7 +1683,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     signal: AbortSignal,
     promptOverride?: string | null,
     continuationGuidance?: string | null,
-    extras?: { systemAddon?: string; onRawReply?: (rawReply: string) => void },
+    extras?: { systemAddon?: string; onRawReply?: (rawReply: string) => void; immersive?: ImmersiveCastContext | null },
   ): Promise<string> => {
     const tavernModelConfig = store.getTavernModelConfig();
     const currentGenerationConfig = store.getGenerationConfig();
@@ -1667,7 +1699,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       combinedScenePrompt,
       promptOverride,
     ).prompt;
-    const systemPrompt = [baseScenePrompt, extras?.systemAddon].filter(Boolean).join('\n\n');
+    const systemPrompt = [baseScenePrompt, extras?.systemAddon, extras?.immersive ? buildImmersiveStoryPrompt(speaker.name) : ''].filter(Boolean).join('\n\n');
     if (tavernModelConfig.provider === 'dzmm') {
       const requestHistory = buildBudgetedHistory(transformedHistory, [
         systemPrompt,
@@ -1697,7 +1729,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       const speakerPrefixRegex = new RegExp(`^(?:\\{\\{char\\}\\}|${speaker.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|角色|AI|Assistant)\\s*[:：]\\s*`, 'i');
       let strippedReply = stripThinkingArtifacts(reply, false).replace(speakerPrefixRegex, '').trim();
       extras?.onRawReply?.(strippedReply);
-      return applyTavernTextRules(sanitizeTavernVisibleContent(strippedReply, false, lastUserMsg), textRules, 'assistant_output').text;
+      const visible = applyTavernTextRules(sanitizeTavernVisibleContent(strippedReply, false, lastUserMsg), textRules, 'assistant_output').text;
+      return extras?.immersive ? finalizeImmersiveReply(visible, extras.immersive) : visible;
     }
 
     const useCustomModel = tavernModelConfig.provider === 'custom';
@@ -1732,7 +1765,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const speakerPrefixRegex = new RegExp(`^(?:\\{\\{char\\}\\}|${speaker.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|角色|AI|Assistant)\\s*[:：]\\s*`, 'i');
     let strippedReply = stripThinkingArtifacts(result.reply, false).replace(speakerPrefixRegex, '').trim();
     extras?.onRawReply?.(strippedReply);
-    return applyTavernTextRules(sanitizeTavernVisibleContent(strippedReply, false, lastUserMsg), textRules, 'assistant_output').text;
+    const visible = applyTavernTextRules(sanitizeTavernVisibleContent(strippedReply, false, lastUserMsg), textRules, 'assistant_output').text;
+    return extras?.immersive ? finalizeImmersiveReply(visible, extras.immersive) : visible;
   };
 
   const appendSafeSceneReplies = async (history: ChatMsg[], speakers: TavernCharacterCard[], promptOverride?: string | null) => {
@@ -1838,6 +1872,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const isLatestReply = !messages.slice(targetIndex + 1).some((candidate) => candidate.role === 'assistant');
     const rpgBefore = rpgEnabled && !isGroupScene && isLatestReply && rpgStateRef.current ? restoreSnapshot(rpgStateRef.current, message.id) : null;
     try {
+      const immersiveExtra = immersiveStory && !isGroupScene ? {
+        protagonist: speaker.name,
+        playerName: store.getTavernModelConfig().userName || '旅人',
+        cardText: immersiveCardText(speaker),
+      } : null;
       const reply = (await generateSafeSceneReply(
         speaker,
         messages.slice(0, targetIndex),
@@ -1845,11 +1884,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         controller.signal,
         undefined,
         undefined,
-        rpgBefore ? {
-          systemAddon: buildRpgPrompt(rpgBefore, rpgNames()),
-          onRawReply: (rawReply) => {
+        rpgBefore || immersiveExtra ? {
+          systemAddon: rpgBefore ? buildRpgPrompt(rpgBefore, rpgNames()) : undefined,
+          immersive: immersiveExtra,
+          onRawReply: rpgBefore ? (rawReply) => {
             if (!controller.signal.aborted && acceptRpgWrite(requestCardId, activeCardIdRef.current)) commitRpgTurn(rpgBefore, rawReply, message.id);
-          },
+          } : undefined,
         } : undefined,
       )).trim();
       if (controller.signal.aborted || !reply) return;
@@ -2588,7 +2628,13 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         setLorebookToast(`📚 剧情世界书：${sharedLorebookMatches.slice(0, 4).map((match) => match.entry.name || match.entry.keywords[0]).join('、')}`);
         setTimeout(() => setLorebookToast(null), 3000);
       }
-      if (!isOOC && activeCard.hardwareEnchanted) {
+      const useImmersiveStory = immersiveStory && !isOOC;
+      const immersiveContext: ImmersiveCastContext | null = useImmersiveStory ? {
+        protagonist: activeCard.name,
+        playerName: userName,
+        cardText: immersiveCardText(activeCard),
+      } : null;
+      if (!isOOC && activeCard.hardwareEnchanted && !useImmersiveStory) {
         const { matchedEntries, actionEntries, deferredActionEntries, injectedContext } = lorebookEngine.processText(rawText, 'user');
         deferredUserActions = deferredActionEntries;
         roundEmergencyStopped = actionEntries.some((entry) => entry.hardwareAction?.type === 'brake_stop');
@@ -2603,6 +2649,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       // DZMM 不支持本地 function calling，才使用隐藏标记协议；其他通道只走原生工具，避免重复执行。
       const aiActionRequest = !isOOC
         && activeCard.hardwareEnchanted
+        && !useImmersiveStory
         && !roundEmergencyStopped
         && tavernModelConfig.provider === 'dzmm'
         ? lorebookEngine.createAiActionRequest([
@@ -2643,9 +2690,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       const continuationGuidance = isContinueInstruction && lastAssistantMsg
         ? buildContinuationInstruction(lastAssistantMsg.content)
         : '';
-      const effectiveFullSystemPrompt = continuationGuidance
-        ? `${fullSystemPrompt}\n\n${continuationGuidance}`
-        : fullSystemPrompt;
+      const effectiveFullSystemPrompt = [
+        fullSystemPrompt,
+        continuationGuidance,
+        immersiveContext ? buildImmersiveStoryPrompt(activeCard.name) : '',
+      ].filter(Boolean).join('\n\n');
 
       requestController = new AbortController();
       requestControllerRef.current?.abort();
@@ -2675,9 +2724,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         const dzmmBaseSystemPrompt = promptOverride
           ? fullSystemPrompt
           : [dzmmAutomaticPrompt, lorebookInjected, aiActionRequest?.instruction, voiceCallActiveRef.current ? PHONE_CALL_PROMPT : '', rpgPrompt].filter(Boolean).join('\n\n');
-        const dzmmSystemPrompt = continuationGuidance
-          ? `${dzmmBaseSystemPrompt}\n\n${continuationGuidance}`
-          : dzmmBaseSystemPrompt;
+        const dzmmSystemPrompt = [
+          dzmmBaseSystemPrompt,
+          continuationGuidance,
+          immersiveContext ? buildImmersiveStoryPrompt(activeCard.name) : '',
+        ].filter(Boolean).join('\n\n');
         const requestMessages = buildBudgetedHistory(transformedMessages, [
           dzmmSystemPrompt,
           activeCard.description,
@@ -2710,8 +2761,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               currentTextRules,
               'assistant_output',
             ).text;
-            throttledUpdateStreamingReply(visibleText);
-            voiceTurnRef.current?.hooks.onVisibleText(visibleText);
+            const streamed = immersiveContext ? immersiveStreamingText(visibleText) : visibleText;
+            throttledUpdateStreamingReply(streamed);
+            voiceTurnRef.current?.hooks.onVisibleText(streamed);
           },
         });
       } else {
@@ -2730,7 +2782,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           temperature: currentGenerationConfig.temperature,
           selectedPersonaId: 'custom',
         }, {
-          hardwareToolsEnabled: activeCard.hardwareEnchanted,
+          hardwareToolsEnabled: activeCard.hardwareEnchanted && !useImmersiveStory,
           generation: {
             topP: currentGenerationConfig.topP,
             maxTokens: currentGenerationConfig.maxTokens,
@@ -2759,8 +2811,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
               currentTextRules,
               'assistant_output',
             ).text;
-            throttledUpdateStreamingReply(visibleText);
-            voiceTurnRef.current?.hooks.onVisibleText(visibleText);
+            const streamed = immersiveContext ? immersiveStreamingText(visibleText) : visibleText;
+            throttledUpdateStreamingReply(streamed);
+            voiceTurnRef.current?.hooks.onVisibleText(streamed);
           },
         );
         reply = result.reply;
@@ -2777,7 +2830,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         commitRpgTurn(rpgStateRef.current, rawModelReply, assistantMessageId);
       }
       reply = sanitizeTavernVisibleContent(rawModelReply, false, rawText);
-      if (!isOOC && activeCard.hardwareEnchanted) {
+      if (!isOOC && activeCard.hardwareEnchanted && !useImmersiveStory) {
         const assistantLorebook = lorebookEngine.processText(reply, 'assistant');
         const assistantEmergencyStop = assistantLorebook.actionEntries.some(
           (entry) => entry.hardwareAction?.type === 'brake_stop',
@@ -2806,6 +2859,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       // 0. 清理模型可能在回复开头附带的角色姓名或令牌前缀（如 “莉莉丝：” 或 “{{char}}：”）
       const namePrefixRegex = new RegExp(`^(?:\\{\\{char\\}\\}|${activeCard.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|角色|AI|Assistant)\\s*[:：]\\s*`, 'i');
       reply = reply.replace(namePrefixRegex, '').trim();
+      if (immersiveContext) reply = finalizeImmersiveReply(reply, immersiveContext);
 
       // 1. 消除新回复开头复读上一条回复末尾内容的复读现象（无论是否发送了“继续”）
       if (lastAssistantMsg?.content) {
@@ -2863,7 +2917,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
 
       const deducedEmotion = deduceTavernEmotion({
         text: reply,
-        hasActivePulse: !roundEmergencyStopped && activeCard.hardwareEnchanted,
+        hasActivePulse: !useImmersiveStory && !roundEmergencyStopped && activeCard.hardwareEnchanted,
       });
 
       const completedMessages: ChatMsg[] = [
@@ -2885,9 +2939,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       // 5. 完整朗读回复。不能只抽取引号，否则前置叙述会被错误跳过。
       if (voiceTurnRef.current) {
         // 通话中由通话会话逐句朗读，这里只把最终回复交回去
-        voiceTurnRef.current.reply = reply;
+        voiceTurnRef.current.reply = immersiveContext ? immersiveStreamingText(reply) : reply;
       } else {
-        autoSpeakTavernReplies([{ text: reply, speaker: activeCard }]);
+        autoSpeakTavernReplies([{ text: immersiveContext ? immersiveStreamingText(reply) : reply, speaker: activeCard }]);
       }
     } catch (e: any) {
       if (e?.name === 'AbortError') {
@@ -3927,6 +3981,12 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
                 onGenerateAiImage={(m) => void generateAiImageForMessage(m)}
                 onSwitchCandidate={switchAssistantCandidate}
                 onDeleteCandidate={deleteAssistantCandidate}
+                immersive={immersiveStory ? {
+                  enabled: true,
+                  context: immersiveCast,
+                  memory: immersiveMemory,
+                  onPickMove: fillImmersiveMove,
+                } : null}
               />
             );
           })}
@@ -3999,6 +4059,15 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
             </div>
           )}
 
+          <button
+            type="button"
+            aria-pressed={immersiveStory}
+            onClick={toggleImmersiveStory}
+            className={`w-full rounded-xl border px-3 py-1.5 text-left text-[11px] font-bold shadow-xs ${immersiveStory ? 'border-rose-300 bg-[#4a1028]/90 text-rose-50' : 'border-white/80 bg-white/90 text-slate-600'}`}
+          >
+            沉浸剧情
+            <span className={`ml-2 text-[9px] font-semibold uppercase tracking-[0.14em] ${immersiveStory ? 'text-amber-200' : 'text-slate-400'}`}>{immersiveStory ? 'ON' : 'OFF'}</span>
+          </button>
           <div className="flex min-w-0 items-center gap-2">
             <input
               ref={imageInputRef}
