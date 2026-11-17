@@ -1,5 +1,6 @@
 import { TavernCharacterCard } from './tavernTypes';
 import { fetchTextWithTimeout } from '../httpClient';
+import { penaltyKeysToDrop, samplingPenaltyFields } from '../ai/llmRequestPenalties';
 import { sanitizeTavernVisibleContent } from './tavernTextSanitizer';
 
 export const DZMM_API_SETTINGS_URL = 'https://www.dzmm.ai/settings/api';
@@ -111,8 +112,10 @@ export class DZMMApiClient {
       max_tokens: Math.min(8_192, Math.max(128, Math.round(Number(options.maxTokens) || 3_000))),
       temperature: Math.min(2, Math.max(0, Number.isFinite(Number(options.temperature)) ? Number(options.temperature) : 0.8)),
       top_p: Math.min(1, Math.max(0.05, Number.isFinite(Number(options.topP)) ? Number(options.topP) : 0.9)),
-      ...(options.frequencyPenalty !== undefined ? { frequency_penalty: options.frequencyPenalty } : {}),
-      ...(options.presencePenalty !== undefined ? { presence_penalty: options.presencePenalty } : {}),
+      ...samplingPenaltyFields({
+        frequencyPenalty: options.frequencyPenalty,
+        presencePenalty: options.presencePenalty,
+      }),
     };
 
     const controller = new AbortController();
@@ -169,11 +172,52 @@ export class DZMMApiClient {
       return text + decoder.decode();
     };
 
+    let firstErrorDetail: string | null = null;
     if (!response.ok) {
       let detail = '';
       try {
-        detail = (await readBoundedBody(100_000)).slice(0, 500);
-      } finally {
+        detail = (await readBoundedBody(100_000)).slice(0, 4_000);
+      } catch {
+        detail = '';
+      }
+      const rejected = penaltyKeysToDrop(
+        response.status,
+        detail,
+        Object.keys(requestBody).filter((key) => key === 'frequency_penalty' || key === 'presence_penalty'),
+        false,
+      );
+      if (rejected.length > 0) {
+        for (const key of rejected) delete requestBody[key];
+        try {
+          response = await fetch(`${DZMM_CARD_CHAT_BASE_URL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'text/event-stream, application/json',
+              Authorization: `Bearer ${apiToken}`,
+            },
+            body: JSON.stringify(requestBody),
+            signal: controller.signal,
+          });
+        } catch (error) {
+          cleanup();
+          if (timedOut) throw new Error('DZMM 请求超过 90 秒');
+          throw error;
+        }
+      } else {
+        firstErrorDetail = detail.slice(0, 500);
+      }
+    }
+
+    if (!response.ok) {
+      let detail = firstErrorDetail ?? '';
+      if (firstErrorDetail === null) {
+        try {
+          detail = (await readBoundedBody(100_000)).slice(0, 500);
+        } finally {
+          cleanup();
+        }
+      } else {
         cleanup();
       }
       let sanitizedDetail = detail;
