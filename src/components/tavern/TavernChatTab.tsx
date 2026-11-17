@@ -1870,6 +1870,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           };
         });
         void store.saveSessionAsync(activeCard.id, next);
+        noteMemorySourcesChanged(next);
         return next;
       });
       autoSpeakTavernReplies([{ text: reply, speaker }]);
@@ -1930,6 +1931,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           };
         });
         void store.saveSessionAsync(activeCard.id, next);
+        noteMemorySourcesChanged(next);
         return next;
       });
 
