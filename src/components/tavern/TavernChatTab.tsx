@@ -89,6 +89,23 @@ import {
   TavernMemoryState,
 } from '../../core/tavern/tavernMemory';
 import {
+  acceptMemorySummaryWrite,
+  adoptUnplacedSummary,
+  archiveBranchSnapshot,
+  forkBranchSession,
+  loadBranchLibrary,
+  normalizeBranchLibrary,
+  memorySourceFingerprint,
+  projectBranchMemory,
+  recallTavernHistory,
+  reconcileBranchLibrary,
+  replaceActiveBranchMemory,
+  restoreBranchSnapshot,
+  saveBranchLibrary,
+  startFreshBranchSession,
+  type TavernBranchLibrary,
+} from '../../core/tavern/tavernBranchMemory';
+import {
   buildTavernAuthorNoteContext,
   injectTavernAuthorNote,
   TAVERN_AUTHOR_NOTE_MAX_DEPTH,
@@ -619,6 +636,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     setMessages((current) => {
       const next = current.filter((m) => m.id !== messageId);
       void store.saveSessionAsync(activeCard.id, next);
+      noteMemorySourcesChanged(next);
       return next;
     });
     showFeatureNotice('消息已删除');
@@ -703,6 +721,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const aiImageControllerRef = useRef<AbortController | null>(null);
   const debugTestControllerRef = useRef<AbortController | null>(null);
   const memorySummaryControllerRef = useRef<AbortController | null>(null);
+  const branchLibraryRef = useRef<TavernBranchLibrary | null>(null);
+  const memoryEpochRef = useRef(0);
+  const messagesRef = useRef<ChatMsg[]>([]);
+  messagesRef.current = messages;
   const streamingReplyRef = useRef('');
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -738,7 +760,17 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     .map((id) => availableCards.find((card) => card.id === id))
     .filter((card): card is TavernCharacterCard => Boolean(card));
   const isGroupScene = groupParticipants.length > 1;
-  const memoryContext = useMemo(() => buildTavernMemoryContext(memoryState), [memoryState]);
+  const memoryContext = useMemo(() => {
+    const summary = buildTavernMemoryContext(memoryState);
+    const latestUser = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
+    const recentIds = messages.slice(-8).map((message) => message.id);
+    const recall = recallTavernHistory(messages, latestUser, {
+      enabled: memoryState.recallEnabled !== false && memoryState.enabled !== false,
+      blockedMessageIds: memoryState.blockedMessageIds,
+      excludeMessageIds: recentIds,
+    });
+    return [summary, recall.context].filter(Boolean).join('\n\n');
+  }, [memoryState, messages]);
   const contextEstimateStats = useMemo(() => {
     if (!showMemoryModal) {
       return {
@@ -803,6 +835,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     suggestionControllerRef.current?.abort();
     aiImageControllerRef.current?.abort();
     memorySummaryControllerRef.current?.abort();
+    memoryEpochRef.current += 1;
     requestControllerRef.current = null;
     streamingReplyRef.current = '';
     setStreamingReply('');
@@ -834,7 +867,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       if (activeCardIdRef.current !== activeCard.id) return;
       setArchives((current) => current === initialArchives ? repositoryArchives : current);
     });
-    const nextMemory = store.getMemory(activeCard.id);
+    const loadedMessages = store.getSession(activeCard.id) || [];
+    const nextLibrary = reconcileBranchLibrary(loadBranchLibrary(activeCard.id, store.getMemory(activeCard.id), loadedMessages), loadedMessages);
+    branchLibraryRef.current = nextLibrary;
+    saveBranchLibrary(activeCard.id, nextLibrary);
+    const nextMemory = projectBranchMemory(nextLibrary);
     setMemoryState(nextMemory);
     setMemoryDraft(nextMemory);
     setMemorySummaryLoading(false);
@@ -1207,15 +1244,35 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     store.saveGroupScene(activeCard.id, next);
   };
 
-  const persistMemory = (value: unknown, updateDraft = true): TavernMemoryState | null => {
-    const saved = store.saveMemory(activeCard.id, value);
-    if (!saved) {
+  const bumpMemoryEpoch = () => {
+    memoryEpochRef.current += 1;
+    memorySummaryControllerRef.current?.abort();
+  };
+
+  const commitLibrary = (library: TavernBranchLibrary, updateDraft = true): TavernMemoryState | null => {
+    const reconciled = reconcileBranchLibrary(library, messagesRef.current);
+    if (!saveBranchLibrary(activeCard.id, reconciled)) {
       setMemorySummaryError('长期记忆保存失败，本地空间可能不足。');
       return null;
     }
+    branchLibraryRef.current = reconciled;
+    const saved = projectBranchMemory(reconciled);
     setMemoryState(saved);
     if (updateDraft) setMemoryDraft(saved);
     return saved;
+  };
+
+  const persistMemory = (value: unknown, updateDraft = true): TavernMemoryState | null => {
+    const library = branchLibraryRef.current || loadBranchLibrary(activeCard.id, store.getMemory(activeCard.id), messagesRef.current);
+    return commitLibrary(replaceActiveBranchMemory(library, normalizeTavernMemoryState(value)), updateDraft);
+  };
+
+  const noteMemorySourcesChanged = (history: ChatMsg[]) => {
+    messagesRef.current = history;
+    bumpMemoryEpoch();
+    const library = branchLibraryRef.current;
+    if (!library) return;
+    commitLibrary(library, false);
   };
 
   const openMemoryManager = () => {
@@ -1262,6 +1319,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     setMemorySummaryLoading(true);
     setMemorySummaryError('');
     const requestCardId = activeCard.id;
+    const requestSessionId = branchLibraryRef.current?.activeSessionId || normalized.sessionId || '';
+    const requestEpoch = memoryEpochRef.current;
+    const requestFingerprint = memorySourceFingerprint(history, request.throughMessageId);
     try {
       const tavernModelConfig = store.getTavernModelConfig();
       const summarySystemPrompt = [
@@ -1298,10 +1358,26 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         }], [], summarySystemPrompt, controller.signal);
         reply = result.reply;
       }
-      if (controller.signal.aborted || activeCardIdRef.current !== requestCardId) return false;
+      const currentFingerprint = memorySourceFingerprint(messagesRef.current, request.throughMessageId);
+      if (!branchLibraryRef.current || !acceptMemorySummaryWrite({
+        cardId: requestCardId,
+        sessionId: requestSessionId,
+        epoch: requestEpoch,
+        fingerprint: requestFingerprint,
+        throughMessageId: request.throughMessageId,
+        aborted: controller.signal.aborted || activeCardIdRef.current !== requestCardId,
+      }, {
+        cardId: activeCardIdRef.current,
+        sessionId: branchLibraryRef.current?.activeSessionId || '',
+        epoch: memoryEpochRef.current,
+        fingerprint: currentFingerprint,
+        messageIds: messagesRef.current.map((message) => message.id),
+      })) return false;
       const cleanSummary = stripThinkingArtifacts(reply, false).trim().replace(/^```(?:text|markdown)?\s*/i, '').replace(/\s*```$/, '').trim();
-      const latestMemory = store.getMemory(activeCard.id);
+      const latestMemory = projectBranchMemory(branchLibraryRef.current);
       const next = applyTavernMemorySummary(latestMemory, cleanSummary, request.throughMessageId, normalized.summary);
+      next.summaryFingerprint = requestFingerprint || undefined;
+      next.summaryValid = undefined;
       if (!next.summary || !persistMemory(next)) throw new Error('模型没有返回可保存的摘要');
       if (silent) showFeatureNotice('长期记忆已自动更新');
       return true;
@@ -1319,7 +1395,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   };
 
   const maybeAutoUpdateMemory = (history: ChatMsg[]) => {
-    const latest = store.getMemory(activeCard.id);
+    const latest = branchLibraryRef.current ? projectBranchMemory(branchLibraryRef.current) : store.getMemory(activeCard.id);
     if (!memorySummaryControllerRef.current && shouldAutoSummarizeTavernMemory(history, latest)) {
       void runMemorySummary(history, latest, true);
     }
@@ -1884,6 +1960,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         return { ...message, content: nextContent, activeCandidateIndex: nextIndex, flashImage: undefined, emotion: nextEmotion };
       });
       void store.saveSessionAsync(activeCard.id, updated);
+      noteMemorySourcesChanged(updated);
       return updated;
     });
   };
@@ -1916,6 +1993,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
         };
       });
       void store.saveSessionAsync(activeCard.id, updated);
+      noteMemorySourcesChanged(updated);
       return updated;
     });
     showFeatureNotice('已移除当前候选回复');
@@ -1993,6 +2071,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
           };
         });
         void store.saveSessionAsync(activeCard.id, next);
+        noteMemorySourcesChanged(next);
         return next;
       });
       setEditingMessage(null);
@@ -2004,6 +2083,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     const revisedUser = { ...messages[messageIndex], content: messages[messageIndex].isOOC ? `(OOC: ${edited.replace(/^\(OOC:\s*|\)$/g, '')})` : edited };
     const baseHistory = [...messages.slice(0, messageIndex), revisedUser];
     setMessages(baseHistory);
+    messagesRef.current = baseHistory;
+    if (branchLibraryRef.current) commitLibrary(forkBranchSession(branchLibraryRef.current, baseHistory));
     void store.saveSessionAsync(activeCard.id, baseHistory);
     setEditingMessage(null);
     const oldSpeakers = messages.slice(messageIndex + 1)
@@ -3196,7 +3277,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       messages,
       kind,
       `${prefix} · ${latestUserText.replace(/\s+/g, ' ').slice(0, 30)}`,
-      { parentArchiveId: activeArchiveId || undefined },
+      {
+        parentArchiveId: activeArchiveId || undefined,
+        branchMemory: branchLibraryRef.current ? archiveBranchSnapshot(branchLibraryRef.current, messages) : undefined,
+      },
     );
     setShowActionMenu(false);
     if (!archive) {
@@ -3221,6 +3305,9 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       showFeatureNotice('自动存档失败，已保留当前对话，请先导出会话库');
       return;
     }
+    bumpMemoryEpoch();
+    messagesRef.current = [];
+    if (branchLibraryRef.current) commitLibrary(startFreshBranchSession(branchLibraryRef.current));
     store.clearSession(activeCard.id);
     const userName = store.getTavernModelConfig().userName || '旅人';
     const initialGreeting = buildInitialGreetingMessage(activeCard, userName);
@@ -3236,7 +3323,10 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
 
   const createConversationBranch = () => {
     if (messages.length === 0) return;
-    void saveArchive('branch');
+    void saveArchive('branch').then((archive) => {
+      if (!archive || !branchLibraryRef.current) return;
+      commitLibrary(forkBranchSession(branchLibraryRef.current, messages));
+    });
   };
 
   const restoreArchive = (archive: TavernChatArchive) => {
@@ -3247,6 +3337,11 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
     requestControllerRef.current = null;
     suggestionControllerRef.current?.abort();
     aiImageControllerRef.current?.abort();
+    messagesRef.current = archive.messages;
+    bumpMemoryEpoch();
+    if (branchLibraryRef.current) {
+      commitLibrary(restoreBranchSnapshot(branchLibraryRef.current, archive.branchMemory, archive.messages));
+    }
     setMessages(archive.messages);
     setAttachedImages([]);
     void store.saveSessionAsync(activeCard.id, archive.messages);
@@ -3264,12 +3359,17 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
   const saveMessageCheckpoint = async (message: ChatMsg) => {
     const messageIndex = messages.findIndex((candidate) => candidate.id === message.id);
     if (messageIndex < 0) return;
+    const checkpointMessages = messages.slice(0, messageIndex + 1);
     const archive = await store.saveChatArchiveAsync(
       activeCard.id,
-      messages.slice(0, messageIndex + 1),
+      checkpointMessages,
       'checkpoint',
       `检查点 · ${message.content.replace(/\s+/g, ' ').slice(0, 34) || '剧情节点'}`,
-      { parentArchiveId: activeArchiveId || undefined, sourceMessageId: message.id },
+      {
+        parentArchiveId: activeArchiveId || undefined,
+        sourceMessageId: message.id,
+        branchMemory: branchLibraryRef.current ? archiveBranchSnapshot(branchLibraryRef.current, checkpointMessages) : undefined,
+      },
     );
     if (!archive) {
       showFeatureNotice('检查点保存失败，本地空间可能不足');
@@ -3304,6 +3404,7 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       card: { id: activeCard.id, name: activeCard.name },
       archives: selectedArchives,
       currentSession: includeCurrentSession ? messages : undefined,
+      branchLibrary: branchLibraryRef.current || undefined,
     };
     const json = JSON.stringify(payload, null, 2);
     const safeName = activeCard.name.replace(/[\\/:*?"<>|]/g, '_') || 'tavern';
@@ -3361,6 +3462,17 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       }
       if (candidates.length === 0) throw new Error('文件中没有可识别的酒馆会话');
       const result = await store.importChatArchivesAsync(activeCard.id, candidates);
+      const importedLibrary = raw && normalizeBranchLibrary(raw.branchLibrary);
+      if (importedLibrary && branchLibraryRef.current) {
+        const local = branchLibraryRef.current;
+        const known = new Set(local.sessions.map((session) => session.sessionId));
+        commitLibrary({
+          ...local,
+          pinnedMemory: local.pinnedMemory || importedLibrary.pinnedMemory,
+          unplacedSummary: local.unplacedSummary || importedLibrary.unplacedSummary,
+          sessions: [...local.sessions, ...importedLibrary.sessions.filter((session) => !known.has(session.sessionId))].slice(0, 40),
+        });
+      }
       await refreshArchives();
       showFeatureNotice(result.imported > 0
         ? `已导入 ${result.imported} 份会话${result.skipped > 0 ? `，跳过 ${result.skipped} 份` : ''}`
@@ -4213,17 +4325,17 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
       )}
 
       {showMemoryModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[10020] flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm">
           <div className="flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-pink-200/90 bg-white/98 backdrop-blur-xl shadow-2xl">
             <div className="flex items-start justify-between border-b border-pink-100 px-4 py-3">
               <div>
                 <h3 className="flex items-center gap-1.5 text-sm font-black text-slate-800"><Brain className="h-4 w-4 text-pink-500" />长期记忆与上下文</h3>
-                <p className="mt-1 text-[9px] text-slate-500">记忆按角色独立保存，自动总结默认关闭。</p>
+                <p className="mt-1 text-[9px] text-slate-500">固定事实跨分支保留。剧情摘要和原文召回只属于当前这条对话。</p>
               </div>
               <button onClick={() => setShowMemoryModal(false)} aria-label="关闭长期记忆" className="rounded-lg border border-pink-100 bg-white p-1.5 text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" data-allow-scroll="true">
               <div className="rounded-2xl border border-pink-100 bg-white/90 p-3 shadow-xs space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-black text-slate-800 flex items-center gap-1">
@@ -4318,7 +4430,8 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
 
               <div>
                 <div className="mb-1 flex items-center justify-between"><label htmlFor="tavern-memory-summary" className="text-[10px] font-black text-slate-800">剧情摘要</label><span className="text-[8px] text-slate-400">{memoryDraft.summary.length}/{TAVERN_MEMORY_SUMMARY_MAX_LENGTH}</span></div>
-                <textarea id="tavern-memory-summary" aria-label="长期记忆剧情摘要" value={memoryDraft.summary} onChange={(event) => setMemoryDraft({ ...memoryDraft, summary: event.target.value.slice(0, TAVERN_MEMORY_SUMMARY_MAX_LENGTH) })} rows={7} placeholder="可手动填写，或使用下方当前模型总结新增剧情。" className="w-full resize-y rounded-2xl border border-pink-100 bg-slate-50/60 p-3 text-[10px] leading-relaxed text-slate-800 outline-none focus:border-pink-300 focus:bg-white" />
+                <textarea id="tavern-memory-summary" aria-label="长期记忆剧情摘要" value={memoryDraft.summary} onChange={(event) => setMemoryDraft({ ...memoryDraft, summary: event.target.value.slice(0, TAVERN_MEMORY_SUMMARY_MAX_LENGTH), summaryValid: undefined, summaryFingerprint: undefined, summarizedThroughMessageId: undefined })} rows={7} placeholder="可手动填写，或使用下方当前模型总结新增剧情。只描述当前分支。" className="w-full resize-y rounded-2xl border border-pink-100 bg-slate-50/60 p-3 text-[10px] leading-relaxed text-slate-800 outline-none focus:border-pink-300 focus:bg-white" />
+                {memoryDraft.summaryValid === false && <p className="mt-1 text-[9px] leading-relaxed text-amber-700">这条摘要对应的原文已经改过或被回档拿掉，所以不会再注入。改完保存后，会当成你手写的当前分支摘要。</p>}
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {memorySummaryLoading ? <button type="button" onClick={() => memorySummaryControllerRef.current?.abort()} className="flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[9px] font-bold text-rose-700"><Square className="h-3 w-3 fill-current" />停止总结</button> : <button type="button" onClick={() => { const saved = persistMemory(memoryDraft); if (saved) void runMemorySummary(messages, saved); }} className="flex items-center gap-1 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 px-3 py-2 text-[9px] font-black text-white shadow-sm active:scale-95"><Sparkles className="h-3 w-3" />AI 更新摘要</button>}
                   <button type="button" onClick={() => { const next = rollbackTavernMemorySummary(memoryDraft); if (next.summary === memoryDraft.summary) setMemorySummaryError('没有可回滚的上一版摘要。'); else persistMemory(next); }} className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[9px] font-bold text-slate-600 hover:bg-slate-50"><RotateCcw className="h-3 w-3" />回滚上一版</button>
@@ -4333,6 +4446,36 @@ export const TavernChatTab: React.FC<Props> = ({ activeCard, onOpenCardWriter })
                 <label className="mt-2 block text-[9px] text-slate-600">每 {memoryDraft.autoEveryMessages} 条新角色回复更新<input aria-label="自动总结消息间隔" type="range" min="6" max="40" step="2" value={memoryDraft.autoEveryMessages} onChange={(event) => setMemoryDraft({ ...memoryDraft, autoEveryMessages: Number(event.target.value) })} className="mt-1 w-full accent-pink-500" /></label>
               </div>
 
+              {memoryDraft.unplacedSummary && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-3">
+                  <p className="text-[10px] font-black text-amber-900">未归属旧摘要</p>
+                  <p className="mt-1 text-[9px] leading-relaxed text-amber-800">这是升级前按角色保存的剧情摘要，来源对不上当前分支，所以不会自动混进来。</p>
+                  <p className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-[9px] text-slate-700" data-allow-scroll="true">{memoryDraft.unplacedSummary}</p>
+                  <button type="button" onClick={() => { if (branchLibraryRef.current) commitLibrary(adoptUnplacedSummary(branchLibraryRef.current)); }} className="mt-2 rounded-xl bg-amber-500 px-3 py-1.5 text-[9px] font-black text-white">接到当前分支</button>
+                </div>
+              )}
+              <div className="rounded-2xl border border-pink-100 bg-white/90 p-3">
+                <label className="flex items-center justify-between text-[10px] font-bold text-slate-800">召回更早的原文<input type="checkbox" checked={memoryDraft.recallEnabled !== false} onChange={(event) => setMemoryDraft({ ...memoryDraft, recallEnabled: event.target.checked })} className="h-4 w-4 accent-pink-500" /></label>
+                <p className="mt-1 text-[8px] leading-relaxed text-slate-500">按字词和中文连续片段找当前分支里更早的原话，不是语义理解。没有重叠就不引用，也不会编造出处。最近几条已经在上下文里的消息不会重复引用。</p>
+                {(() => {
+                  const latestUser = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
+                  const preview = recallTavernHistory(messages, latestUser, {
+                    enabled: memoryDraft.recallEnabled !== false,
+                    blockedMessageIds: memoryDraft.blockedMessageIds,
+                    excludeMessageIds: messages.slice(-8).map((message) => message.id),
+                  });
+                  if (preview.hits.length === 0) return <p className="mt-2 text-[9px] text-slate-400">按当前最后一句，没有可引用的更早原文。</p>;
+                  return <div className="mt-2 space-y-1.5">{preview.hits.map((hit) => (
+                    <div key={hit.messageId} className="rounded-xl border border-pink-100 bg-pink-50/40 p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[8px] font-bold text-slate-500">{hit.role === 'user' ? '玩家' : '角色'} · {hit.messageId}</span>
+                        <button type="button" onClick={() => setMemoryDraft({ ...memoryDraft, blockedMessageIds: [...new Set([...(memoryDraft.blockedMessageIds || []), hit.messageId])] })} className="text-[8px] font-bold text-rose-600">屏蔽</button>
+                      </div>
+                      <p className="mt-1 text-[9px] leading-relaxed text-slate-700">{hit.excerpt}</p>
+                    </div>
+                  ))}</div>;
+                })()}
+              </div>
               {memorySummaryError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50/80 p-2.5 text-[9px] leading-relaxed text-rose-700">{memorySummaryError}</div>}
               <p className="rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-[9px] leading-relaxed text-amber-800">摘要仅保存剧情事实。历史中的硬件描述不会被当作当前动作重放，急停与动作审核仍由 App 安全层决定。</p>
             </div>
