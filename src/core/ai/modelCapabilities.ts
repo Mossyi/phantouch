@@ -1,4 +1,4 @@
-import { isLocalApiBaseUrl, isVolcengineArkPlanApiBaseUrl, parseApiBaseUrl } from '../apiBaseUrl';
+import { buildCustomModelChatUrl, isLocalApiBaseUrl, isPrivateNetworkHost, isVolcengineArkPlanApiBaseUrl, parseCustomModelApiBaseUrl } from '../apiBaseUrl';
 import { fetchTextStreamWithTimeout, fetchTextWithTimeout } from '../httpClient';
 
 export type ModelCapability = 'text' | 'stream' | 'conversation' | 'tools';
@@ -25,11 +25,12 @@ export const parseCapabilityStream = (text: string): string[] => text.split(/\r?
 export async function probeModelCapability(config: Config, capability: ModelCapability, signal?: AbortSignal): Promise<CapabilityResult> {
   const start = performance.now();
   const result = (status: CapabilityResult['status'], message: string): CapabilityResult => ({ capability, status, message, elapsedMs: Math.round(performance.now() - start), checkedAt: Date.now() });
-  const base = parseApiBaseUrl(config.baseUrl);
+  const base = parseCustomModelApiBaseUrl(config.baseUrl);
   if (!base || !config.model.trim()) return result('failed', '请填写有效地址与模型名。');
-  if (!isLocalApiBaseUrl(base) && !config.apiKey.trim()) return result('failed', '请先填写 API Key。');
+  if (!isLocalApiBaseUrl(base) && !isPrivateNetworkHost(new URL(base).hostname) && !config.apiKey.trim()) return result('failed', '请先填写 API Key。');
   const responses = isVolcengineArkPlanApiBaseUrl(base);
-  const url = `${base}/${responses ? 'responses' : 'chat/completions'}`;
+  const url = responses ? `${base}/responses` : buildCustomModelChatUrl(base);
+  if (!url) return result('failed', '请填写有效地址与模型名。');
   const headers = { 'Content-Type': 'application/json', ...(config.apiKey.trim() ? { Authorization: `Bearer ${config.apiKey.trim()}` } : {}) };
   const options = { timeoutMs: 60000, maxBytes: 1000000, timeoutMessage: '检测超过 60 秒，请重试或检查模型服务。' };
   const payload = (messages: Array<{ role: string; content: string }>, extra = {}) => ({ model: config.model.trim(), ...(responses ? { input: messages, max_output_tokens: 1024 } : { messages, max_tokens: 1024 }), ...extra });

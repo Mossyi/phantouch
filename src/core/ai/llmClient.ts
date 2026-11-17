@@ -2,9 +2,10 @@ import { LLMConfig, ChatMessage, ToolActionLog, AIPersona } from '../../types';
 import { LLM_TOOLS } from './toolDefinitions';
 import { getPersonaPrompt } from './personaPrompts';
 import { DeviceManager } from '../deviceManager';
-import { isLocalApiBaseUrl, isVolcengineArkPlanApiBaseUrl, parseApiBaseUrl } from '../apiBaseUrl';
+import { buildCustomModelChatUrl, isLocalApiBaseUrl, isVolcengineArkPlanApiBaseUrl, parseApiBaseUrl, parseCustomModelApiBaseUrl } from '../apiBaseUrl';
 import { normalizeLlmConfig } from '../llmConfig';
 import { fetchTextStreamWithTimeout, fetchTextWithTimeout } from '../httpClient';
+import { penaltyKeysToDrop, samplingPenaltyFields, type PenaltyParameterKey } from './llmRequestPenalties';
 import { stripThinkingArtifacts, deduplicateRepetitiveText } from '../tavern/tavernTextSanitizer';
 
 export interface NormalizedLlmToolCall {
@@ -34,8 +35,12 @@ export const normalizeLlmGenerationOptions = (value: unknown): LlmGenerationOpti
     topP: Number.isFinite(topP) ? Math.min(1, Math.max(0.05, topP)) : 0.9,
     maxTokens: Number.isFinite(maxTokens) ? Math.min(8_192, Math.max(128, Math.round(maxTokens))) : 3_000,
     historyMessages: Number.isFinite(historyMessages) ? Math.min(2_000, Math.max(1, Math.round(historyMessages))) : 200,
-    frequencyPenalty: Number.isFinite(freq) ? Math.min(2, Math.max(-2, freq)) : 0.2,
-    presencePenalty: Number.isFinite(pres) ? Math.min(2, Math.max(-2, pres)) : 0.2,
+    ...(Object.prototype.hasOwnProperty.call(raw, 'frequencyPenalty') && Number.isFinite(freq)
+      ? { frequencyPenalty: Math.min(2, Math.max(-2, freq)) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(raw, 'presencePenalty') && Number.isFinite(pres)
+      ? { presencePenalty: Math.min(2, Math.max(-2, pres)) }
+      : {}),
   };
 };
 
@@ -695,57 +700,67 @@ export class LLMClient {
   }
 
   private async callOpenAICompatibleAPI(messages: any[], signal?: AbortSignal): Promise<CompatibleAssistantMessage | null> {
-    const rawUrl = parseApiBaseUrl(this.config.baseUrl);
-    if (!rawUrl) throw new Error('API 地址无效，必须使用 HTTPS；仅本机 localhost 允许 HTTP');
+    const rawUrl = parseCustomModelApiBaseUrl(this.config.baseUrl);
+    if (!rawUrl) throw new Error('API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
     const useResponsesApi = isVolcengineArkPlanApiBaseUrl(rawUrl);
     const url = useResponsesApi
       ? (rawUrl.endsWith('/responses') ? rawUrl : `${rawUrl}/responses`)
-      : (rawUrl.endsWith('/chat/completions') ? rawUrl : `${rawUrl}/chat/completions`);
+      : buildCustomModelChatUrl(rawUrl);
+    if (!url) throw new Error('API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
 
-    const body = useResponsesApi
-      ? {
-          model: this.config.model || 'doubao-seed-2.1-lite',
-          input: convertChatMessagesToResponsesInput(messages),
-          max_output_tokens: this.generation.maxTokens,
-          ...(this.hardwareToolsEnabled ? { tools: getResponsesTools() } : {}),
-        }
-      : {
-          model: this.config.model || 'deepseek-chat',
-          messages,
-          ...(this.hardwareToolsEnabled ? { tools: LLM_TOOLS } : {}),
-          temperature: normalizeLlmRequestTemperature(this.config.model, this.config.temperature),
-          top_p: this.generation.topP,
-          max_tokens: this.generation.maxTokens,
-          ...(this.generation.frequencyPenalty !== undefined ? { frequency_penalty: this.generation.frequencyPenalty } : {}),
-          ...(this.generation.presencePenalty !== undefined ? { presence_penalty: this.generation.presencePenalty } : {}),
-        };
-
-    const { response: resp, text: responseText } = await fetchTextWithTimeout(
-      url,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.config.apiKey.trim() ? { 'Authorization': `Bearer ${this.config.apiKey.trim()}` } : {}),
-          ...(new URL(rawUrl).hostname.toLowerCase() === 'generativelanguage.googleapis.com'
-            ? { 'x-goog-api-client': 'yiciyuan-openai/1.0.0' }
-            : {}),
-        },
-        body: JSON.stringify(body),
-        signal,
-      },
-      { timeoutMs: 45_000, maxBytes: 5_000_000, timeoutMessage: 'API 请求超过 45 秒' },
-    );
-
-    if (!resp.ok) {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(this.config.apiKey.trim() ? { Authorization: `Bearer ${this.config.apiKey.trim()}` } : {}),
+      ...(new URL(rawUrl).hostname.toLowerCase() === 'generativelanguage.googleapis.com'
+        ? { 'x-goog-api-client': 'yiciyuan-openai/1.0.0' }
+        : {}),
+    };
+    const penalties: Partial<Record<PenaltyParameterKey, number>> = useResponsesApi ? {} : { ...samplingPenaltyFields(this.generation) };
+    let droppedPenalty = false;
+    let responseText = '';
+    let resp: Response | null = null;
+    while (resp === null || !resp.ok) {
+      const body = useResponsesApi
+        ? {
+            model: this.config.model || 'doubao-seed-2.1-lite',
+            input: convertChatMessagesToResponsesInput(messages),
+            max_output_tokens: this.generation.maxTokens,
+            ...(this.hardwareToolsEnabled ? { tools: getResponsesTools() } : {}),
+          }
+        : {
+            model: this.config.model || 'deepseek-chat',
+            messages,
+            ...(this.hardwareToolsEnabled ? { tools: LLM_TOOLS } : {}),
+            temperature: normalizeLlmRequestTemperature(this.config.model, this.config.temperature),
+            top_p: this.generation.topP,
+            max_tokens: this.generation.maxTokens,
+            ...penalties,
+          };
+      const result = await fetchTextWithTimeout(
+        url,
+        { method: 'POST', headers, body: JSON.stringify(body), signal },
+        { timeoutMs: 45_000, maxBytes: 5_000_000, timeoutMessage: 'API 请求超过 45 秒' },
+      );
+      resp = result.response;
+      responseText = result.text;
+      if (resp.ok || useResponsesApi) break;
+      const rejected = penaltyKeysToDrop(resp.status, responseText, Object.keys(penalties), false);
+      if (droppedPenalty || rejected.length === 0) break;
+      for (const key of rejected) delete penalties[key];
+      droppedPenalty = true;
+    }
+    if (!resp?.ok) {
       let errMsg = responseText.slice(0, 2000);
       try {
         const parsedError = JSON.parse(responseText);
-        errMsg = typeof parsedError?.error?.message === 'string'
-          ? parsedError.error.message.slice(0, 2000)
-          : errMsg;
+        const error = parsedError?.error;
+        errMsg = typeof error?.message === 'string'
+          ? error.message.slice(0, 2000)
+          : typeof error === 'string'
+            ? error.slice(0, 2000)
+            : errMsg;
       } catch {}
-      throw new Error(`API 请求失败 (${resp.status}): ${errMsg}`);
+      throw new Error(`API 请求失败 (${resp?.status ?? 0}): ${errMsg}`);
     }
 
     try {
@@ -768,12 +783,13 @@ export class LLMClient {
     onTextDelta: (fullText: string) => void,
     includeTools: boolean,
   ): Promise<CompatibleAssistantMessage> {
-    const rawUrl = parseApiBaseUrl(this.config.baseUrl);
-    if (!rawUrl) throw new Error('API 地址无效，必须使用 HTTPS；仅本机 localhost 允许 HTTP');
+    const rawUrl = parseCustomModelApiBaseUrl(this.config.baseUrl);
+    if (!rawUrl) throw new Error('API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
     if (isVolcengineArkPlanApiBaseUrl(rawUrl)) {
       return this.streamOpenAIResponsesAPI(messages, signal, onTextDelta, includeTools, rawUrl);
     }
-    const url = rawUrl.endsWith('/chat/completions') ? rawUrl : `${rawUrl}/chat/completions`;
+    const url = buildCustomModelChatUrl(rawUrl);
+    if (!url) throw new Error('API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
     let buffer = '';
     let reply = '';
     let reasoningContent = '';
@@ -851,42 +867,55 @@ export class LLMClient {
       }
     };
 
-    const body = {
-      model: this.config.model || 'deepseek-chat',
-      messages,
-      temperature: normalizeLlmRequestTemperature(this.config.model, this.config.temperature),
-      top_p: this.generation.topP,
-      max_tokens: this.generation.maxTokens,
-      ...(this.generation.frequencyPenalty !== undefined ? { frequency_penalty: this.generation.frequencyPenalty } : {}),
-      ...(this.generation.presencePenalty !== undefined ? { presence_penalty: this.generation.presencePenalty } : {}),
-      stream: true,
-      ...(includeTools ? { tools: LLM_TOOLS } : {}),
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(this.config.apiKey.trim() ? { Authorization: `Bearer ${this.config.apiKey.trim()}` } : {}),
+      ...(new URL(rawUrl).hostname.toLowerCase() === 'generativelanguage.googleapis.com'
+        ? { 'x-goog-api-client': 'yiciyuan-openai/1.0.0' }
+        : {}),
     };
-    const { response: resp, text: responseText } = await fetchTextStreamWithTimeout(
-      url,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.config.apiKey.trim() ? { Authorization: `Bearer ${this.config.apiKey.trim()}` } : {}),
-          ...(new URL(rawUrl).hostname.toLowerCase() === 'generativelanguage.googleapis.com'
-            ? { 'x-goog-api-client': 'yiciyuan-openai/1.0.0' }
-            : {}),
-        },
-        body: JSON.stringify(body),
-        signal,
-      },
-      consumeChunk,
-      { timeoutMs: 90_000, maxBytes: 5_000_000, timeoutMessage: '流式 API 请求超过 90 秒' },
-    );
+    const penalties: Partial<Record<PenaltyParameterKey, number>> = { ...samplingPenaltyFields(this.generation) };
+    let droppedPenalty = false;
+    let resp: Response | null = null;
+    let responseText = '';
+    while (resp === null || !resp.ok) {
+      const body = {
+        model: this.config.model || 'deepseek-chat',
+        messages,
+        temperature: normalizeLlmRequestTemperature(this.config.model, this.config.temperature),
+        top_p: this.generation.topP,
+        max_tokens: this.generation.maxTokens,
+        ...penalties,
+        stream: true,
+        ...(includeTools ? { tools: LLM_TOOLS } : {}),
+      };
+      const result = await fetchTextStreamWithTimeout(
+        url,
+        { method: 'POST', headers, body: JSON.stringify(body), signal },
+        consumeChunk,
+        { timeoutMs: 90_000, maxBytes: 5_000_000, timeoutMessage: '流式 API 请求超过 90 秒' },
+      );
+      resp = result.response;
+      responseText = result.text;
+      if (resp.ok || reply) break;
+      const rejected = penaltyKeysToDrop(resp.status, responseText, Object.keys(penalties), reply.length > 0);
+      if (droppedPenalty || rejected.length === 0) break;
+      for (const key of rejected) delete penalties[key];
+      droppedPenalty = true;
+    }
     consumeChunk('\n\n');
-    if (!resp.ok) {
+    if (!resp?.ok) {
       let errMsg = responseText.slice(0, 2000);
       try {
         const parsedError = JSON.parse(responseText);
-        errMsg = typeof parsedError?.error?.message === 'string' ? parsedError.error.message.slice(0, 2000) : errMsg;
+        const error = parsedError?.error;
+        errMsg = typeof error?.message === 'string'
+          ? error.message.slice(0, 2000)
+          : typeof error === 'string'
+            ? error.slice(0, 2000)
+            : errMsg;
       } catch {}
-      throw new Error(`API 流式请求失败 (${resp.status}): ${errMsg}`);
+      throw new Error(`API 流式请求失败 (${resp?.status ?? 0}): ${errMsg}`);
     }
     const tool_calls = [...streamedToolCalls.entries()]
       .sort(([left], [right]) => left - right)

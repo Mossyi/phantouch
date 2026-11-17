@@ -25,7 +25,7 @@ import {
   WardrobeItem,
 } from '../../core/wardrobe/wardrobeData';
 import { useAppStore } from '../../store/useAppStore';
-import { parseApiBaseUrl } from '../../core/apiBaseUrl';
+import { buildCustomModelChatUrl } from '../../core/apiBaseUrl';
 import { fetchTextWithTimeout } from '../../core/httpClient';
 import { PersonalWardrobePanel } from './PersonalWardrobePanel';
 
@@ -289,9 +289,8 @@ export const WardrobeDiaryTab: React.FC = () => {
     setVisionReview('');
     setFormError('');
     try {
-      const rawBaseUrl = parseApiBaseUrl(llmConfig.baseUrl || 'https://api.openai.com/v1');
-      if (!rawBaseUrl) throw new Error('视觉 API 地址无效');
-      const apiUrl = rawBaseUrl.endsWith('/chat/completions') ? rawBaseUrl : `${rawBaseUrl}/chat/completions`;
+      const apiUrl = buildCustomModelChatUrl(llmConfig.baseUrl || 'https://api.openai.com/v1');
+      if (!apiUrl) throw new Error('视觉 API 地址无效');
       const { response, text } = await fetchTextWithTimeout(apiUrl, {
         method: 'POST',
         signal: controller.signal,

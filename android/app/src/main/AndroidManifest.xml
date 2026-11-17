@@ -34,6 +34,7 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
+    <!-- usesCleartextTraffic：自定义模型的 http:// 要从 App 发出，不能只在表单里通过。 -->
     <application
         android:allowBackup="false"
         android:usesCleartextTraffic="true"

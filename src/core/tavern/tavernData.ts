@@ -23,7 +23,7 @@ import {
   normalizeSiliconflowNegativePrompt,
   SILICONFLOW_IMAGE_BASE_URL,
 } from './tavernImageModels';
-import { parseApiBaseUrl, parseLocalNetworkApiBaseUrl } from '../apiBaseUrl';
+import { parseApiBaseUrl, parseCustomModelApiBaseUrl, parseLocalNetworkApiBaseUrl } from '../apiBaseUrl';
 import { inferTavernVoiceEngine } from './tavernVoice';
 import {
   createTavernPlayerPresetId,
@@ -32,6 +32,7 @@ import {
   normalizeTavernPlayerProfile,
 } from './tavernPlayerPresets';
 import { normalizeTavernMemoryState, TavernMemoryState } from './tavernMemory';
+import { normalizeArchiveBranchMemory, type ArchiveBranchMemory } from './tavernBranchMemory';
 import { normalizeTavernAuthorNote, TavernAuthorNoteState } from './tavernAuthorNote';
 import { normalizeTavernGenerationConfig, TavernGenerationConfig } from './tavernGeneration';
 import {
@@ -108,7 +109,7 @@ export const getTavernCredentialScope = (
   if (config.provider === 'system') return 'system';
   const baseUrl = config.provider === 'dzmm'
     ? DZMM_CARD_CHAT_BASE_URL
-    : parseApiBaseUrl(config.baseUrl);
+    : parseCustomModelApiBaseUrl(config.baseUrl);
   if (!baseUrl) return null;
   return new URL(baseUrl).origin.toLowerCase();
 };
@@ -161,6 +162,8 @@ export interface TavernChatArchive {
   parentArchiveId?: string;
   sourceMessageId?: string;
   messages: TavernStoredMessage[];
+  /** 保存当时的分支剧情摘要。不含硬件状态，回档不得据此重放设备动作。 */
+  branchMemory?: ArchiveBranchMemory;
 }
 
 export const MAX_TAVERN_CHAT_ARCHIVES = 40;
@@ -311,7 +314,7 @@ export const normalizeTavernModelConfig = (value: unknown): TavernModelConfig =>
     ? raw.provider as TavernModelConfig['provider']
     : 'system';
   const isLegacyUnverifiedDzmm = raw.baseUrl === 'https://api.dzmm.ai/v1';
-  const configuredBaseUrl = parseApiBaseUrl(raw.baseUrl);
+  const configuredBaseUrl = parseCustomModelApiBaseUrl(raw.baseUrl);
   // A damaged custom endpoint must not silently fall back to a different host while retaining its key.
   const provider: TavernModelConfig['provider'] = isLegacyUnverifiedDzmm
     || (requestedProvider === 'custom' && !configuredBaseUrl)
@@ -644,6 +647,7 @@ export const normalizeTavernChatArchives = (value: unknown, cardId: string): Tav
       updatedAt: Number.isFinite(updatedAt) && updatedAt >= 0 ? updatedAt : safeCreatedAt,
       parentArchiveId: safeTavernId(raw.parentArchiveId) || undefined,
       sourceMessageId: safeTavernId(raw.sourceMessageId) || undefined,
+      branchMemory: normalizeArchiveBranchMemory(raw.branchMemory),
       messages,
     }];
   });
@@ -905,6 +909,7 @@ export class TavernStore {
         localStorage.removeItem(`ycy_tavern_archives_${safeCardId}`);
         localStorage.removeItem(tavernArchiveLibraryUpdatedKey(safeCardId));
         localStorage.removeItem(`ycy_tavern_memory_${safeCardId}`);
+        localStorage.removeItem(`ycy_tavern_branch_library_${safeCardId}`);
         localStorage.removeItem(`ycy_tavern_author_note_${safeCardId}`);
         // 已停用的好感状态栏。只在用户删除这张卡时清掉它自己的记录，读档和聊天都不再使用。
         localStorage.removeItem(`ycy_tavern_stats_${safeCardId}`);
@@ -964,8 +969,8 @@ export class TavernStore {
     const provider = ['system', 'dzmm', 'custom'].includes(String(merged.provider))
       ? merged.provider as TavernModelConfig['provider']
       : 'system';
-    if (provider === 'custom' && !parseApiBaseUrl(merged.baseUrl)) {
-      throw new Error('兼容 API 地址无效，必须使用 HTTPS（仅本机 localhost 可使用 HTTP）');
+    if (provider === 'custom' && !parseCustomModelApiBaseUrl(merged.baseUrl)) {
+      throw new Error('兼容 API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
     }
     const nextScope = getTavernCredentialScope({ ...merged, provider });
     const scopeChanged = getTavernCredentialScope(current) !== nextScope;
@@ -1279,7 +1284,7 @@ export class TavernStore {
     messages: unknown,
     kind: TavernChatArchive['kind'],
     title?: string,
-    metadata?: Pick<TavernChatArchive, 'parentArchiveId' | 'sourceMessageId'>,
+    metadata?: Pick<TavernChatArchive, 'parentArchiveId' | 'sourceMessageId' | 'branchMemory'>,
   ): TavernChatArchive | null {
     const safeMessages = normalizeArchiveMessages(messages);
     if (safeMessages.length === 0) return null;
@@ -1296,6 +1301,7 @@ export class TavernStore {
       updatedAt: now,
       parentArchiveId: safeTavernId(metadata?.parentArchiveId) || undefined,
       sourceMessageId: safeTavernId(metadata?.sourceMessageId) || undefined,
+      branchMemory: normalizeArchiveBranchMemory(metadata?.branchMemory),
       messages: safeMessages,
     };
   }
@@ -1305,7 +1311,7 @@ export class TavernStore {
     messages: unknown,
     kind: TavernChatArchive['kind'] = 'save',
     title?: string,
-    metadata?: Pick<TavernChatArchive, 'parentArchiveId' | 'sourceMessageId'>,
+    metadata?: Pick<TavernChatArchive, 'parentArchiveId' | 'sourceMessageId' | 'branchMemory'>,
   ): TavernChatArchive | null {
     const safeCardId = safeTavernId(cardId);
     if (!safeCardId) return null;
@@ -1322,7 +1328,7 @@ export class TavernStore {
     messages: unknown,
     kind: TavernChatArchive['kind'] = 'save',
     title?: string,
-    metadata?: Pick<TavernChatArchive, 'parentArchiveId' | 'sourceMessageId'>,
+    metadata?: Pick<TavernChatArchive, 'parentArchiveId' | 'sourceMessageId' | 'branchMemory'>,
   ): Promise<TavernChatArchive | null> {
     const safeCardId = safeTavernId(cardId);
     if (!safeCardId) return null;

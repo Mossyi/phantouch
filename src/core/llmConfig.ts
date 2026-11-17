@@ -3,7 +3,7 @@ import {
   VOLCENGINE_ARK_PLAN_BASE_URL,
   isVolcengineArkLegacyApiBaseUrl,
   isVolcengineArkPlanApiBaseUrl,
-  parseApiBaseUrl,
+  parseCustomModelApiBaseUrl,
 } from './apiBaseUrl';
 
 export const DEFAULT_LLM_CONFIG: LLMConfig = {
@@ -26,8 +26,8 @@ export const migrateVolcenginePlanModel = (model: unknown, baseUrl: unknown): st
 };
 
 export const hasSameApiCredentialScope = (left: unknown, right: unknown): boolean => {
-  const leftUrl = parseApiBaseUrl(left);
-  const rightUrl = parseApiBaseUrl(right);
+  const leftUrl = parseCustomModelApiBaseUrl(left);
+  const rightUrl = parseCustomModelApiBaseUrl(right);
   if (!leftUrl || !rightUrl) return false;
   return new URL(leftUrl).origin.toLowerCase() === new URL(rightUrl).origin.toLowerCase();
 };
@@ -39,9 +39,9 @@ export const normalizeLlmConfig = (
   const raw = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Partial<LLMConfig>
     : {};
-  const fallbackBaseUrl = parseApiBaseUrl(fallback.baseUrl) || DEFAULT_LLM_CONFIG.baseUrl;
+  const fallbackBaseUrl = parseCustomModelApiBaseUrl(fallback.baseUrl) || DEFAULT_LLM_CONFIG.baseUrl;
   const hasBaseUrl = Object.prototype.hasOwnProperty.call(raw, 'baseUrl');
-  const parsedInputBaseUrl = parseApiBaseUrl(raw.baseUrl);
+  const parsedInputBaseUrl = parseCustomModelApiBaseUrl(raw.baseUrl);
   // The old Ark /api/v3 route is pay-as-you-go and must not be used by Plan keys.
   // Migrate historical app presets to the subscription endpoint before any request.
   const parsedBaseUrl = isVolcengineArkLegacyApiBaseUrl(parsedInputBaseUrl)

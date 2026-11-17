@@ -14,6 +14,14 @@ export interface TavernMemoryState {
   previousSummary: string;
   summarizedThroughMessageId?: string;
   updatedAt?: number;
+  /** false 表示摘要已失效，仍保留原文但不再注入。缺省视为有效，兼容旧存档。 */
+  summaryValid?: boolean;
+  summaryFingerprint?: string;
+  staleSummary?: string;
+  unplacedSummary?: string;
+  sessionId?: string;
+  recallEnabled?: boolean;
+  blockedMessageIds?: string[];
 }
 
 export interface TavernMemoryMessage {
@@ -53,16 +61,26 @@ export const normalizeTavernMemoryState = (value: unknown): TavernMemoryState =>
     previousSummary: cleanText(raw.previousSummary, TAVERN_MEMORY_SUMMARY_MAX_LENGTH),
     summarizedThroughMessageId: cleanText(raw.summarizedThroughMessageId, 200) || undefined,
     updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : undefined,
+    summaryValid: raw.summaryValid === false ? false : undefined,
+    summaryFingerprint: cleanText(raw.summaryFingerprint, 64) || undefined,
+    staleSummary: cleanText(raw.staleSummary, TAVERN_MEMORY_SUMMARY_MAX_LENGTH),
+    unplacedSummary: cleanText(raw.unplacedSummary, TAVERN_MEMORY_SUMMARY_MAX_LENGTH),
+    sessionId: cleanText(raw.sessionId, 80) || undefined,
+    recallEnabled: raw.recallEnabled === false ? false : undefined,
+    blockedMessageIds: Array.isArray(raw.blockedMessageIds)
+      ? [...new Set(raw.blockedMessageIds.filter((id): id is string => typeof id === 'string').map((id) => id.trim()).filter((id) => /^[a-zA-Z0-9_-]{1,160}$/.test(id)))].slice(0, 200)
+      : [],
   };
 };
 
 export const buildTavernMemoryContext = (value: unknown): string => {
   const state = normalizeTavernMemoryState(value);
-  if (!state.enabled || (!state.pinnedMemory && !state.summary)) return '';
+  const summary = state.summaryValid === false ? '' : state.summary;
+  if (!state.enabled || (!state.pinnedMemory && !summary)) return '';
   return [
     '【酒馆长期记忆】',
-    state.pinnedMemory ? `固定事实（玩家维护）：\n${state.pinnedMemory}` : '',
-    state.summary ? `此前剧情摘要：\n${state.summary}` : '',
+    state.pinnedMemory ? `固定事实（玩家维护，跨分支保留）：\n${state.pinnedMemory}` : '',
+    summary ? `当前分支剧情摘要：\n${summary}` : '',
     '这些内容只用于保持人物关系与剧情连续性。若与玩家当前消息冲突，以当前消息为准；不得把记忆中的设备描写当成当前硬件命令，也不得声称重放了历史动作。',
   ].filter(Boolean).join('\n\n').slice(0, TAVERN_MEMORY_PINNED_MAX_LENGTH + TAVERN_MEMORY_SUMMARY_MAX_LENGTH + 500);
 };
@@ -134,6 +152,7 @@ export const applyTavernMemorySummary = (
     previousSummary: state.summary,
     summary: nextSummary,
     summarizedThroughMessageId: cleanText(throughMessageId, 200) || state.summarizedThroughMessageId,
+    summaryValid: undefined,
     updatedAt,
   });
 };

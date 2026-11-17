@@ -12,11 +12,13 @@ import { AppDiagnosticsPanel } from '../components/AppDiagnosticsPanel';
 import { TavernMessageContent } from '../components/tavern/TavernMessageContent';
 import { useAppStore } from '../store/useAppStore';
 import { useOverlayBack } from '../components/tavern/useOverlayBack';
-import { parseApiBaseUrl } from '../core/apiBaseUrl';
+import { parseCustomModelApiBaseUrl } from '../core/apiBaseUrl';
 import { resolveEnabledEmsCeiling } from '../core/safetyLimits';
 import { hasSameApiCredentialScope } from '../core/llmConfig';
 import { findLlmProviderPreset, LLM_PROVIDER_PRESETS, LlmProviderPreset } from '../core/llmProviders';
 import { probeVolcenginePlanModel } from '../core/ai/llmClient';
+import { applyPickedModelId } from '../core/ai/openaiModelCatalog';
+import { ModelCatalogPicker } from '../components/ModelCatalogPicker';
 import {
   DEFAULT_SILICONFLOW_TTS_MODEL,
   DEFAULT_SILICONFLOW_TTS_VOICE,
@@ -68,6 +70,7 @@ export const SettingsView: React.FC = () => {
   const [planModelTestResults, setPlanModelTestResults] = useState<Record<string, { ok?: boolean; latencyMs?: number; message: string }>>({});
   const planTestAbortRef = useRef<AbortController | null>(null);
   const [showAdvancedLlm, setShowAdvancedLlm] = useState(false);
+  const [showHttpNotice, setShowHttpNotice] = useState(false);
 
   const mountedRef = useRef(true);
   const toastTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -78,6 +81,18 @@ export const SettingsView: React.FC = () => {
       toastTimersRef.current.forEach(clearTimeout);
     };
   }, []);
+
+  useEffect(() => {
+    const parsed = parseCustomModelApiBaseUrl(baseUrlInput);
+    if (!parsed?.startsWith('http://')) {
+      setShowHttpNotice(false);
+      return;
+    }
+    try {
+      if (localStorage.getItem('ycy_custom_model_http_notice') === '1') return;
+    } catch {}
+    setShowHttpNotice(true);
+  }, [baseUrlInput]);
 
   useEffect(() => {
     setApiKeyInput(llmConfig.apiKey);
@@ -169,15 +184,15 @@ export const SettingsView: React.FC = () => {
     setVoiceProfileNotice(`已应用“${profile.name}”。`);
   };
 
-  const handleSaveApi = () => {
-    const safeBaseUrl = parseApiBaseUrl(baseUrlInput);
+  const handleSaveApi = (requireModel = true) => {
+    const safeBaseUrl = parseCustomModelApiBaseUrl(baseUrlInput);
     if (!safeBaseUrl) {
-      alert('API 地址无效：必须使用 HTTPS（仅本机 localhost 可使用 HTTP），且不能包含凭据、查询串或片段');
+      if (requireModel) alert('API 地址无效：只支持 http 或 https，且不能包含账号密码、查询串或片段');
       return;
     }
     const nextModel = modelInput.trim().slice(0, 200);
     if (customEndpointSelected && !nextModel) {
-      alert('请先填写自定义模型 ID');
+      if (requireModel) alert('请先填写自定义模型 ID');
       return;
     }
     const endpointChanged = !hasSameApiCredentialScope(safeBaseUrl, llmConfig.baseUrl);
@@ -229,7 +244,7 @@ export const SettingsView: React.FC = () => {
       }
       if (data.llmConfig && typeof data.llmConfig === 'object') {
         const importedBaseUrl = typeof data.llmConfig.baseUrl === 'string'
-          ? parseApiBaseUrl(data.llmConfig.baseUrl)
+          ? parseCustomModelApiBaseUrl(data.llmConfig.baseUrl)
           : llmConfig.baseUrl;
         if (!importedBaseUrl) throw new Error('备份中的 API 地址无效');
         const importedModel = typeof data.llmConfig.model === 'string' ? data.llmConfig.model.slice(0, 200) : llmConfig.model;
@@ -465,6 +480,7 @@ export const SettingsView: React.FC = () => {
                       autoComplete="off"
                       className="w-full rounded-xl border border-pink-200 bg-white/95 px-3 py-2 font-mono text-xs text-slate-800 outline-none shadow-xs focus:border-pink-400 focus:ring-2 focus:ring-pink-200/40"
                     />
+                    <p className="mt-1 text-[9px] leading-4 text-slate-500">也可以不获取列表，继续手动填写模型 ID。</p>
                   </div>
                 </div>
               </div>
@@ -493,7 +509,7 @@ export const SettingsView: React.FC = () => {
                 type={showKey ? 'text' : 'password'}
                 value={apiKeyInput}
                 onChange={(e) => setApiKeyInput(e.target.value)}
-                onBlur={handleSaveApi}
+                onBlur={() => handleSaveApi(false)}
                 placeholder={activeProvider?.keyPlaceholder || '在此粘贴你的 API Key (如 sk-...)'}
                 disabled={activeProvider?.requiresApiKey === false}
                 className="w-full bg-white/95 border border-pink-200 text-slate-800 text-xs rounded-xl px-3 py-2.5 pr-9 outline-none font-mono focus:border-pink-400 focus:ring-2 focus:ring-pink-200/40 shadow-xs disabled:cursor-not-allowed disabled:opacity-50"
@@ -508,8 +524,43 @@ export const SettingsView: React.FC = () => {
               </button>
             </div>
 
+            {showHttpNotice && (
+              <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-relaxed text-amber-900">
+                这个地址是 HTTP，密钥和对话会以明文传输。只建议用于你自己的局域网或本机。
+                <button
+                  type="button"
+                  className="ml-2 font-black text-amber-800 underline"
+                  onClick={() => {
+                    try { localStorage.setItem('ycy_custom_model_http_notice', '1'); } catch {}
+                    setShowHttpNotice(false);
+                  }}
+                >知道了</button>
+              </p>
+            )}
+
+            {customEndpointSelected && (
+              <ModelCatalogPicker
+                baseUrl={baseUrlInput}
+                apiKey={apiKeyInput}
+                onSelect={(modelId) => {
+                  const applied = applyPickedModelId({
+                    pickedId: modelId,
+                    baseUrlInput,
+                    apiKeyInput,
+                    savedBaseUrl: llmConfig.baseUrl,
+                    savedApiKey: llmConfig.apiKey,
+                  });
+                  setModelInput(applied.modelInput);
+                  if (applied.saved) {
+                    setLlmConfig(applied.saved);
+                    if (applied.saved.apiKey !== apiKeyInput) setApiKeyInput(applied.saved.apiKey);
+                  }
+                }}
+              />
+            )}
+
             <button
-              onClick={handleSaveApi}
+              onClick={() => handleSaveApi(true)}
               className="w-full bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 text-white text-xs font-bold py-2.5 rounded-xl shadow active:scale-95 transition-all flex items-center justify-center gap-1.5"
             >
               <Check className="w-4 h-4" /> 保存并应用 API 设置
@@ -568,7 +619,7 @@ export const SettingsView: React.FC = () => {
                     type="text"
                     value={baseUrlInput}
                     onChange={(e) => setBaseUrlInput(e.target.value)}
-                    onBlur={handleSaveApi}
+                    onBlur={() => handleSaveApi(false)}
                     placeholder="https://api.example.com/v1"
                     className="w-full bg-white/95 border border-pink-100 text-slate-800 text-xs rounded-xl px-3 py-2 outline-none font-mono focus:border-pink-400 focus:ring-2 focus:ring-pink-200/40 shadow-xs"
                   />

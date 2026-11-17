@@ -57,6 +57,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { isRpgModeEnabled, setRpgModeEnabled } from '../../core/tavern/tavernRpg';
+import { ModelCatalogPicker } from '../ModelCatalogPicker';
 
 type ActiveSection = 'model' | 'generation' | 'image' | 'backup';
 
@@ -501,6 +502,14 @@ export const TavernApiTab: React.FC = () => {
                   placeholder="gpt-4o, claude-3-5-sonnet, deepseek-chat..."
                   className="mt-1 w-full rounded-xl border border-pink-100 bg-pink-50/20 px-3 py-2 font-mono text-xs text-slate-800 placeholder-slate-400 outline-none focus:border-pink-400 focus:bg-white focus:ring-2 focus:ring-pink-200/50 transition"
                 />
+                <p className="mt-1 text-[9px] leading-4 text-slate-500">获取失败时不会清空这里。列表只说明目录里有这些 ID。</p>
+                <div className="mt-2">
+                  <ModelCatalogPicker
+                    baseUrl={config.baseUrl}
+                    apiKey={config.apiKey}
+                    onSelect={(modelId) => setConfig((current) => ({ ...current, model: modelId }))}
+                  />
+                </div>
               </div>
               <label className="flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer">
                 <input
